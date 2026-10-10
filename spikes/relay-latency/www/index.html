@@ -1,0 +1,57 @@
+<!doctype html><html><body style="margin:0;background:#000">
+<video id="v" muted autoplay playsinline style="width:640px;height:360px"></video>
+<canvas id="c" width="1024" height="64" style="display:none"></canvas>
+<script src="hls.min.js"></script>
+<script>
+const mode = new URLSearchParams(location.search).get('mode') || 'hls';
+const v = document.getElementById('v'), c = document.getElementById('c'), g = c.getContext('2d', {willReadFrequently: true});
+let t0 = null, lats = [], bad = 0, started = performance.now(), firstFrameAt = null;
+async function loadT0() { try { const r = await fetch('/t0.json?' + Date.now()); const j = await r.json(); if (j.t0) t0 = j.t0; } catch (e) {} }
+setInterval(loadT0, 500); loadT0();
+function decode() {
+  g.drawImage(v, 0, 0, 1024, 64, 0, 0, 1024, 64);
+  const d = g.getImageData(0, 0, 1024, 64).data; let n = 0;
+  for (let k = 0; k < 16; k++) { const x = 64 * k + 32, y = 32; if (d[(y * 1024 + x) * 4] > 128) n |= (1 << k); }
+  return n;
+}
+function onFrame(now, md) {
+  if (firstFrameAt === null) { firstFrameAt = performance.now(); console.log('FIRST_FRAME after ' + Math.round(firstFrameAt - started) + ' ms ' + v.videoWidth + 'x' + v.videoHeight); }
+  if (t0 !== null) {
+    const n = decode(); const lat = Date.now() - (t0 + n * 1000 / 30);
+    if (lat > -500 && lat < 30000) lats.push(lat); else bad++;
+  }
+  v.requestVideoFrameCallback(onFrame);
+}
+v.requestVideoFrameCallback(onFrame);
+function report(tag) {
+  const s = lats.slice().sort((a, b) => a - b); const q = p => s.length ? Math.round(s[Math.min(s.length - 1, Math.floor(p * s.length))]) : NaN;
+  const pq = v.getVideoPlaybackQuality();
+  console.log(tag + ' mode=' + mode + ' samples=' + s.length + ' bad=' + bad + ' p10=' + q(0.1) + ' p50=' + q(0.5) + ' p90=' + q(0.9) + ' max=' + q(0.999) + ' ms; decoded=' + pq.totalVideoFrames + ' dropped=' + pq.droppedVideoFrames);
+}
+if (mode === 'hls') {
+  const h = new Hls({lowLatencyMode: true, maxLiveSyncPlaybackRate: 1.5});
+  h.loadSource('http://127.0.0.1:8888/live/index.m3u8'); h.attachMedia(v);
+  h.on(Hls.Events.ERROR, (e, d) => console.log('HLS_ERROR ' + d.type + ' ' + d.details + ' fatal=' + d.fatal));
+  h.on(Hls.Events.MANIFEST_PARSED, (e, d) => console.log('HLS_MANIFEST levels=' + d.levels.map(l => (l.videoCodec || '') + '/' + (l.audioCodec || '')).join(',')));
+  setInterval(() => console.log('HLS_STATE latency=' + (h.latency || 0).toFixed(2) + 's target=' + (h.targetLatency || 0).toFixed(2) + 's rate=' + v.playbackRate.toFixed(2)), 5000);
+} else {
+  (async () => {
+    const pc = new RTCPeerConnection();
+    pc.addTransceiver('video', {direction: 'recvonly'}); pc.addTransceiver('audio', {direction: 'recvonly'});
+    pc.ontrack = ev => { if (!v.srcObject) v.srcObject = ev.streams[0] || new MediaStream([ev.track]); else if (ev.streams[0] !== v.srcObject && !ev.streams[0]) v.srcObject.addTrack(ev.track); };
+    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+    await new Promise(r => { if (pc.iceGatheringState === 'complete') r(); pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') r(); }; setTimeout(r, 3000); });
+    const res = await fetch('http://127.0.0.1:8889/live/whep', {method: 'POST', headers: {'Content-Type': 'application/sdp'}, body: pc.localDescription.sdp});
+    console.log('WHEP_STATUS ' + res.status);
+    const ans = await res.text(); await pc.setRemoteDescription({type: 'answer', sdp: ans});
+    setInterval(async () => {
+      const st = await pc.getStats(); st.forEach(r => { if (r.type === 'inbound-rtp' && r.kind === 'video') {
+        const jb = r.jitterBufferEmittedCount ? (1000 * r.jitterBufferDelay / r.jitterBufferEmittedCount).toFixed(0) : 'n/a';
+        console.log('RTC_STATS codec=' + (st.get(r.codecId) || {}).mimeType + ' framesDecoded=' + r.framesDecoded + ' avgJitterBufferMs=' + jb + ' fps=' + r.framesPerSecond); } });
+    }, 5000);
+  })().catch(e => console.log('RTC_ERR ' + e));
+}
+setTimeout(() => report('WARMUP'), 15000);
+setTimeout(() => { lats = []; bad = 0; }, 15000);
+setTimeout(() => { report('RESULT'); console.log('PROBE_DONE'); }, 45000);
+</script></body></html>

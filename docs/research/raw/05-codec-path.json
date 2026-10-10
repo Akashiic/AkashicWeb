@@ -1,0 +1,333 @@
+{
+ "summary": "I picked up where the earlier run stopped and finished the task. Two results change the earlier picture, and both are backed by tests run in this container.\n\n(1) The earlier note that CinemaMod's CEF 116 ships without proprietary codecs is wrong. Its MCEF natives (java-cef eaeb3d4, Chromium 116.0.5845.190) played an H.264+AAC MP4 at runtime, and MSE reported avc1 and mp4a as supported. The Windows libcef.dll contains the same Chrome-only codec markers.\n\n(2) OBS Studio pins and hosts its own CEF builds with codecs on cdn-fastly.obsproject.com. The current one is CEF 150.0.19/150.0.20 on Chromium 150.0.7871.252, for Windows, Linux and macOS. They are standard CEF binary distributions, so java-cef builds against them. I built CCBlueX java-cef against the OBS Linux build in about 5 minutes; the only change was deleting 6 lines for 3 network error codes that CEF 150 does not have. The result plays H.264/AAC, MPEG-TS in MSE, native HLS, and WebRTC with VP8, VP9, H.264 and AV1.\n\nPath A (YouTube live in a stock, no-codec CEF) is a dead end. yt-dlp issue tables show live audio is AAC only (itags 139 and 140, no Opus) and live HLS video is H.264. VP9 exists only as video-only DASH. Players in no-codec MCEF/WebDisplays have reported for years that YouTube live will not play.\n\nPath C (building CEF ourselves) does not fit the deadline. It needs 16–32 GB RAM, 120–150 GB disk and about 4 hours per platform. GitHub-hosted runners have 14 GB disk and a 6-hour job limit. OBS already ships the same result.\n\nPath D (the Akashic relay) is the most reliable option. I measured it end to end on localhost inside the JCEF/Chromium 150 off-screen browser, with VP9 720p30 + Opus through MediaMTX v1.21.1:\n- LL-HLS with hls.js 1.7.3: median 1.04 s; two clients at the same time showed 0.92 s and 1.03 s.\n- WebRTC (WHEP): median 126 ms; two clients showed 127 ms and 149 ms.\n\nRealtime encoding is cheap on a 4-vCPU Xeon: VP9 720p30 used 0.40 of a core, 480p 0.26, VP8 720p30 0.57, and SVT-AV1 preset 12 about 0.56. Each viewer needs about 1.8–2.0 Mbit/s at 720p, so the relay must fan out from a well-connected server, not the owner's home connection. OBS can send AV1+Opus over WHIP directly to MediaMTX, which removes the transcode step entirely. Chromium decodes AV1 (dav1d) and Opus without proprietary codecs, but it has no H.264 in WebRTC without them.\n\nLatency, answering the owner directly: the image cannot be \"almost 0 ms\" behind the real event. The broadcaster and YouTube already add delay (Google: under 10 s for low latency, under 5 s for ultra-low; no number for normal). What can be close to zero is the difference between players: tens of ms with WebRTC, or under about 100 ms with LL-HLS plus server-clock steering. That steering uses MediaMTX's EXT-X-PROGRAM-DATE-TIME, hls.playingDate, and AkashicFM's existing ServerClock ping-pong. Our relay adds roughly 0.3–0.6 s with WebRTC or 1.3–2.5 s with LL-HLS over the internet (estimates). His own restream adds his platform's delay on top, and YouTube Content ID scans live streams for other broadcasts and can interrupt them.\n\nRights: YouTube allows the official embed but forbids downloading or restreaming. Brazilian copyright law (Lei 9.610/98, art. 95) gives broadcasters exclusive control of retransmission and public showing. TV Câmara publishes legislative footage under CC BY 4.0 and other content under CC BY-NC-ND; TV Senado allows non-commercial retransmission with credit.\n\nRanking: D first (about 85–90% chance, medium effort). B second as backup and for direct YouTube embeds (about 70%, medium effort, codec licensing is a grey area). CinemaMod 116 only as an emergency fallback (about 50%; old Chromium and a different java-cef API). C rejected (about 30%, high effort). A rejected (about 2%). The labelled last-resort fallback is the in-game browser showing TSE's official results web page.\n\nNot run: anything on Windows or macOS, any test over the real internet, anything against YouTube (this IP is bot-walled), and any load test. The stock no-codec jcefmaven 152 natives would not start in my harness (ContentMainRun exit code 28), so WebRTC AV1/VP9 on the no-codec build is still a static inference, not a runtime result. All builds and patches were made only in scratch copies; no repository was modified.",
+ "findings": [
+  {
+   "topic": "A. YouTube live formats",
+   "claim": "For a YouTube live stream, live HLS formats 91-96/300/301 are all avc1 (H.264) + mp4a.40.2/40.5 (AAC). With --live-from-start (DASH), the only audio formats are 139 (mp4a.40.5 HE-AAC) and 140 (mp4a.40.2 AAC-LC); there are no Opus itags (249/250/251). VP9 is offered for live only as video-only DASH (242-248, 278, 302, 303, 271, 308, 313, 315).",
+   "grade": "VERIFIED",
+   "source": "https://github.com/yt-dlp/yt-dlp/issues/9043 (Jan 21 2024, -F tables)"
+  },
+  {
+   "topic": "A. YouTube live formats",
+   "claim": "A Nov 2024 live stream listed only m3u8 formats, top one 301 = avc1.64002a + mp4a.40.2 (1080p60). No newer (2025-2026) format table could be obtained from here because YouTube returns LOGIN_REQUIRED 'Sign in to confirm you're not a bot' to this IP.",
+   "grade": "VERIFIED",
+   "source": "https://github.com/yt-dlp/yt-dlp/issues/11614; scratchpad yt/42f2801b.html and yt/b38cc908.html parsed with tools/ytformats.py"
+  },
+  {
+   "topic": "A. yt-dlp behaviour for live",
+   "claim": "Current yt-dlp (commit 51bab8a, 2026-09-27) skips DASH manifests for is_live by default and uses HLS. HLS manifests may need a GVS PO token per client, otherwise the formats are skipped. It also warns that YouTube forces SABR on web clients (issue 12482). Pulling YouTube live with yt-dlp is therefore brittle even from a residential IP.",
+   "grade": "VERIFIED",
+   "source": "/home/user/yt-dlp/yt-dlp/yt_dlp/extractor/youtube/_video.py:3624-3628, 3703-3712, 3540"
+  },
+  {
+   "topic": "A. Player behaviour without AAC/H.264",
+   "claim": "In a Chromium without proprietary codecs, YouTube live has no decodable audio (AAC only) and its HLS video is H.264, so live playback fails. MCEF/WebDisplays users have reported this for years ('unsupported error on YouTube' for livestreams), and the CinemaMod maintainer tied YouTube-live support to proprietary codecs.",
+   "grade": "VERIFIED",
+   "source": "scratchpad issues/montoyo_mcef_51.txt, montoyo_mcef_85.txt, montoyo_webdisplays_168.txt, montoyo_webdisplays_192.txt; https://github.com/CinemaMod/mcef/issues/28 (title: 'Twitch/YouTube Live/MP4 support')"
+  },
+  {
+   "topic": "B. CinemaMod CEF 116 (correction)",
+   "claim": "CORRECTION to earlier research: CinemaMod's prebuilt MCEF natives DO decode H.264/AAC. Tested build: java-cef eaeb3d4, JCEF 116.0.27.1, Chromium 116.0.5845.190; linux_amd64.tar.gz sha256 e64d2ffd32831cab00efc0f9d7ac68b7766b7710db42ec45e5ecaa1043c94f9b (matches the server's .sha256), Last-Modified 2024-10-23. Runtime probe under Xvfb: MSE avc1.4d401f / mp4a.40.2 / mp4a.40.5 true; canPlayType avc1 'probably'; a 1280x720 H.264 Constrained-Baseline + AAC-LC MP4 played (99 frames in 3.1 s, 53,485 audio bytes decoded). Not supported: MSE mp2t, HEVC, native HLS, Widevine.",
+   "grade": "VERIFIED",
+   "source": "https://mcef-download.cinemamod.com/java-cef-builds/eaeb3d4370aa3526ee237ad1981ad59af3de4dd1/linux_amd64.tar.gz; probe /tmp/claude-0/-home-user/c5c14dc0-9bf3-521b-b7c6-50e7f96d7b47/scratchpad/p116/src/probe/Probe116.java with p116/probe.js"
+  },
+  {
+   "topic": "B. CinemaMod Windows natives",
+   "claim": "CinemaMod windows_amd64.tar.gz (sha256 aaff42ca9a0bf59f2f2590a1262f5facba6db68a90e63a31c926782750610862, 124 MB) has a libcef.dll containing the Chrome-branding-only markers 'raw ADTS AAC (Advanced Audio Coding)' and 'H264DecoderImpl'/OpenH264. These are absent from stock jcefmaven 152. macos_arm64 and linux_arm64 builds are also hosted (HTTP 200). There are no natives for the newer CinemaMod branches 6478/6533 at commit dc9a9d05 (HTTP 403).",
+   "grade": "VERIFIED",
+   "source": "strings scan of cmwin/windows_amd64/libcef.dll; https://chromium.googlesource.com/chromium/third_party/ffmpeg/+/refs/heads/master/chromium/config/{Chrome,Chromium}/linux/x64/libavformat/demuxer_list.c (ff_aac_demuxer only in Chrome branding)"
+  },
+  {
+   "topic": "B. CinemaMod statement",
+   "claim": "In Oct 2022 the CinemaMod maintainer said distributing codec CEF requires codec licences and used bsdiff patches to avoid hosting it. On Nov 8 2023 they wrote that with MCEF 2.x 'The binaries that are included contain the codecs'.",
+   "grade": "VERIFIED",
+   "source": "https://github.com/CinemaMod/mcef/issues/28"
+  },
+  {
+   "topic": "B. OBS CEF distribution",
+   "claim": "OBS Studio master (c5bcbca, 2026-10-05) pins CEF version '7871' with baseUrl https://cdn-fastly.obsproject.com/downloads and per-platform SHA-256 hashes. File names are cef_binary_7871_windows_x64.zip, cef_binary_7871_linux_x86_64.tar.xz and cef_binary_7871_macos_{x86_64,arm64}.tar.xz.",
+   "grade": "VERIFIED",
+   "source": "obs-studio CMakePresets.json:54-66; cmake/windows/buildspec.cmake:90; cmake/macos/buildspec.cmake:17; .github/scripts/utils.zsh/setup_ubuntu:41"
+  },
+  {
+   "topic": "B. OBS CEF contents",
+   "claim": "Linux: CEF 150.0.19+gcf60f42+chromium-150.0.7871.252 (README dated Aug 27 2026), 291.6 MB tar.xz, sha256 8ffc64d0... matches OBS's pin. It is a standard CEF binary distribution (include/, libcef_dll/, cmake/, Release/, Resources/). libcef.so is 2.03 GB unstripped, 279.5 MB stripped (110.7 MB gzipped). Windows: CEF 150.0.20-7871-devtools_patch.3553+g628ec9a, 344.8 MB zip, sha256 54cd191a... matches; libcef.dll 278 MB. Both libraries contain the 'raw ADTS AAC', H264DecoderImpl and OpenH264 markers. macOS arm64 is 105 MB.",
+   "grade": "VERIFIED",
+   "source": "downloads in scratchpad/obscef; include/cef_version.h:38; README.txt; strings scans"
+  },
+  {
+   "topic": "B. OBS URL stability",
+   "claim": "Older OBS CEF builds are still downloadable years later: cef_binary_5060_windows_x64.zip (2022) and the 6533 Windows/Linux builds (2024/2025) return HTTP 200.",
+   "grade": "VERIFIED",
+   "source": "curl -I https://cdn-fastly.obsproject.com/downloads/cef_binary_{5060,6533}_*"
+  },
+  {
+   "topic": "B. java-cef with a third-party CEF",
+   "claim": "java-cef's DownloadCEF skips downloading when third_party/cef/cef_binary_${CEF_VERSION}_${CEF_PLATFORM} already exists, and CEF_VERSION can be overridden with -DCEF_VERSION. A third-party distribution can therefore be dropped in by extracting or renaming it to that path.",
+   "grade": "VERIFIED",
+   "source": "/home/user/chromiumembedded/java-cef/cmake/DownloadCEF.cmake:20-24; /home/user/chromiumembedded/java-cef/CMakeLists.txt:131-133; /home/user/ccbluex/java-cef/CMakeLists.txt:133-135"
+  },
+  {
+   "topic": "B. Version pairing rule",
+   "claim": "java-cef does not set CEF_API_VERSION, so it compiles against CEF's default experimental API, which 'is not back/forward compatible with different CEF versions'. libjcef must be built against the exact distribution it ships with. CEF 150 supports explicit API versions 13300..15000. Upstream java-cef went straight from 146.0.10 (d3de827, 2026-04-09) to 152.0.6 (15a0250, 2026-09-08), so no upstream commit targets 150.",
+   "grade": "VERIFIED",
+   "source": "obscef/cef_binary_7871_linux_x86_64/include/cef_api_hash.h; include/cef_api_versions.h:303,306; git log -L of /home/user/chromiumembedded/java-cef/CMakeLists.txt"
+  },
+  {
+   "topic": "B. Build and runtime test (OBS CEF + CCBlueX java-cef)",
+   "claim": "CCBlueX java-cef fe8cc9e, configured with -DCEF_VERSION=150.0.19+gcf60f42+chromium-150.0.7871.252 and pointed at the OBS Linux distribution, compiled 286 of 287 targets. Only native/jni_util.cpp failed, on ERR_CONTROL_MSG_TOO_BIG, ERR_MULTICAST_NOT_ALLOWED and ERR_DNS_DIRECT_ONLY (lines 656, 658, 931), which CEF 150 does not define. After deleting those 6 lines, libjcef.so linked. Runtime: JCEF 150.0.19.43. MSE avc1/mp4a/mp2t true; native HLS canPlayType 'maybe'; HEVC false; no Widevine. An H.264/AAC MP4 played (119 frames in 3.78 s, audio decoded). WebRTC receive codecs: VP8, VP9, H264, AV1, opus.",
+   "grade": "VERIFIED",
+   "source": "scratchpad/jbuild/build2.log; scratchpad/jbuild/psrc/probe/Probe152.java run under xvfb-run (patch applied only to the scratch clone)"
+  },
+  {
+   "topic": "B. CI adaptation",
+   "claim": "CCBlueX's build-jcef.yml already builds Linux/Windows/macOS natives on GitHub runners and strips libcef (line 27). Adding a step that downloads OBS's distribution, checks its sha256 and extracts it to third_party/cef/... is a small change. The Windows zip has no top-level folder, so it must be extracted into the named directory.",
+   "grade": "INFERRED",
+   "source": "/home/user/ccbluex/java-cef/.github/workflows/build-jcef.yml:9-37; zip listing of cef7871_win.zip"
+  },
+  {
+   "topic": "B. Codec licensing",
+   "claim": "CEF maintainer: proprietary codecs (H.264/AAC) are disabled by default and enabled with proprietary_codecs=true ffmpeg_branding=Chrome. Distributing an FFmpeg software implementation is 'likely subject to said licensing requirements'. The Windows/macOS OS-decoder route avoids this for video, but AAC is not covered by OS decoding in Chromium; the issue is still open. I found no OBS statement about codec licensing for its CEF builds.",
+   "grade": "VERIFIED",
+   "source": "https://github.com/chromiumembedded/cef/issues/3559"
+  },
+  {
+   "topic": "B. Patent landscape",
+   "claim": "The last major US H.264 patent (US 7826532) is reported to expire around 2027-11-29, with other jurisdictions into the 2030s. Red Hat/Fedora treated AAC-LC patents as expired in 2017. Brazil's status was not checked patent by patent.",
+   "grade": "INFERRED",
+   "source": "https://pclosmag.com/html/Issues/202608/page08.html; https://lwn.net/Articles/1023539; https://en.wikipedia.org/wiki/Fraunhofer_FDK_AAC (via search summaries)"
+  },
+  {
+   "topic": "C. Self-build requirements",
+   "claim": "CEF build quick start: Linux needs at least 16 GB RAM (32 GB+ recommended) and 120 GB free disk (Debug); Windows 16/32 GB RAM and 150 GB; about 4 hours on a fast machine with 100 Mbps.",
+   "grade": "VERIFIED",
+   "source": "https://chromiumembedded.github.io/cef/master_build_quick_start"
+  },
+  {
+   "topic": "C. GitHub runners",
+   "claim": "Standard GitHub-hosted runners: public repos 4 vCPU / 16 GB RAM / 14 GB SSD; private repos 2 vCPU / 8 GB / 14 GB. Jobs are limited to 6 hours (self-hosted: 5 days). Chromium/CEF with codecs cannot be built on standard hosted runners; a large self-hosted VM per OS is required.",
+   "grade": "VERIFIED",
+   "source": "https://docs.github.com/en/actions/reference/runners/github-hosted-runners; https://docs.github.com/en/actions/reference/limits"
+  },
+  {
+   "topic": "D. Encode CPU benchmark",
+   "claim": "Container: Intel Xeon @2.1 GHz, 4 vCPU, ffmpeg 6.1.1; 30 s of Sintel 720p; cost = CPU-seconds per content-second, including about 0.06 core of input decode. Results:\n- libvpx-vp9 -deadline realtime -cpu-used 8 -row-mt 1, 720p30 at 1.8 Mbit/s CBR: 0.40 core (7.3x realtime), 1.67 Mbit/s actual.\n- Same VP9 at 480p30 / 0.9 Mbit/s: 0.26 core, 0.85 Mbit/s.\n- libvpx VP8 -cpu-used 16, 720p30 at 2.5 Mbit/s: 0.57 core.\n- VP8 -cpu-used 8, 720p24: 0.73 core.\n- SVT-AV1 720p24: preset 12 = 0.56 core, preset 10 = 1.19 cores.\n- x264 veryfast zerolatency, 720p24: 0.41 core.\n- libopus 128k: 0.014 core.",
+   "grade": "VERIFIED",
+   "source": "scratchpad/bench/run.sh and run2.sh (ffmpeg -benchmark output)"
+  },
+  {
+   "topic": "D. MediaMTX codecs/config",
+   "claim": "MediaMTX WebRTC read codecs: AV1, VP9, VP8, H265, H264 video; Opus, G722, G711 audio. HLS read: AV1, VP9, H265, H264 video; Opus, FLAC, AAC audio (no VP8). Defaults in v1.21.1: hlsVariant lowLatency, hlsSegmentDuration 1s, hlsPartDuration 200ms. MediaMTX does not transcode by itself; an external command such as ffmpeg runs from the runOnAvailable hook.",
+   "grade": "VERIFIED",
+   "source": "https://mediamtx.org/docs/read/webrtc; https://mediamtx.org/docs/read/hls; mediamtx.yml (v1.21.1 tarball):341,351,357,802-814"
+  },
+  {
+   "topic": "D. OBS as ingest",
+   "claim": "OBS WHIP output supports video h264, hevc and av1, and audio opus only. OBS ships SVT-AV1 and AOM AV1 encoders. OBS can therefore push AV1+Opus to MediaMTX over WHIP, which needs no transcoding before WebRTC or LL-HLS delivery to codec-less Chromium.",
+   "grade": "VERIFIED",
+   "source": "obs-studio plugins/obs-webrtc/whip-output.cpp:218-234,737-741; plugins/obs-ffmpeg/obs-ffmpeg-av1.c:321,335"
+  },
+  {
+   "topic": "D. Chromium codec gating",
+   "claim": "media_use_openh264 is false when !proprietary_codecs, and Chromium's WebRTC sets rtc_use_h264 = media_use_openh264, so a no-codec CEF has no H.264 in WebRTC. enable_dav1d_decoder = use_blink, so AV1 decoding does not depend on branding. VP8, VP9 and Opus are royalty-free and always built.",
+   "grade": "VERIFIED",
+   "source": "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/media/media_options.gni:58-61,112; https://webrtc.googlesource.com/src/+/refs/heads/main/webrtc.gni:170-174"
+  },
+  {
+   "topic": "D. Measured relay latency",
+   "claim": "Setup: localhost, in the JCEF/Chromium 150 off-screen browser; ffmpeg VP9 720p30 + Opus 96k published over RTSP into MediaMTX v1.21.1; a frame counter is burned into the video and decoded by the page with requestVideoFrameCallback.\n- LL-HLS with hls.js 1.7.3 lowLatencyMode: median 1038 ms (p90 1071, max 1105); hls.latency about 1.0 s.\n- Two simultaneous LL-HLS clients: medians 918 and 1034 ms (116 ms apart).\n- WebRTC WHEP: median 126 ms (p90 156, max 165); jitter buffer 22-45 ms.\n- Two simultaneous WebRTC clients: medians 127 and 149 ms (22 ms apart).\n- Time to first frame: 0.2-0.47 s on LL-HLS; about 3.1 s on WebRTC, because the page waits 3 s for ICE gathering.\nNot included: WAN, capture, encoder lookahead and source delay.",
+   "grade": "VERIFIED",
+   "source": "scratchpad/lat/harness.py, lat/www/index.html, lat/mtx.log"
+  },
+  {
+   "topic": "D. Same-frame sync primitives",
+   "claim": "MediaMTX's HLS muxer (gohlslib) writes EXT-X-PROGRAM-DATE-TIME from each segment's startNTP. hls.js exposes hls.playingDate, targetLatency and maxLiveSyncPlaybackRate. AkashicFM already has a ServerClock ping-pong (S2CClockPong). Design: the page gets the server time offset (from the mod via the CEF JS bridge, or an NTP-style /time endpoint), computes the wall-clock time of the displayed frame from playingDate, and steers playbackRate within ±5% (seeking if more than 1 s off) toward serverNow − D. Expected agreement is within about 1-3 frames.",
+   "grade": "INFERRED",
+   "source": "scratchpad/mtx/gohlslib/muxer_stream.go:444 and pkg/playlist/media_segment.go:65-66; hls.js docs/API.md (scratchpad/hlsjs-api.md:854-885,2389-2426); /home/user/AkashicFM/src/main/java/com/akashiic/fm/server/relay/RelayService.java:134 and ServerClock.java"
+  },
+  {
+   "topic": "D. Bandwidth",
+   "claim": "Each viewer downloads about 1.8-2.0 Mbit/s at 720p30 (VP9 1.67-1.8 + Opus 96-128k), about 0.85 GB per viewer-hour; about 1.0 Mbit/s at 480p. 50 viewers need about 95 Mbit/s and 100 viewers about 190 Mbit/s of sustained egress, so fan-out must run on the game server, a VPS or a CDN. The owner's PC only uploads one ingest of about 3-6 Mbit/s.",
+   "grade": "INFERRED",
+   "source": "measured bitrates in scratchpad/bench (ffprobe)"
+  },
+  {
+   "topic": "D. ffmpeg command shapes",
+   "claim": "Transcode from H.264/AAC ingest (MediaMTX runOnAvailable):\nffmpeg -i rtsp://127.0.0.1:$RTSP_PORT/ingest -vf scale=1280:720,fps=30 -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -row-mt 1 -tile-columns 2 -b:v 1800k -minrate 1800k -maxrate 1800k -bufsize 1800k -g 60 -lag-in-frames 0 -c:a libopus -b:a 128k -ar 48000 -strict experimental -f rtsp rtsp://127.0.0.1:$RTSP_PORT/live\nVP9 over RTP needs -strict experimental in ffmpeg 6.1. VP8 alternative: -c:v libvpx -deadline realtime -cpu-used 16 -auto-alt-ref 0 -lag-in-frames 0. 480p tier: scale=854:480 with -b:v 900k.",
+   "grade": "VERIFIED",
+   "source": "scratchpad/lat/harness.py (the same encoder arguments ran successfully); scratchpad/lat/ff.log ('Packetizing VP9 is experimental' without -strict)"
+  },
+  {
+   "topic": "E. YouTube latency modes",
+   "claim": "Normal latency: 'All resolutions and live features are supported', with no number given. Low latency: 'Most viewers ... less than 10 seconds' (no 4K). Ultra-low latency: 'less than 5 seconds' (no 4K, more buffering).",
+   "grade": "VERIFIED",
+   "source": "https://support.google.com/youtube/answer/7444635"
+  },
+  {
+   "topic": "E. Latency budget per path",
+   "claim": "Delay vs the real event = broadcaster chain + YouTube (or TV) latency; typically several seconds to about 30 s for normal-latency YouTube, which we cannot remove.\n- Delay we add: B/YouTube direct ≈ 0 (render only); D-WebRTC ≈ 0.13 s measured + WAN 20-100 ms + capture/encode 50-200 ms ≈ 0.3-0.6 s; D-LL-HLS ≈ 1.0 s measured, about 1.3-2.5 s over WAN.\n- Difference between players: D-WebRTC tens of ms (22 ms measured locally, likely up to 100-200 ms across ISPs); D-LL-HLS 116 ms unsynced, under about 100 ms with server-clock steering; B/YouTube direct uncontrolled, likely 1-10 s.\n- Owner's restream adds his platform's latency on top (YouTube under 5 s ultra-low / under 10 s low).",
+   "grade": "INFERRED",
+   "source": "measurements above plus the Google latency doc"
+  },
+  {
+   "topic": "F. YouTube ToS",
+   "claim": "'You may also show YouTube videos through the embeddable YouTube player.' You are not allowed to 'access, reproduce, download, distribute, transmit, broadcast, display ... any Content except ... as expressly authorized by the Service; or ... with prior written permission'. Relaying or restreaming YouTube-sourced coverage needs permission; embedding is allowed.",
+   "grade": "VERIFIED",
+   "source": "https://www.youtube.com/t/terms (snapshot scratchpad/yt/terms.html)"
+  },
+  {
+   "topic": "F. YouTube API policies",
+   "claim": "Developer Policies forbid downloading, caching or storing copies; modifying or blocking any part of the player; and separating, isolating or modifying the audio or video components. Required Minimum Functionality: embedded viewport at least 200x200 px; identification through the HTTP Referer header; no overlays over the player; autoplay only when more than half the player is visible; at most one autoplaying player per page. Pages without a Referer get Error 153.",
+   "grade": "VERIFIED",
+   "source": "https://developers.google.com/youtube/terms/developer-policies (scratchpad/yt/devpol.html); https://developers.google.com/youtube/terms/required-minimum-functionality; https://til.simonwillison.net/youtube/fixing-153-embed"
+  },
+  {
+   "topic": "F. Content ID on live",
+   "claim": "'All live streams are scanned for matches to third-party content, including copyrighted content in the form of another live broadcast.' A placeholder may replace the stream, and it can be interrupted or terminated. A licensed channel can still be interrupted unless the rights holder allowlists it.",
+   "grade": "VERIFIED",
+   "source": "https://support.google.com/youtube/answer/3367684"
+  },
+  {
+   "topic": "F. Brazilian law",
+   "claim": "Lei 9.610/98 art. 95: broadcasters have the exclusive right to authorize or forbid retransmission, fixation and reproduction of their broadcasts, and their communication to the public by television in places of collective attendance.",
+   "grade": "VERIFIED",
+   "source": "https://www.planalto.gov.br/ccivil_03/leis/l9610.htm (scratchpad/law/l9610.htm)"
+  },
+  {
+   "topic": "F. Public broadcasters",
+   "claim": "TV Câmara: transmissions of legislative activities are CC BY 4.0 (watermark must be kept); other TV Câmara content is CC BY-NC-ND. CC BY-NC-ND 4.0 §2(a)(4) allows technical modifications and format changes, and NonCommercial means 'not primarily intended for ... commercial advantage'. TV Senado: free reproduction with credit; content 'pode ser retransmitido e disponibilizado para instituições parceiras'; commercial use and ad insertion are forbidden; logo and credits must stay uncut.",
+   "grade": "VERIFIED",
+   "source": "https://www2.camara.leg.br/a-camara/documentos-e-pesquisa/arquivo/acervo-por-tipo/videos; https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode.en; https://www12.senado.leg.br/assessoria-de-imprensa/politica-de-uso"
+  },
+  {
+   "topic": "F. EBC / TSE",
+   "claim": "Agência Brasil text and photos are reported as Creative Commons (CC BY). I found no explicit licence for TV Brasil video or its live signal. A TSE news item (Aug 2026) describes a pool of public TVs and TRE YouTube channels for election transparency broadcasts.",
+   "grade": "INFERRED",
+   "source": "web search summaries (agenciabrasil / tse.jus.br/comunicacao/noticias/2026/Agosto/tse-forma-pool-inedito-com-tvs-publicas-e-tres-para-desmontar-urna-eletronica-ao-vivo); not fetched directly"
+  },
+  {
+   "topic": "Ranking",
+   "claim": "Ranked by (probability it works on 2026-10-25) x (effort):\n1. D, Akashic live relay: ~0.85-0.9, medium effort (about 3-5 dev days plus rehearsals); codec-free; controls sync.\n2. B, OBS CEF 150 + CCBlueX java-cef for codecs, so YouTube embeds and H.264/AAC HLS play directly: ~0.7, medium effort (CI for 3 OS, downloader); Linux proven here, Windows untested; licensing grey.\n3. B', CinemaMod 116 ready-made natives: ~0.5; old Chromium, different java-cef fork API; emergency only.\n4. C, build CEF ourselves: ~0.3, high effort; redundant with OBS.\n5. A, YouTube live on stock CEF: ~0.02.\nLabelled last-resort fallback: in-game browser on TSE's official results page (a real web page, no codecs needed).",
+   "grade": "INFERRED",
+   "source": "synthesis of all findings above"
+  }
+ ],
+ "problems": [
+  {
+   "name": "YouTube live cannot play on stock (no-codec) CEF",
+   "root_cause": "YouTube live audio is AAC only (itags 139/140) and live HLS video is H.264. Stock Spotify/jcefmaven/CCBlueX 152 builds have neither decoder, and YouTube offers no Opus fallback for live.",
+   "fix": "Primary: the Akashic relay (path D), so the in-game page only receives VP9 or AV1 + Opus. Backup: switch the WD port's native base to a codec-enabled CEF (OBS 7871 distribution + CCBlueX java-cef) so the YouTube embed works per client.",
+   "severity": "blocker",
+   "grade": "VERIFIED",
+   "source": "https://github.com/yt-dlp/yt-dlp/issues/9043; montoyo/mcef#51, #85; probe results"
+  },
+  {
+   "name": "Earlier research mislabelled CinemaMod CEF 116 as codec-less",
+   "root_cause": "No runtime probe had been run on CinemaMod's own hosted CEF builds (mcef-download.cinemamod.com/cef-builds/5845/...). They are built with Chrome branding.",
+   "fix": "Correct the shared notes. Treat CinemaMod 116 only as an emergency backup: Chromium 116 dates from Aug 2023, so restrict navigation to an allowlist (the Akashic player domain plus youtube.com/youtube-nocookie.com) and accept that its java-cef fork API differs from CCBlueX 152.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "scratchpad/p116 probe output (JCEF 116.0.27.1, H264AAC_PLAYING 1280x720)"
+  },
+  {
+   "name": "libjcef must match the exact CEF build",
+   "root_cause": "java-cef compiles against the experimental (unversioned) CEF API, so libjcef is only valid with the identical libcef. OBS pins CEF 150 (7871) while java-cef upstream and CCBlueX target 152; OBS's Windows build is 150.0.20-devtools_patch and its Linux build is 150.0.19.",
+   "fix": "Build libjcef/jcef.dll per platform against the exact OBS distribution: drop it into third_party/cef/cef_binary_<ver>_<platform> and pass -DCEF_VERSION. Carry the 6-line jni_util.cpp guard (#if CEF_VERSION_MAJOR >= 152) for the 3 missing net error codes. Pin OBS SHA-256s (linux 8ffc64d0..., win 54cd191a...). Run the codec probe on real Windows by Oct 10.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "scratchpad/jbuild/build2.log; cef_api_hash.h; obs-studio CMakePresets.json:54-66"
+  },
+  {
+   "name": "Codec patent and licence exposure (path B)",
+   "root_cause": "Shipping Chrome-branded FFmpeg (H.264/AAC software decoders) may require patent licences. The CEF maintainer warns about this; OBS publishes no licensing statement; the last major US H.264 patent runs to about Nov 2027.",
+   "fix": "Keep path D (VP9/AV1/Opus, royalty-free) as primary. If B is used, do not mirror the binaries: download OBS's official distribution on the player's first run with a SHA-256 pin and an explicit consent screen (same pattern as AkashicFM's ToolManager). Get a quick legal opinion. Document in the repo that the codec build is optional.",
+   "severity": "high",
+   "grade": "INFERRED",
+   "source": "https://github.com/chromiumembedded/cef/issues/3559; https://github.com/CinemaMod/mcef/issues/28"
+  },
+  {
+   "name": "Retransmission rights and Content ID",
+   "root_cause": "Relaying a broadcaster's coverage, or a YouTube stream, to all players is retransmission and public communication (Lei 9.610 art. 95; YouTube ToS forbids download/restream). The owner restreaming the server with that footage visible is scanned by Content ID.",
+   "fix": "By Oct 21, pick a source with an explicit licence or written permission (TV Câmara CC BY 4.0 / BY-NC-ND, TV Senado's retransmission policy, or a broadcaster's written OK), and keep credits and watermark. For YouTube-only sources, use the official embed (path B) instead of relaying. On the owner's own stream, mute or blur the telão or switch it to the TSE results page; ask the rights holder to allowlist his channel.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "planalto.gov.br l9610 art. 95; youtube.com/t/terms; support.google.com/youtube/answer/3367684; camara.leg.br and senado.leg.br policies"
+  },
+  {
+   "name": "Relay egress bandwidth",
+   "root_cause": "Every player within render range downloads its own stream: about 1.9 Mbit/s at 720p, so about 190 Mbit/s for 100 viewers. A residential uplink cannot carry that.",
+   "fix": "Run MediaMTX on the game server, a VPS or behind a CDN with at least 300 Mbit/s of egress. Offer a 480p tier (about 1 Mbit/s). Only start the WD browser when the player is within N blocks. Load-test 50 virtual viewers by Oct 11.",
+   "severity": "high",
+   "grade": "INFERRED",
+   "source": "scratchpad/bench measured bitrates"
+  },
+  {
+   "name": "WebRTC reachability (UDP/NAT)",
+   "root_cause": "MediaMTX WebRTC uses UDP :8189 and host candidates; players behind strict NAT or firewalls may fail ICE.",
+   "fix": "Set webrtcAdditionalHosts to the public IP and enable webrtcLocalTCPAddress (TCP fallback). Use LL-HLS over HTTPS :443 as automatic fallback in the player page. Serve everything via TLS from a reverse proxy.",
+   "severity": "medium",
+   "grade": "INFERRED",
+   "source": "mediamtx.yml v1.21.1 lines 400-415 (webrtcLocalUDPAddress/webrtcLocalTCPAddress/webrtcAdditionalHosts)"
+  },
+  {
+   "name": "Player desync",
+   "root_cause": "hls.js picks its own live edge (116 ms between two local clients measured). YouTube-direct clients each run their own buffer, likely seconds apart.",
+   "fix": "Steer playback to serverNow − D: EXT-X-PROGRAM-DATE-TIME (MediaMTX) plus hls.playingDate, a server offset from AkashicFM's ServerClock ping-pong passed into the page, and playbackRate within ±5% (seek if more than 1 s off). For WebRTC, optionally set RTCRtpReceiver.jitterBufferTarget to equalise.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "scratchpad/lat two-client results; gohlslib muxer_stream.go:444; hls.js API.md"
+  },
+  {
+   "name": "YouTube embed configuration (path B)",
+   "root_cause": "The embed requires an HTTP Referer (Error 153 without it), a viewport of at least 200x200, no overlays, and autoplay only when visible. The broadcaster may also disable embedding.",
+   "fix": "Host the player page on an Akashic HTTPS domain (not file:// or a custom scheme) with Referrer-Policy strict-origin-when-cross-origin, and use youtube-nocookie.com/embed. Keep the WD browser resolution at 1280x720 or more. Confirm the chosen channel allows embedding during the Oct 18 rehearsal.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "developers.google.com/youtube/terms/required-minimum-functionality; til.simonwillison.net/youtube/fixing-153-embed"
+  },
+  {
+   "name": "YouTube ingest via yt-dlp is brittle",
+   "root_cause": "HLS live may need GVS PO tokens per client, and YouTube forces SABR on web clients; datacenter IPs are bot-walled.",
+   "fix": "Ingest from the owner's PC with OBS capturing a real browser window or a TV capture card, sent via WHIP (AV1+Opus) or SRT to MediaMTX. Keep yt-dlp/streamlink only as a secondary source.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "yt-dlp _video.py:3540,3703-3712; scratchpad/yt bot-wall pages"
+  },
+  {
+   "name": "Codec CEF download size",
+   "root_cause": "OBS's libcef.so is 2.03 GB unstripped and the Windows zip is 345 MB.",
+   "fix": "Strip libcef.so (279.5 MB, 110.7 MB gzipped) and repackage only Release/ + Resources/. Show a progress UI and pre-download before Oct 25 (players install during the week before).",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "scratchpad/obscef measurements"
+  },
+  {
+   "name": "WebRTC first frame about 3 s",
+   "root_cause": "The test page waits for non-trickle ICE gathering (3 s timeout) before POSTing to WHEP.",
+   "fix": "POST the offer after the first host candidate or after about 300 ms, or use trickle ICE (WHEP PATCH). Keep the LL-HLS fallback.",
+   "severity": "low",
+   "grade": "VERIFIED",
+   "source": "scratchpad/lat/www/index.html; WebRTC FIRST_FRAME after 3082-3189 ms"
+  },
+  {
+   "name": "Evidence gap: no-codec WebRTC not verified at runtime",
+   "root_cause": "The stock jcefmaven 152 natives would not start in my harness ('ContentMainRun failed with exit code 28'), so VP9/AV1 WebRTC receive was only verified on the codec builds (116 and 150).",
+   "fix": "Run scratchpad/bench/rtc.js and the lat/ harness against the actual WD port's CEF build before Oct 8. VP8/VP9 is expected to work because it is royalty-free and always compiled.",
+   "severity": "low",
+   "grade": "VERIFIED",
+   "source": "jcefmaven probe runs in this session"
+  }
+ ],
+ "open_questions": [
+  "As of Oct 2026, are YouTube live streams still AAC-only (no Opus) and H.264 on HLS? The owner should run `yt-dlp -F --live-from-start <broadcaster live URL>` on his residential IP by Oct 10.",
+  "Which broadcaster will be the source on Oct 25, and does it allow embedding (path B) or have a licence or permission for retransmission (path D)? Does TV Brasil/EBC publish a licence or public HLS for its live signal? None was found.",
+  "Expected peak number of players in range of the telão, and the available egress on the game server or VPS (sets 720p vs 480p and the need for a CDN).",
+  "Will the owner run the ingest (OBS) from home on election night, and is his uplink of at least 6 Mbit/s stable? Is there a capture card or TV tuner as a non-YouTube source?",
+  "Does OBS object to third parties downloading its CEF builds from cdn-fastly.obsproject.com, and does it have a codec licensing position? None was found.",
+  "Untested: java-cef jcef.dll/libjcef.dylib built against the OBS 7871 Windows/macOS distributions, and running inside GTNH with lwjgl3ify/Angelica on Windows.",
+  "Does YouTube's player still accept Chromium 116 (CinemaMod backup) in Oct 2026?",
+  "Which platform will the owner restream on (YouTube vs Twitch), and will he accept muting or blurring the telão on his own stream to avoid Content ID interruption?",
+  "Would TSE or the public TV pool (TV Justiça, TV Câmara, TV Senado) carry results-night coverage, as opposed to only the urna demonstrations?",
+  "Proposed dated go/no-go plan (not yet agreed):\n- Thu Oct 8: relay smoke test over WAN (go if WebRTC median added delay under 1 s and LL-HLS under 3 s, 30 min with no stall).\n- Sat Oct 10: owner's yt-dlp check, plus the Windows codec probe of the OBS-CEF jcef build.\n- Sun Oct 11: load test with 50 virtual viewers.\n- Sun Oct 18, about 20:00 BRT: full rehearsal with 10+ players during a live news show (go if players are under 100-150 ms apart and client FPS impact is acceptable).\n- Wed Oct 21: rights decision and freeze.\n- Sat Oct 24, 17:00-20:00 BRT: dress rehearsal including an unlisted owner restream.\n- Sun Oct 25, 15:30 BRT: go live. Fallback order: WebRTC, then LL-HLS, then direct embed (B), then the TSE results page."
+ ]
+}

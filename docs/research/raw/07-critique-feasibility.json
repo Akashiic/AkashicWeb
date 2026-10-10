@@ -1,0 +1,164 @@
+{
+ "verdict": "NOT FEASIBLE AS WRITTEN. It can be rescued by re-ordering decisions and cutting scope, but the 65-75% figure has no basis (INFERRED). Working backwards from a failure on 2026-10-25, these are the most likely causes, in order:\n(1) Rights fall through late. The final rights decision is on 10-21, after RC1 and the natives prefetch (10-20). If no broadcaster grants relay permission, which is likely in 10 days around an election, the only path left is the YouTube embed. That path needs the codec build, and the codec build may not have been shipped. So the relay, which the plan calls \"PRIMARY\", is probably the path that will be legally unusable.\n(2) Staffing. The plan assumes two parallel developers, but the evidence shows one author working with an AI assistant. Every Windows test needs the owner's own PC. The AI assistant already lost 5 days to usage limits, and the schedule has zero slack.\n(3) Field defects surface at the first public rehearsal (G4, 10-18). That leaves too little time for a native rebuild plus a re-download of 150-350 MB by players. The Akashic track record shows automated and Linux-only gates repeatedly miss field defects.\n(4) Adoption. The block-based design makes the mod REQUIRED to join. Players who did not update by 10-25 cannot enter the server on election night. The public rehearsal (10-18) also happens before the mod is published to players (10-20).\n(5) A single point of failure on election night. The owner is at once the ingest operator, the restreamer, the admin and the decision maker, on one home PC. The relay endpoints are also public and have no authentication.\nFix order:\n- Decide on 10-11/10-12: the source, its embeddability, and the codec build. Ship the codec build as the default engine if any candidate source is YouTube-only.\n- Make the telão a client-side display anchored to coordinates the server sends, so vanilla clients still join, or prove that clients without the mod can join.\n- Freeze the natives at G1 and push the installer from about 10-15 in a small early client release.\n- Plan for one developer: no relay unless a rights-clean source is confirmed, and no admin keyboard, Linux tier or LL-HLS steering.\n- Add per-player relay tokens, a server kill switch, a crash-loop guard, a separate ingest machine and a no-restart window on the 25th.\nNothing in this review was built or run. All findings come from reading repositories and the plan.",
+ "issues": [
+  {
+   "target": "Gate ordering: rights decision (provisional 10-15, final 10-21) vs codec-build stance (10-13) vs RC1/natives prefetch (10-20)",
+   "problem": "The native payload that players download (codec build or codec-free) depends on which source is legal, but rights are settled only after the natives are frozen and prefetched. Suppose the owner picks the codec-free 152 build at G1, and on 10-21 no broadcaster grants relay rights. Then no live video path remains (the embed needs H.264/AAC), and the event falls back to SN1, the TSE results page. The plan has no gate that catches this before it is too late.",
+   "evidence": "Plan schedule 10-13 ('codec-build licensing stance final'), 10-20 RC1 + prefetch, 10-21 'Final rights decision'; codec-path finding 'YouTube live audio is AAC only' (yt-dlp#9043); plan G1 outcome '(d) fails -> the embed backup is dropped and SN1 becomes the only backup'.",
+   "severity": "blocker",
+   "correction": "Pull the source and rights decision to Mon 10-12 (G0.5).\n- Check the actual candidate channels now: are they live on YouTube, is embedding allowed (IFrame API onError 101/150), is there a DVR window?\n- If any candidate is YouTube-only, ship the codec build (OBS 7871) as the single default engine, and decide licensing on 10-12, not 10-13.\n- Ship a single natives variant to players.\n- Keep the 10-21 deadline only for the written permission paperwork of a relay source already chosen."
+  },
+  {
+   "target": "Verdict/architecture: relay path D as PRIMARY",
+   "problem": "The relay is only legal with a retransmission licence or written permission (Lei 9.610 art. 95; YouTube ToS). Getting written permission from a commercial broadcaster for a game-server restream within 10 days of a presidential runoff is unlikely. TV Câmara and TV Senado runoff-night results coverage was not verified to exist. So the embed path (B) is the probable real primary, and the plan's latency and sync promises do not hold on that path. The plan gives 'uncontrolled, likely 1-10 s' skew and per-client ads, and has no sync design for it.",
+   "evidence": "Research codec-path F (Lei 9.610 art. 95, youtube.com/t/terms, TV Câmara/Senado policies); plan latency_answer ('Direct YouTube embed: uncontrolled, likely 1-10 s'); issues research problem 'per-client ads' (montoyo/webdisplays#80). The broadcaster permission likelihood is INFERRED.",
+   "severity": "high",
+   "correction": "Invert the default:\n- Path B (codec build plus the official embed) is primary for commercial coverage.\n- Relay D is used only if a rights-clean source with runoff coverage is confirmed.\nAdd embed-mode sync to the MVP: IFrame API seekTo(liveEdge - D), with D about 10-15 s, driven by the server clock. This needs DVR on the stream; measure the skew at G4 (INFERRED, about 0.5-2 s). Also:\n- Tell the owner that the embed shows pre-roll or mid-roll ads that differ per client.\n- Players are not frame-synced on the embed.\n- Rewrite latency_answer for the embed case."
+  },
+  {
+   "target": "Staffing assumption: 'Assumes 2 developers working in parallel'; G0 NO-GO cuts only keyboard input + Linux",
+   "problem": "There is no evidence of a second developer. Both in-house repos have a single human author working with an AI assistant. The 5-day usage-limit stop shows the assistant itself can be unavailable for days, and the schedule has no slack day between 10-11 and 10-24. With one developer, streams E, W, R and Q all run serially, and the G0 cut (keyboard input, Linux) saves maybe 1-2 days of a 16-28 person-day estimate.",
+   "evidence": "git log authors: /home/user/AkashicFM 28 commits all 'Akashic'; /home/user/Akashic-Voice 20 'Akashic' + 20 'Julius Meinking' (upstream ProxyChat, docs/HISTORY.md:7). Task DATE UPDATE: 'Work stopped for 5 days because of usage limits'.",
+   "severity": "blocker",
+   "correction": "Plan for one developer plus the AI assistant, with 2 explicit buffer days (10-19, 10-23) and an 'assistant unavailable' contingency (runbooks a human can execute; native CI workflows that need no AI). The one-developer cut list:\n- no relay unless a rights-clean source is confirmed by 10-12;\n- no LL-HLS steering;\n- no admin keyboard;\n- no Linux tier;\n- no multiblock block port: use a client-anchored display (see the join-lockout issue);\n- admin control by command and presets only.\nState plainly in the verdict that two people are needed for the full scope."
+  },
+  {
+   "target": "Schedule effort model (16-28 person-days) vs Akashic track record",
+   "problem": "The estimate misplaces the risk. The AkashicFM history shows code throughput is high: it went from Phase 0 to 1.0.0 in about 30 hours and to 1.2.0 in 5 days. But all its evidence is Linux/xvfb harness runs, with no Windows, launcher or real-player evidence. Akashic-Voice shows the cost: after RC7 passed every automated gate, field logs revealed defects the gates could not see, and the project is still not live-approved weeks later. For an in-process native browser, the critical path is field validation on players' Windows PCs plus native rebuild cycles, not coding.",
+   "evidence": "git log /home/user/AkashicFM (2026-10-01 23:14 'Fase 0' -> 2026-10-03 05:32 '1.0.0' -> 2026-10-05 '1.2.0'); grep finds no Windows/launcher test in /home/user/AkashicFM/docs/FASE*-RESULTADOS.md; tools/prod/run.sh runs Java 8 under xvfb; /home/user/Akashic-Voice/docs/PROJECT_STATE.md §4 reviewer's note and HANDOFF.md:9 (field defects invisible to automated gates).",
+   "severity": "high",
+   "correction": "Restructure the schedule around field cycles:\n- Windows engine smoke on the owner's PC 10-12/10-13.\n- A closed alpha with 5-10 real players on their own Windows PCs by 10-15/16, earlier than G4.\n- Public rehearsal 10-18.\nNative bugfix cutoff 10-16: after that only Java-side fixes that keep the same native buildId, so players never re-download."
+  },
+  {
+   "target": "Mod distribution: 'The mod is required in the pack, because the block registry must match'",
+   "problem": "The mod is required to join, so any player without the new jar is locked out of the server on election night. That is the night of peak attendance, with returning and casual players. Rollback is also hard: removing a block-registering mod later triggers FML missing-block handling on the world. Nothing in the schedule covers pushing a required jar to every player's GTNH instance, and players install GTNH themselves from the official Prism/zip packs.",
+   "evidence": "Plan architecture §10; research wd-code open question on FML registry sync; GTNH distributes official Prism ZIPs (gtnh-integration finding, gtnewhorizons.com/downloads). Lockout and rollback behaviour of 1.7.10 FML is INFERRED; not tested.",
+   "severity": "high",
+   "correction": "For the event build, register no block and no item. Make the telão a client-side display:\n- The server sends anchor coordinates, size and state over a custom payload channel. The mod declares acceptableRemoteVersions=\"*\" or the equivalent, so vanilla and old clients still join.\n- Build the physical frame from vanilla blocks with a sign saying 'instale o AkashicWeb para assistir'.\n- Port the Web Displays blocks after the event.\nThis also removes the 2-3 person-days of multiblock and TileEntity porting from the critical path. If the block design is kept, add a G0 test that a client without the mod can or cannot join, and a rollback plan for removing the block."
+  },
+  {
+   "target": "G4 public rehearsal (Sun 10-18, 10+ players) vs RC1 publication (Tue 10-20)",
+   "problem": "The public rehearsal with 10+ players happens two days before the mod and installer are published to players. The plan never says how those players get the build. G5's '>=80% of expected attendees preflight OK' is measured on 10-22, only 2 days after the prefetch campaign starts on 10-20. Players who log in weekly will not be covered, and 'expected attendees' is undefined.",
+   "evidence": "Plan schedule rows 10-18 (G4) and 10-20 ('Publish the mod and installer to players with prefetch'); plan gates G4, G5.",
+   "severity": "high",
+   "correction": "Decouple the natives from the mod. After G1 passes (10-13), freeze the native buildId and publish a small 'AkashicWeb Preflight' client release by 10-15. It contains only the CefNativesInstaller, preflight and telemetry, and it is optional to join. Players then download the large payload during the week. Then:\n- Run an opt-in alpha channel for the G4 testers from 10-16.\n- Define 'expected attendees' as unique players in the last 14 days, from server logs.\n- Set G5 to >=60% of that set preflight-OK, with a named action if below (Discord ping, in-game broadcast)."
+  },
+  {
+   "target": "Gate measurability: G3 FPS criterion, G4 skew and time-to-video",
+   "problem": "Several criteria cannot be measured as written:\n- G3: 'mid-range PC' and 'same scene' are undefined.\n- G4: 'burned-in clock/frame counter photographed or logged per client' cannot be photographed across 10+ remote players. A live news programme carries no burned-in counter unless the relay adds one.\n- G4: '90% see video within 15 s' needs a first-frame event that the MVP does not report anywhere.\n- The MVP excludes any JS-to-mod bridge, so the page cannot report its playingDate or first frame.",
+   "evidence": "Plan gates G3, G4; mvp_scope excludes the 'JS API'; codec-path lat harness used requestVideoFrameCallback and a burned-in counter only on localhost (scratchpad/lat/www/index.html).",
+   "severity": "medium",
+   "correction": "Add a minimal telemetry bridge to the MVP: a console-message or title channel, or one CefMessageRouter query.\n- The page reports firstFrameAt, playingDate - serverNow, and stall counts every 10 s.\n- The mod forwards these to the server and writes them to the audit log, without identifiers in committed evidence.\n- In rehearsal, the relay overlays a PDT/frame-number drawtext.\n- Pin G3 to named hardware (the owner's PC plus one iGPU laptop), a fixed coordinate and view direction, and a 60 s average from F3 or an Angelica FPS log."
+  },
+  {
+   "target": "Election-night operations: single operator and single ingest PC",
+   "problem": "On the night, the owner runs OBS ingest (capture plus encode, 3-6 Mbit/s up), his own restream (another encode plus upload), a GTNH client with CEF, and admin duty, all on one home PC and one uplink. Any crash or ISP drop blacks out the telão and his stream together. The 'secondary ingest machine' appears only as 'if available'. No roles or deputies are defined.",
+   "evidence": "Plan risk 'Ingest failure on election night' (mitigation 'A secondary ingest machine or connection if available'); open_decisions item 4; schedule 10-25.",
+   "severity": "high",
+   "correction": "Make these mandatory by G6:\n- A second ingest source on different hardware and ISP: a staff member's PC, or a VPS-side capture of an authorised web source.\n- MediaMTX configured with fallback/alwaysAvailable to a slate.\n- Named roles: director (URL and preset changes), ingest operator, relay/VPS operator, community and Discord support, plus a deputy for each.\n- A printed pt-BR runbook with exact /telao commands.\n- Two-person confirmation for URL changes, as the plan suggests."
+  },
+  {
+   "target": "Relay security: public WHEP/LL-HLS endpoints",
+   "problem": "The relay endpoints are reachable by anyone on the internet. Anyone who finds the URL (it is visible in the page source) can pull the stream. That wastes the 300 Mbit/s egress budget and makes Akashic a public restreamer of the coverage, which worsens the rights exposure. hlsAllowOrigins is '*' by default.",
+   "evidence": "MediaMTX v1.21.1 mediamtx.yml in scratchpad lat/: authMethod internal (line 58), authHTTPAddress (100), authJWTJWKS (126), hlsAllowOrigins [\"*\"] (329) — auth support VERIFIED, plan does not use it.",
+   "severity": "high",
+   "correction": "Use MediaMTX authMethod jwt or http. The game server issues each logged-in player a short-lived signed token, pushed into the page with the serverNow updates. Restrict hlsAllowOrigins and webrtc origins to the player-page domain. Rate-limit per IP at the reverse proxy. Run a 'leech' test at G2."
+  },
+  {
+   "target": "Relay host 'a VPS or the game host'",
+   "problem": "Running the relay on the game host shares about 190 Mbit/s or more of video egress with the game traffic at peak attendance, so a relay overload lags the game server for everyone. The plan never sizes the game server itself: player cap, Velocity or lobby, a join storm around 17:00, TPS at a crowded spawn.",
+   "evidence": "Plan architecture §7 and risk 'Relay egress or VPS saturates'; codec-path bandwidth finding (~1.9 Mbit/s/viewer). Game-server capacity is not covered anywhere in the plan.",
+   "severity": "medium",
+   "correction": "Put the relay on a separate VPS or CDN, never the game host. Add an ops checklist for the game server:\n- max-players raised;\n- spawn chunk preloading;\n- no scheduled automatic restarts, backups or world saves that pause the server between 14:00 and 01:00 on 10-25;\n- a TPS and player-count dashboard;\n- a 30+ player join-storm test at G5."
+  },
+  {
+   "target": "Crash loop on join / kill switch",
+   "problem": "The telão is at spawn, where players join, so every client creates the browser right after joining. A native crash in libcef or a GPU process takes down the JVM (no Java hooks run on a hard crash). The player rejoins at spawn and crashes again. The auto-disable 'after 2 consecutive crashes' is under-specified, and the plan has no server-side kill switch for the case where a bad build is already deployed.",
+   "evidence": "Plan problem_fixes 'Native crashes kill the game' (marked after-oct-25 except MVP guards); issues research 'Native crashes of the game process' (CinemaMod/mcef#34, #36, #86; WD#40).",
+   "severity": "high",
+   "correction": "Implement and test a crash-loop guard:\n- Write a marker file before CefApp init and before each browser creation; clear it on clean shutdown.\n- On the next start, if the marker is present, stay disabled until the player re-enables it in a GUI.\n- Delay browser creation 10-20 s after join.\n- Add a server-side flag in the login handshake (telao.clientEnabled=false) that forces every client to the poster without a client update.\n- Add a documented self-rescue: a JVM flag or a file 'akashic-web/DISABLED'.\n- Add a P0 test: kill the client with a native fault (taskkill /F on helper or main process) and rejoin."
+  },
+  {
+   "target": "Test matrix: Windows paths, OneDrive, Controlled Folder Access",
+   "problem": "Natives and the Chromium profile go under <mcDataDir>/<gameDir>. CurseForge, and often Prism or ATLauncher, keep instances under Documents, which OneDrive Known Folder Move often redirects. OneDrive would then sync and lock 350 MB of natives and a Chromium profile full of small, locked SQLite files. Files-on-demand can dehydrate DLLs, and Defender Controlled Folder Access can block java.exe writes to Documents. None of these cells is in the matrix.",
+   "evidence": "Plan architecture §8 ('installed to <mcDataDir>/akashic-web/...') and §1 ('root_cache_path under <gameDir>/akashic-web/profile'); test_matrix P1 covers only the accented username and Prism instance names. OneDrive and CFA behaviour is INFERRED.",
+   "severity": "medium",
+   "correction": "On Windows, install natives to %LOCALAPPDATA%\\AkashicWeb\\<buildId> (never roaming or OneDrive). Put the profile at %LOCALAPPDATA%\\AkashicWeb\\profiles\\<hash(instanceDir)>, with the ASCII-safe fallback for that path. Add P1 cells:\n- an instance under a OneDrive-redirected Documents;\n- Controlled Folder Access on;\n- a username with an accent AND a space;\n- a non-admin Windows account."
+  },
+  {
+   "target": "Test matrix: launchers and bundled JREs",
+   "problem": "The matrix names only Prism. CurseForge ships its own legacy JRE: Java 8u51 was seen in a CurseForge jre-legacy log. That JRE lacks ISRG Root X1, so Java-side native downloads over HTTPS from GitHub or Akashic would fail TLS. MultiMC, ATLauncher, Technic, the vanilla launcher and GTNH's own Prism zips each have a different working directory, JVM args and Java. 32-bit Java on Windows cannot load x64 natives.",
+   "evidence": "Issues research: CinemaMod/webdisplays#71 (CurseForge jre-legacy), montoyo/webdisplays#116 ('8u51'); plan test_matrix; plan fix 'Warn when java.version < 1.8.0_141' (warning only).",
+   "severity": "medium",
+   "correction": "Add launcher cells: Prism (GTNH zip, Java 8 and 21), CurseForge (bundled JRE), MultiMC, ATLauncher, and vanilla launcher plus the GTNH zip. Then:\n- Detect sun.arch.data.model=32 and show an UNSUPPORTED_ARCH placeholder.\n- On TLS failure, fall back automatically to the manual-zip import, with a pt-BR message and download link.\n- Bundle ISRG Root X1/X2 as extra trust anchors, since hash pinning still protects integrity."
+  },
+  {
+   "target": "Test matrix: antivirus, GPUs, low-RAM, Wayland, macOS hardware",
+   "problem": "Coverage gaps:\n- Antivirus: the plan has a guide but no test cell. Defender's first-load scan of a 280 MB libcef.dll and heuristics on the renamed, unsigned akashicweb_helper.exe are untested; Avast and Kaspersky are common in Brazil.\n- GPU vendors and drivers: Intel iGPU, AMD and NVIDIA, plus Optimus laptops.\n- 4-8 GB RAM machines running GTNH plus about 0.5-1 GB of Chromium.\n- Linux Wayland: XInitThreads and X11 are assumed; under lwjgl3ify 3/SDL3 without XWayland, CEF init may fail.\n- macOS: placeholder-only cells are listed, but nobody is named who owns a Mac to run them.",
+   "evidence": "Plan test_matrix; issues research 'Antivirus/firewall/DNS-filter interference' (WD#20, #26; CinemaMod/mcef#66) and 'GPU / OSR driver problems' (CinemaMod/mcef#11, #66, #120); cef-tech resource finding (0.43-0.54 GiB PSS); gtnh-integration 'Late XInitThreads on Linux' (INFERRED).",
+   "severity": "medium",
+   "correction": "Add P1 cells:\n- Defender default plus one third-party AV (Avast or Kaspersky);\n- one Intel iGPU, one AMD and one NVIDIA;\n- an 8 GB RAM machine, where the client defaults to Off or 480p when total RAM is 8 GB or less or -Xmx exceeds 60% of RAM;\n- a Linux Wayland session (only if the Linux tier is kept).\nName who owns the macOS test hardware or drop that cell; the placeholder path can be unit-tested by forcing an UNSUPPORTED_OS reason code. Measure the first-init time with Defender and show a progress or 'initializing' placeholder."
+  },
+  {
+   "target": "GTNH version freeze ('recommended: 2.8.4', decided 10-11)",
+   "problem": "The plan treats the freeze as picking a version, but the server already runs some version. If it runs 2.7.x or the 2.9 RC, 'freezing on 2.8.4' means migrating a live GTNH world two weeks before the event, which is a high-risk operation. Also, the Akashic network's documented field environment is the Technic 'Forbidden Series' pack on Crucible behind a Velocity lobby, with an Android launcher. That suggests the event server's stack should be confirmed rather than assumed to be GTNH.",
+   "evidence": "/home/user/Akashic-Voice/docs/BUILD_AND_QA.md:13 (Technic Forbidden Series client, Forge 10.13.4.1614); ARCHITECTURE.md:11 ('Dedicated Forbidden backend: Crucible 1.7.10'); RELATED_PROJECTS.md (forbidden-mobile-launcher, akashic-world-firewall); plan open_decisions item 1. Which server hosts the telão is unknown.",
+   "severity": "high",
+   "correction": "At G0, record in writing:\n- which server and modpack hosts the telão (GTNH or Forbidden);\n- its exact current version;\n- the server software (Forge, or a Crucible/Bukkit hybrid, which changes permissions, command handling and plugin interference, e.g. akashic-world-firewall);\n- whether players arrive through a Velocity lobby (transfers re-trigger join logic and the browser lifecycle).\nFreeze the CURRENT version and never upgrade the server for this event. If Android-launcher players can join, size SN2 and the placeholder for them."
+  },
+  {
+   "target": "Native build pipeline on Windows (G1 10-13)",
+   "problem": "Several Windows steps are unproven:\n- The OBS Windows distribution is a non-standard 'devtools_patch' build (150.0.20) with a different version from the Linux one (150.0.19), so its libcef_dll_wrapper flags and toolchain on the windows-2022 runner are untested.\n- The CCBlueX workflow uploads to LiquidBounce and must be stripped of that.\n- Each native fix costs a CI cycle plus a re-download by players.\n- Only Linux was built (in about 5 minutes, locally).",
+   "evidence": "codec-path findings (OBS Windows '150.0.20-7871-devtools_patch.3553+g628ec9a' vs Linux 150.0.19); /home/user/ccbluex/java-cef/.github/workflows/build-jcef.yml:40-73 (windows-2022 runner, tar+Get-FileHash); CMakeLists.txt CEF_VERSION override VERIFIED.",
+   "severity": "medium",
+   "correction": "Start the Windows CI build on 10-11 morning as the very first engine task, and keep the Spotify 152 Windows build running in parallel the same day. Get the first Windows artifact into the owner's hands on 10-12, not 10-13. Pre-agree the G1 escalation: if the OBS Windows build fails by 10-13 18:00 BRT and the embed is needed, fall back to the CinemaMod 116 Windows natives (codec-enabled, VERIFIED markers) for the embed path."
+  },
+  {
+   "target": "Co-installed Akashic mods (Akashic Voice, AkashicFM) on the same clients",
+   "problem": "The plan ignores these interactions:\n- Chromium plays telão audio on the OS device. Players at spawn without headphones will feed it into Akashic Voice mics, which have no AEC and intentionally no AGC or limiter, causing echo and rebroadcast across spawn.\n- Akashic Voice already shows OpenAL natives unlinked after a sound reload in the field. Adding another heavy native stack in-process is untested.\n- SN2 (AkashicFM radio relay) needs AkashicFM deployed on that server and its clients. The repo shows 1.2.0 but no production-deployment evidence.",
+   "evidence": "/home/user/Akashic-Voice/docs/PROJECT_STATE.md §3 ('AGC / limiter CONDITIONAL — intentionally absent'; EFX/OpenAL field issues #3); AkashicFM README.md:129 (same jar on server and all clients); plan SN2.",
+   "severity": "medium",
+   "correction": "Add P1 cells with Akashic Voice (and AkashicFM, if deployed) co-installed. Mitigate the echo:\n- default telão volume lower near spawn;\n- a pt-BR 'use fones' notice;\n- optionally auto-duck the telão while Akashic Voice reports the local mic as active, via a soft dependency.\nConfirm by 10-12 whether AkashicFM is live on the event server; if not, drop SN2 or schedule its deployment explicitly."
+  },
+  {
+   "target": "Communication to players",
+   "problem": "The plan has only 'pt-BR install guide draft' (10-17) and a 'prefetch campaign from 10-20'. Missing:\n- the exact download size per OS, important for players on metered or mobile data;\n- the date by which the jar must be installed to join, if the mod stays required;\n- what the placeholder reason codes mean;\n- the opt-in and LGPD notice for telemetry (OS, GPU, Java tied to the player UUID in the audit log);\n- a staffed support channel on election night.",
+   "evidence": "Plan schedule 10-17, 10-20; architecture §10 telemetry handshake; plan problem_fixes 'Natives payload too large' (sizes given as ranges 150-350 MB).",
+   "severity": "medium",
+   "correction": "Publish a pt-BR announcement on Discord and in-game on 10-15 with:\n- the exact compressed and installed sizes per OS, measured from the frozen buildId;\n- the supported matrix;\n- a 'what to do if you see code X' table;\n- the telemetry and consent text;\n- the install deadline (10-23).\nRepeat on 10-20 and 10-24. Staff a #telao-suporte channel from 14:00 to the end of coverage on 10-25."
+  },
+  {
+   "target": "Fallback automation and SN1 (TSE page)",
+   "problem": "The fallback ladder is admin-driven (/telao fallback) and has no client-side automatic fallback when frames stop. On SN1:\n- The TSE results site is a multi-host SPA. A resource-level allowlist in onBeforeResourceLoad will break it unless every subresource host is listed.\n- TSE is heavily loaded on results night.\n- The page depends on hls.js and the Akashic domain or TLS; if hls.js comes from a CDN, that is another dependency.",
+   "evidence": "Plan architecture §6 (onBeforeBrowse lock), §9 (onBeforeResourceLoad blocks), schedule 10-25 fallback ladder. TSE subresource hosts and load behaviour are INFERRED and were not checked.",
+   "severity": "medium",
+   "correction": "Add a page-side watchdog: no new frame for 10 s -> try the next mode -> poster with 'reconectando'. Report the switch to the server.\n- Apply the allowlist to main-frame navigation only, not to subresources, plus the internal-address block.\n- Rehearse SN1 against the real TSE site, which currently shows round-1 results.\n- Self-host hls.js and the page assets.\n- Check the Akashic domain's DNS and TLS expiry before 10-25.\n- Pre-render a static TSE screenshot poster as SN3."
+  },
+  {
+   "target": "G6 Content ID criterion and the rehearsals' own rights",
+   "problem": "The G6 dress rehearsal (Saturday) cannot show whether Content ID will act on the actual runoff broadcast, because a different programme is on air. The G4 and G5 rehearsals 'during a live news programme on the relay' are themselves retransmissions that need rights.",
+   "evidence": "Plan gates G4, G6; codec-path F (support.google.com/youtube/answer/3367684: all live streams scanned).",
+   "severity": "low",
+   "correction": "Run the rehearsals on a rights-clean source (TV Câmara legislative CC BY, or an Akashic-owned test stream). Reword G6 to test the restream mitigation mechanics: the telão audio muted or the TSE view in the OBS scene, switchable in under 5 s. Do not claim Content ID safety from the test."
+  },
+  {
+   "target": "Verdict probability and evidence labelling",
+   "problem": "The verdict states '65-75% for the full outcome' with no derivation. The research's own path ranking puts the relay at 0.85-0.9 and B at 0.7 for the path alone, before the WD port, distribution, adoption, rights and staffing. Combining dependent risks (rights, Windows engine, one developer, adoption, field defects) gives a much lower number.",
+   "evidence": "Plan verdict; codec-path 'Ranking' finding (INFERRED); the issues above.",
+   "severity": "low",
+   "correction": "Report two numbers, both INFERRED:\n- About 35-50% that a majority of attending Windows players see live coverage video on the telão.\n- About 80-90% that at least SN1 (a real web page in the in-game browser) runs for players with natives.\nList the top 5 drivers. Revise after G1 and after the source decision."
+  }
+ ],
+ "confirmed_claims": [
+  "AkashicFM was built by a single author ('Akashic', 28 commits) from 2026-10-01 23:14 (Fase 0) to 1.0.0 on 2026-10-03 05:32 and 1.2.0 on 2026-10-05. Source: git log in /home/user/AkashicFM.",
+  "AkashicFM's production-jar harness runs on Linux with Java 8 under xvfb, with packs for GTNH 2.7, 2.8 and 2.9 that contain GTNHLib, UniMixins, Hodgepodge and OpenComputers but not Angelica or lwjgl3ify. No Windows or launcher test appears in docs/FASE*-RESULTADOS.md. Sources: /home/user/AkashicFM/tools/prod/packs.sh:7-16; grep over docs.",
+  "Akashic-Voice field logs showed defects that the automated gates missed, and nothing in it is live-approved. Source: /home/user/Akashic-Voice/docs/PROJECT_STATE.md §1, §4; HANDOFF.md:9.",
+  "The Akashic field desktop client is the Technic 'Forbidden Series' pack (Forge 10.13.4.1614), with a Crucible backend and an Android launcher. Sources: /home/user/Akashic-Voice/docs/BUILD_AND_QA.md:13; ARCHITECTURE.md:11; RELATED_PROJECTS.md.",
+  "The Akashic-Voice human commits are by a single author ('Akashic', 20 commits); the other 20 commits are upstream ProxyChat by Julius Meinking. Sources: git log; docs/HISTORY.md:7.",
+  "MediaMTX v1.21.1 supports authMethod internal, http and jwt, and hlsAllowOrigins defaults to [\"*\"]. Source: scratchpad lat/mediamtx.yml lines 58, 100, 126-141, 329.",
+  "The CCBlueX java-cef CMake lets CEF_VERSION be overridden, and DownloadCEF skips the download when third_party/cef/cef_binary_<ver>_<platform> exists. The Windows CI job runs on windows-2022 and emits tar.gz plus a Get-FileHash sha256. Sources: /home/user/ccbluex/java-cef/CMakeLists.txt:131-134; cmake/DownloadCEF.cmake:11-24; .github/workflows/build-jcef.yml:40-73.",
+  "The plan's date labels are consistent: Sat 2026-10-10, Sun 10-11, Sun 10-18, Sun 10-25.",
+  "The plan's schedule publishes the mod to players on 10-20, after the 10+ player public rehearsal on 10-18. Source: the plan's schedule rows.",
+  "The plan's final rights decision (10-21) comes after the codec-build stance (10-13) and the RC1 natives prefetch (10-20). Source: the plan's schedule rows."
+ ]
+}

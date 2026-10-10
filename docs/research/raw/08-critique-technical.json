@@ -1,0 +1,86 @@
+{
+ "verdict": "The plan's main technical choices hold up when checked against code and artifacts: the CCBlueX java-cef engine, Java 8 bytecode, the OBS CEF 7871 codec build and the relay. I found no blocker. Eight claims are wrong, overstated or only partly checked, and four of them change the work: (1) The Angelica render-bounds registry the plan calls a \"VERIFIED requirement\" does not exist in Angelica 1.0.0-beta66b, which ships with the recommended GTNH 2.8.4. It exists only in Angelica 2.x, which ships with GTNH 2.9. (2) Linux natives built by the forked CCBlueX CI on ubuntu-24.04 need GCC 13's libstdc++ (GLIBCXX_3.4.31) and glibc 2.34. The plan's \"glibc 2.31+\" support tier is therefore wrong. (3) The plan to rename the helper is silently undone: CCBlueX CefApp.initialize() always sets browser_subprocess_path to jcef_helper(.exe), so the Java side needs a patch too. (4) Downloading OBS's raw CEF on each player's machine does not fit the plan's own size caps. Linux libcef.so is 2.03 GB unstripped, and the Windows zip unpacks to 1.20 GB, mostly OBS build leftovers. A repackaged (and therefore Akashic-redistributed) bundle is needed, or selective extraction plus a Linux exception. Smaller corrections: CCBlueX still uses AWT and Swing classes; the DirectByteBuffer(long,int) fallback does not exist on Java 21; a custom OSR class is unnecessary; the Windows OBS-150 build is non-standard and still untested; the latency numbers came from a muted-autoplay localhost harness with no saved output. Everything not listed as confirmed remains unconfirmed. Not run: any Windows build, anything in-game, any WAN test, the stock CEF 152 WebRTC runtime.",
+ "issues": [
+  {
+   "target": "Rendering / problem_fixes 'Angelica render-bounds cache culls the multiblock' + architecture 3 ('registered as a dynamic-bounds class with Angelica (VERIFIED requirement)') + G3, with recommended freeze GTNH 2.8.4",
+   "problem": "TileEntityRenderBoundsRegistry and the bounds-caching MixinTileEntity do not exist in Angelica 1.0.0-beta66b, the version in GTNH 2.8.4. In beta66b, MixinTileEntity only makes getBlockType and getBlockMetadata atomic. On the recommended frozen version the cache problem does not occur and the reflective registration call targets a class that is absent. The requirement is real only for Angelica 2.x (GTNH 2.9 RC, Angelica 2.2.28).",
+   "evidence": "git -C /home/user/gtnewhorizons/Angelica show 1.0.0-beta66b:src/main/java/com/gtnewhorizons/angelica/rendering/TileEntityRenderBoundsRegistry.java -> 'exists on disk, but not in 1.0.0-beta66b'. curl raw.githubusercontent.com/GTNewHorizons/Angelica/{2.2.28 -> 200, 1.0.0-beta66b -> 404}/.../TileEntityRenderBoundsRegistry.java. git show 1.0.0-beta66b:src/mixin/java/com/gtnewhorizons/angelica/mixins/early/sodium/MixinTileEntity.java (getBlockType/getBlockMetadata only). DreamAssemblerXXL 2.8.4.json shows Angelica 1.0.0-beta66b.",
+   "severity": "medium",
+   "correction": "Scope the requirement to Angelica 2.x. Make the reflective call tolerate ClassNotFoundException and log which path was taken. On 2.8.4, rely on the vanilla checks: a full-multiblock getRenderBoundingBox and a raised getMaxRenderDistanceSquared. Because the culling paths differ, G3 must test the frozen version and also 2.9 RC if players might move to it. Change the evidence grade to 'VERIFIED for Angelica 2.2.28 / HEAD only'."
+  },
+  {
+   "target": "Architecture 10 / test matrix: 'Tier 2: Linux x64, glibc 2.31 or newer'",
+   "problem": "CCBlueX's build-jcef.yml builds Linux natives on ubuntu-24.04. A libjcef built on Ubuntu 24.04 needs GLIBCXX_3.4.31 (the GCC 13 libstdc++), and jcef_helper needs GLIBC_2.34. Ubuntu 22.04 and Debian 12 (GCC 12, GLIBCXX_3.4.30) and Ubuntu 20.04 / Debian 11 (glibc 2.31) would get a NATIVE_LOAD failure. libcef.so itself only needs GLIBC_2.25, so the floor comes from our own build host.",
+   "evidence": "/home/user/ccbluex/java-cef/.github/workflows/build-jcef.yml (runner ubuntu-24.04). objdump -T on scratchpad/jbuild/java-cef/jcef_build/native/Release (built in this Ubuntu 24.04.4 container, glibc 2.39): libjcef.so max GLIBC_2.32 and GLIBCXX_3.4.31; jcef_helper max GLIBC_2.34; libcef.so max GLIBC_2.25.",
+   "severity": "medium",
+   "correction": "Build the Linux natives in an older container: ubuntu:20.04 with a newer GCC, or link with -static-libstdc++ -static-libgcc. Add a CI step that runs objdump -T and fails if any GLIBC or GLIBCXX version is above the declared floor. Publish the floor that is actually measured, and keep preflight reporting libstdc++ load errors as NATIVE_LOAD."
+  },
+  {
+   "target": "Native patch (ii): 'uniquely named helper exe (akashicweb_helper)' and the startup sweep / Job Object plan",
+   "problem": "Setting CefSettings.browser_subprocess_path has no effect in CCBlueX. CefApp.initialize() always overwrites it with <jcef.path>/jcef_helper.exe on Windows and jcef_helper on Linux. The helper name is also the CMake target JCEF_HELPER_TARGET. A native-only rename leaves CEF pointing at a missing exe, so CEF fails to start. A Java-only rename is undone at init.",
+   "evidence": "/home/user/ccbluex/java-cef/java/org/cef/CefApp.java:363-385 (settings.browser_subprocess_path = Paths.get(jcefPath, \"jcef_helper.exe\") ...); native/CMakeLists.txt:210 (set(JCEF_HELPER_TARGET \"jcef_helper\")). CefApp.startup also derives every path from System.getProperty(\"jcef.path\") (CefApp.java:472-484).",
+   "severity": "medium",
+   "correction": "Patch three places: the CMake target name, CefApp.initialize() (respect a caller-provided browser_subprocess_path) and the installer manifest. Set jcef.path before CefApp.startup to the absolute install dir. Add a G1 check that the helper process runs under the new image name."
+  },
+  {
+   "target": "Natives distribution: 'The codec CEF payload is either downloaded on the player's machine from OBS's CDN with OBS's pinned hash (no mirroring by Akashic)' + caps '512 MiB per file and 1 GiB total'",
+   "problem": "The raw OBS distributions break the plan's own caps and carry large unused payloads. Linux: OBS ships libcef.so unstripped at 2,031,350,672 bytes, about 4x the 512 MiB per-file cap; stripping it on the player's machine needs binutils. Windows: the 344.8 MB zip unpacks to 1,203,381,258 bytes across 1570 files, above the 1 GiB total cap. It includes about 763 MB of OBS build/ output (libcef_dll_wrapper Debug and Release .lib/.pdb and CMake files) that the runtime does not need. The 'no mirroring' option therefore works on Windows only with selective extraction, and does not work on Linux.",
+   "evidence": "scratchpad/obscef/cef7871_win.zip (sha256 54cd191a... matches OBS CMakePresets.json windows-x64): `unzip -l` total 1203381258 bytes; build/libcef_dll_wrapper/Debug/libcef_dll_wrapper.lib 176,568,540 bytes; Release/ about 334.7 MB; Resources/ about 79.8 MB; Release/libcef.dll 278,149,632 bytes. scratchpad/jbuild/.../Release/libcef.so 2,031,350,672 bytes (OBS Linux 150.0.19, sha256 8ffc64d0... matches).",
+   "severity": "medium",
+   "correction": "Windows: stream-extract only Release/ and Resources/ (about 415 MB) from the OBS zip, with per-entry allowlist and size checks. Linux: the OBS-CDN option is not practical. Either ship a stripped, repackaged libcef.so, which counts as Akashic redistribution for the codec licensing decision, or make Linux relay-only on the codec-free 152 build. Put the decision in front of the owner on 10-11 with the fact that the Linux codec build means Akashic redistributes codec binaries."
+  },
+  {
+   "target": "Engine rationale: CCBlueX 'has no AWT/JOGL dependency'",
+   "problem": "This is overstated. CCBlueX does not link jawt or JOGL, but its Java code still imports java.awt (Rectangle, Point, Dimension, BufferedImage) and javax.swing. CefApp.setState() calls SwingUtilities.invokeLater on every state change, which starts the AWT event thread, and the class imports javax.swing.Timer. This should be harmless on Windows and Linux under Java 8 and lwjgl3ify, but the plan's statement is not accurate, and AWT toolkit start-up inside the game JVM still happens.",
+   "evidence": "grep in /home/user/ccbluex/java-cef/java/org/cef (CefApp.java:16-17,237; CefBrowser_N.java, CefRenderHandler.java import java.awt.*). readelf -d of the built libjcef.so lists NEEDED libcef, libX11, libglib-2.0, libstdc++ and libc, with no libjawt.",
+   "severity": "low",
+   "correction": "Reword to 'no jawt/JOGL native dependency; still uses AWT data classes and Swing's EDT for state callbacks'. Optionally patch setState to call the handler directly on the pump thread, so CEF state changes do not depend on AWT event dispatch."
+  },
+  {
+   "target": "Problem fix 'Fork DataPointer requires LWJGL3 MemoryUtil' -> 'reflective DirectByteBuffer(long,int)'",
+   "problem": "java.nio.DirectByteBuffer(long,int) does not exist on Java 21. The private constructor there is DirectByteBuffer(long,long). The fallback would fail on modern JDKs. It only works because lwjgl3ify clients normally take the MemoryUtil path first.",
+   "evidence": "Reflection run with local OpenJDK 21.0.11 (scratchpad/rev/Dbb.java) listed 'private java.nio.DirectByteBuffer(long,long)' and no (long,int) constructor.",
+   "severity": "low",
+   "correction": "Probe both signatures, or better, take the plan's own long-term option now: a native NewDirectByteBuffer per channel. This is stage-2 (after the event) only, so it does not affect the MVP."
+  },
+  {
+   "target": "Engine Java side: 'Our own OSR class in package org.cef.browser'",
+   "problem": "This is unnecessary work and risk. CCBlueX already ships a public CefBrowserOsr that extends CefBrowser_N, implements CefRenderHandler, has no JOGL, and offers onPaint listeners. It compiles with --release 8 alongside the rest of the tree.",
+   "evidence": "/home/user/ccbluex/java-cef/java/org/cef/browser/CefBrowserOsr.java:27,41-46,93-104,124 (imports only org.cef, javax.swing, java.awt, java.nio). javac --release 8 over 143 CCBlueX sources (excluding tests and mac) succeeded, output in scratchpad/rev/out.",
+   "severity": "low",
+   "correction": "Use CCBlueX's CefBrowserOsr (or a thin subclass) and add the triple-buffer copy in a paint listener. Write a custom class only if a concrete gap appears."
+  },
+  {
+   "target": "Engine variant (a) 'OBS CEF 7871 ... Needs a 6-line #if guard ... Built and run on Linux' presented as the primary engine",
+   "problem": "The Linux build evidence does not carry over to Windows. The Windows OBS CEF is a non-standard OBS-patched build: '150.0.20-7871-devtools_patch.3553'. Its README says g628ec9a while cef_version.h says gc4b3522. java-cef's readme_util.py will parse CEF_PATCH as '20-7871-devtools_patch'; this does not crash, but nobody has run it. CCBlueX's Windows-only native sources, written against CEF 152, have never been compiled against the 150 headers. The 6-line guard is Linux-verified only.",
+   "evidence": "unzip -p cef7871_win.zip include/cef_version.h -> CEF_VERSION \"150.0.20-7871-devtools_patch.3553+gc4b3522+chromium-150.0.7871.252\"; README.txt line 6 '...+g628ec9a+...'. /home/user/ccbluex/java-cef/tools/readme_util.py (split on '+' and '.'). scratchpad/jbuild/build2.log is Linux only.",
+   "severity": "medium",
+   "correction": "Make the Windows OBS-150 build the very first CI job on 10-11. If it fails to compile or start by G1, take the Spotify-152 relay-only path for Windows right away rather than debugging OBS patches. Keep the 'Windows untested' label next to every primary-engine claim."
+  },
+  {
+   "target": "Latency: 'WebRTC 126 ms / LL-HLS 1.04 s measured inside JCEF/Chromium 150 (VERIFIED)'",
+   "problem": "The harness and server logs exist, but no saved output with the medians is in the scratchpad, so the numbers cannot be re-checked now. The test page used a <video muted autoplay>, so it did not exercise unmuted autoplay or the --autoplay-policy switch the telão depends on. Latency was computed as now - (t0 + n/30), with t0 an approximate publisher start time, on localhost only.",
+   "evidence": "scratchpad/lat/www/index.html lines 2 and 17-22 (muted, t0-based latency); scratchpad/lat contains only harness.py, mtx.log (VP9+Opus path online, WebRTC session created) and ff.log, with no result file. hls.min.js is 1.7.3 and contains playingDate.",
+   "severity": "low",
+   "correction": "Treat these as harness estimates that are VERIFIED-in-research but not re-verifiable. At G1(c), re-run with an unmuted <video> and --autoplay-policy=no-user-gesture-required, check that audio frames are decoded, and save the RESULT lines as evidence with a hash."
+  }
+ ],
+ "confirmed_claims": [
+  "CCBlueX java-cef commit fe8cc9e exists and defaults to CEF 152.0.6+g708dc14+chromium-152.0.7977.83 (/home/user/ccbluex/java-cef/CMakeLists.txt:133-134). The license is BSD (LICENSE.txt).",
+  "CCBlueX N_DoMessageLoopWork is public (CefApp.java:507) and doMessageLoopWork is a no-op 'handled by custom game tick loop' (CefApp.java:434-436). CefApp.initialize() runs N_Initialize on the calling thread with no SwingUtilities.invokeAndWait (CefApp.java:285-296,363-395). A dedicated pump thread that does init, pumping and shutdown is therefore compatible with the native thread checker (context.cpp).",
+  "The CCBlueX Java sources (143 files, excluding tests/ and mac/) compile with javac --release 8 on JDK 21 with no errors (output in scratchpad/rev/out). Java 8 bytecode (class major 52) for the org.cef classes is feasible.",
+  "CCBlueX native key, mouse and wheel input looks up org/lwjgl/sdl/SDLKeycode and SDLMouse (native/CefBrowser_N.cpp:1807,2100-2101,2163,2214,2233,2258). audio_handler.cpp uses raw env->FindClass (lines 15,43,56). DataPointer reflects on org.lwjgl.system.MemoryUtil (DataPointer.java:78).",
+  "JCEF hard-codes no_sandbox (CCBlueX native/context.cpp:211). External message pump is on when windowless rendering is enabled (context.cpp:215,241). N_Startup calls XInitThreads on Linux (native/CefApp.cpp:95).",
+  "CCBlueX build-jcef.yml builds linux amd64 (ubuntu-24.04, openjdk-17, strips libcef.so) and windows amd64 (windows-2022, MSVC). It produces .tar.gz plus .sha256 files as GitHub artifacts. CCBlueX CefApp.startup loads natives with System.load from absolute paths under System.getProperty('jcef.path') (CefApp.java:446-470).",
+  "CCBlueX has CefBrowserSettings.windowless_frame_rate, CefAudioHandler, CefRequestHandler, and CefSettings.root_cache_path, cache_path and log_file (CefSettings.java:112,140,182).",
+  "The obs-studio master CMakePresets.json pins cef version 7871 at cdn-fastly.obsproject.com. The ubuntu-x86_64 hash 8ffc64d0... and windows-x64 hash 54cd191a... match sha256sum of the downloaded scratchpad/obscef files.",
+  "OBS Linux CEF is 150.0.19+gcf60f42+chromium-150.0.7871.252, with CEF_API_VERSION_LAST 15000. Its headers do not define ERR_CONTROL_MSG_TOO_BIG, ERR_MULTICAST_NOT_ALLOWED or ERR_DNS_DIRECT_ONLY, which CCBlueX jni_util.cpp uses at lines 656, 658 and 931. A libjcef.so built against it exists, and its NEEDED list has no libjawt.",
+  "OBS Windows CEF is a standard binary-distribution layout (include/, libcef_dll/CMakeLists.txt, cmake/, Release/, Resources/). Release/libcef.dll is 278,149,632 bytes, and Release/ has the d3dcompiler_47, libGLESv2, libEGL and chrome_elf DLLs that CCBlueX CefApp.startup loads.",
+  "CEF captures audio through a loopback stream with mute_source = true (chromiumembedded/cef master libcef/browser/audio_loopback_stream_creator.cc:70-72). Checked on master only, not on the 150 or 152 branches.",
+  "Angelica 1.0.0-beta66b GLStateManager wraps glBindTexture (line 1097) and has no glTexSubImage2D, glPixelStorei or glBindBuffer wrappers, so it does not track unpack state. Angelica 2.2.28 and HEAD 3389b95 provide TileEntityRenderBoundsRegistry.registerDynamicClass(String).",
+  "lwjgl3ify HEAD (3.x) has InputEvents.beginTextInput/endTextInput (api/InputEvents.java:173-182). 2.1.16 has neither. lwjgl3ify requires java.awt.headless=true on macOS (org/lwjglx/Sys.java:41). java9args.txt opens java.base/java.nio.",
+  "GTNH 2.9.0 is still only RC-2: DreamAssemblerXXL master has 2.9.0-RC-1 and RC-2 manifests, and 2.9.0.json and RC-3 return 404 on 2026-10-10. 2.8.4 ships Angelica 1.0.0-beta66b and lwjgl3ify 2.1.16.",
+  "These AkashicFM pieces exist as the plan cites them: ToolManager MAX_DOWNLOAD_BYTES = 250 MiB (server/ipod/ToolManager.java:49); GainModel.sourceGain (audio/dsp/GainModel.java:41); UrlPolicy.isInternal(InetAddress) (audio/http/UrlPolicy.java:153); ServerClock, ClockSync, C2SClockPing and S2CClockPong; ServerActionQueue and ClientTaskQueue.",
+  "The MediaMTX v1.21.1 config has hlsVariant lowLatency (line 341), webrtcLocalUDPAddress :8189 (400), webrtcLocalTCPAddress (404), webrtcAdditionalHosts (415) and runOnAvailable (812). The harness's hls.js is 1.7.3 and exposes playingDate. MediaMTX logs show a VP9+Opus path served over HLS and WebRTC."
+ ]
+}

@@ -1,0 +1,381 @@
+{
+ "summary": "I swept the issue trackers of montoyo/webdisplays, montoyo/mcef, CinemaMod/mcef and Mysticpasta1/webdisplays. The last one redirects to CinemaMod/webdisplays (VERIFIED via WebFetch). That gave 590 issue titles, and I read 372 issue pages in full through r.jina.ai. I also sampled 10 pages of the Minecraft Forum Web Displays thread, which covers the 1.7.10 / WD 0.11 / MCEF 0.6-0.7 era from Dec 2014 to Aug 2017, plus the MCEF forum thread. I could not reach CurseForge comments (no comments section was visible) or Reddit (fetch blocked); see open questions. I matched issue titles against keywords. White, black or blank screen is the biggest category (112 of 590 titles, 19%). Next come native crash or init failure (71), OS/arch/Java platform problems (54), codec/live/DRM (48), keyboard and mouse input (29), rendering and shaders (28), natives download/CDN (26) and outdated browser or blocked sign-in (22). Below those are audio (19), helper-process lifecycle (17), mod conflicts (17) and multiplayer desync (14). Reading the code explains why white screen dominates: MCEF 1.x switches silently to a VirtualBrowser ('virtual mode') on any failure. Failures include a mirror or config download error, Java 9+ (the usr_paths reflection hack throws NoSuchFieldException on Java 21, tested here), a missing LD_LIBRARY_PATH on Linux, or an unsupported arch. MCEF 1.x also trusts only a pinned Let's Encrypt intermediate. Today it is R3, which expired 2025-09-15, while montoyo.net now serves a YR1 → Root YR → ISRG Root X1 chain. So fresh 1.12.2 installs very likely can't download anything; I inferred this and did not run it. The ds58 1.12.2 mirror bucket is gone (NoSuchBucket). The CinemaMod MCEF 2.x CDN answers today (windows_amd64.tar.gz is 124,309,275 bytes). Its downloader, though, never checks the archive's SHA-256, has no timeouts, extracts tar entries without path checks, and installs to a CWD-relative mods/mcef-libraries. Users reported AccessDenied/0% hangs on 2026-09-11. Every client runs its own unsandboxed Chromium: JCEF hard-codes no_sandbox=true. CinemaMod adds --disable-web-security and ships Chromium 116 (2023), while jcefmaven already ships Chromium 152.0.7977.83. Because the server stores only the URL, desync between players is by design: montoyo said it 'will always stay this way'. Audio goes to the OS directly. It is neither positional nor tied to Minecraft volume; only YouTube gets a distance-based volume, set by injecting JavaScript. Stuck or duplicated audio after breaking a screen or leaving the world is reported again and again. Both public attempts to route CEF PCM into the game were left work-in-progress (WD audio-handler: '~43 audio packets delayed'). Official CEF builds ship without H.264/AAC (CEF #3559, ds58 citing licensing), so Twitch, MP4 and many live streams fail. Whether YouTube currently serves VP9/AV1 for the specific Brazilian live channels must be tested before the event. 1.7.10 history is consistent: WD 0.11 + MCEF 0.6 required 32-bit Java on Windows only, broke on WD/MCEF version mismatches (NoSuchMethodError API.createBrowser on at least 5 forum pages), hung the Java process on exit, and by 2025 YouTube rejects it as an out-of-date browser. On the GTNH stack, extra risks come from lwjgl3ify (Java 17-25, keyboard differences) and Angelica (GL call redirection plus Iris shaders darkening screens); I inferred these and did not test them. For Brazilian players: the keycode remap turns '$', '%' and '&' into Home/Left/Up (VERIFIED in code, matching the symptom in #55). ABNT2 accents would also arrive as bogus VK codes (inferred). Accented Windows usernames need testing because a Unicode username already broke MCEF once (#50). Nothing was built or run against a real Minecraft client. Evidence is code reading, issue and forum text, curl/openssl probes and one Java 21 reflection test.",
+ "findings": [
+  {
+   "topic": "sources/coverage",
+   "claim": "Mysticpasta1/webdisplays now redirects to CinemaMod/webdisplays, a fork of montoyo/webdisplays maintained by the CinemaMod Group, with 92 open issues at fetch time. The 4 trackers gave 590 issue titles: montoyo/webdisplays 264, montoyo/mcef 107, CinemaMod/mcef 111, CinemaMod/webdisplays 108. I read 372 full issue pages.",
+   "grade": "VERIFIED",
+   "source": "WebFetch https://github.com/Mysticpasta1/webdisplays (shows CinemaMod/webdisplays, forked from montoyo/webdisplays); scratchpad titles.tsv/issues/ (r.jina.ai fetches)"
+  },
+  {
+   "topic": "frequency",
+   "claim": "Title keyword counts over 590 issues: white/black/blank 112; native crash/init 71; platform/OS/arch/Java 54; codecs/live/DRM 48; keyboard/mouse 29; rendering/shaders 28; natives download/CDN 26; outdated browser/sign-in 22; audio 19; lifecycle/process 17; mod conflicts 17; multiplayer desync 14; performance 10; distance/unload 9; server block/miniserv 8. These are approximate: a title can match several categories, and many white-screen reports hide download/TLS/Java root causes.",
+   "grade": "VERIFIED",
+   "source": "scratchpad cat2.py over titles.tsv"
+  },
+  {
+   "topic": "silent virtual mode",
+   "claim": "MCEF 1.x enters 'virtual mode' (a VirtualBrowser that renders nothing, so the screen shows white) when the remote config can't be read, when the OS/arch is unsupported, when the usr_paths reflection hack fails, or when LD_LIBRARY_PATH is missing on Linux. No in-game error is shown.",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/mcef/src/main/java/net/montoyo/mcef/remote/RemoteConfig.java:96-125; client/ClientProxy.java:126-160"
+  },
+  {
+   "topic": "Java 9+",
+   "claim": "On OpenJDK 21, ClassLoader.class.getDeclaredField(\"usr_paths\") throws NoSuchFieldException. MCEF 1.x relies on that field to extend java.library.path, so it always falls into virtual mode on modern Java. This matches user reports: OpenJDK 9 white screen fixed by Java 8 (#35), Java 9 white (#96), OpenJ9 white (mcef#54).",
+   "grade": "VERIFIED",
+   "source": "scratchpad jt/UsrPaths.java run on Java 21 (output 'FAIL: java.lang.NoSuchFieldException: usr_paths'); montoyo/mcef ClientProxy.java:129-140; https://github.com/montoyo/webdisplays/issues/35, /96; https://github.com/montoyo/mcef/issues/54"
+  },
+  {
+   "topic": "TLS pinning",
+   "claim": "MCEF 1.x builds an SSL context whose only trust anchor is a bundled Let's Encrypt cert, used for the only default HTTPS mirror (secureMirrorsOnly=true by default). The pin already broke once: X3 was replaced by R3 in commits dd75647/db8953e on 2021-01-16. The cert served at https://montoyo.net/ShareX/root.crt (the source of r3.crt at build time) is CN=R3, notAfter 2025-09-15. The current montoyo.net chain is CN=montoyo.net ← YR1 ← ISRG Root YR ← ISRG Root X1, with no R3. So I infer HTTPS downloads from fresh MCEF 1.11 installs now fail TLS (not run).",
+   "grade": "VERIFIED",
+   "source": "montoyo/mcef MCEF.java:51,82-101; remote/MirrorManager.java:19,46-60; build.gradle:38-43; git show db8953e; curl -v / openssl s_client to montoyo.net (2026-10-06)"
+  },
+  {
+   "topic": "mirrors status (2026-10-06)",
+   "claim": "montoyo.net root shows 'Server under maintenance', but /jcef/ is still served: config.json, config2.json, and 0.6/1.11 natives answer range requests with 206. The ds58 mirror (the sole default for CinemaMod MCEF 1.33 / 1.12.2) returns NoSuchBucket. mcef-download.cinemamod.com serves via Cloudflare with Last-Modified 19 Oct 2024. Sizes: windows_amd64.tar.gz 124,309,275 bytes; linux_amd64 128,126,180; macos_arm64 116,475,248. The Windows .sha256 file is a 314-byte PowerShell table, not a plain hash line.",
+   "grade": "VERIFIED",
+   "source": "curl probes; https://github.com/CinemaMod/mcef/blob/... old-1.12.2 MirrorManager.java:19; https://github.com/CinemaMod/mcef/issues/143"
+  },
+  {
+   "topic": "1.7.10 MCEF",
+   "claim": "montoyo.net config2.json lists latestVersions {'1.7.10':'0.6','1.8':'0.7','1.10.2':'0.9','1.12.2':'1.11'}. The 0.6 Windows file set includes ffmpegsumo.dll, pdf.dll and d3dcompiler_43/46, which points to a 2014-era CEF3 / Chromium below 45 (version inferred). That fits YouTube telling 1.7.10 users their browser is out of date (WD #267, May 2025; mcef #52).",
+   "grade": "VERIFIED",
+   "source": "https://montoyo.net/jcef/config2.json (scratchpad config2.json); https://github.com/montoyo/webdisplays/issues/267; https://github.com/montoyo/mcef/issues/52"
+  },
+  {
+   "topic": "1.7.10 forum era",
+   "claim": "The Web Displays forum first post (WD 0.11, MC 1.7.10) says: Windows-only ('Non-windows user: you won't be able to see any screen'); 32-bit Java required (Magic Launcher unsupported for that reason); Flash via the system plugin; lag fixed by lowering ppp / anisotropicLevel=0; 'Fullscreen YouTube videos doesn't work... No way to fix this bug.' The thread has 134 pages and is locked.",
+   "grade": "VERIFIED",
+   "source": "https://www.minecraftforum.net/forums/mapping-and-modding-java-edition/minecraft-mods/1291044-web-displays-browse-on-the-internet-in-minecraft (WebFetch summary)"
+  },
+  {
+   "topic": "1.7.10 forum era",
+   "claim": "'NoSuchMethodError: net.montoyo.mcef.api.API.createBrowser' (WD 0.10/0.11 with MCEF 0.7/0.8) is reported on forum pages 110, 115, 120, 125 and 130 (Oct 2015-Aug 2017), with users advising 'Use webdisplay 0.11 and mcef 0.6 not 0.7 and 0.8'. The same pages show black/grey screens, IndexOutOfBoundsException at java.nio.Buffer.checkIndex on world join (MCEF 0.7), 'Shutting down internal server' when right-clicking a screen, and a crash about a minute after re-entering a singleplayer world.",
+   "grade": "VERIFIED",
+   "source": "WD forum thread ?page=110, ?page=115, ?page=120, ?page=125, ?page=130 (WebFetch summaries)"
+  },
+  {
+   "topic": "1.7.10 forum era",
+   "claim": "MCEF thread reports: 'i put this in my 1.7.10 server mod folder and it loads forever'; 'freezes at libcef.dll and doesn't continue downloading'; Java not closing (1.7.10, MCEF 0.6, 2015-2016); MalformedJsonException when the config host was down; NoClassDefFoundError org/cef/network/CefRequest_N; OutOfMemoryErrors.",
+   "grade": "VERIFIED",
+   "source": "https://www.minecraftforum.net/forums/mapping-and-modding-java-edition/minecraft-mods/2324969-minecraft-chromium-embedded-framework-mcef?page=3 and ?page=5 (WebFetch summaries)"
+  },
+  {
+   "topic": "keyboard",
+   "claim": "MCEF's CefBrowserOsr.remapKeycode maps only 13 named LWJGL keys. Every other key sends the typed char code as the Windows VK code, so '$'(0x24)=VK_HOME, '%'(0x25)=VK_LEFT, '&'(0x26)=VK_UP, '('=VK_DOWN, '.'=VK_DELETE, and 'ç'(0xE7) becomes VK 0xE7. This exactly matches #55, where typing 'Asdf$' showed '$Asdf' and montoyo said he had only tested a French keyboard.",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/mcef/src/main/java/org/cef/browser/CefBrowserOsr.java:243-262; https://github.com/montoyo/webdisplays/issues/55; scratchpad jt/UsrPaths.java output"
+  },
+  {
+   "topic": "audio design",
+   "claim": "WD auto-volume works only on YouTube URLs, by injecting movie_player.setVolume(...) JS. This is unchanged in the modern fork. montoyo: 'MCEF uses a completely different sound system ... I have no control over it. YouTube is an exception'.",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/webdisplays/src/main/java/net/montoyo/wd/utilities/VideoType.java:14-15; TileEntityScreen.java:674; /home/user/mysticpasta1/webdisplays VideoType.java:15-21; https://github.com/montoyo/webdisplays/issues/3"
+  },
+  {
+   "topic": "audio WIP",
+   "claim": "Both public attempts to capture CEF audio (CefAudioHandler → game audio) are unfinished. In CinemaMod/mcef branch add-audio-handler (2024-10-22), a commit says you must hand-patch jcef to compile. In WD branch audio-handler (2024-10-20) commits say 'audio handling works, but is ~43 audio packets delayed' and 'janky and wip'. Its onAudioStreamPacket overwrites a single data pointer, with no ring buffer.",
+   "grade": "VERIFIED",
+   "source": "git -C /home/user/cinemamod/mcef log add-audio-handler (ac283ad, 8290803); git -C /home/user/mysticpasta1/webdisplays log audio-handler (3b7c4a5, 35e81b1); audio-handler:src/main/java/net/montoyo/wd/client/audio/WDAudioHandler.java"
+  },
+  {
+   "topic": "CEF audio API",
+   "claim": "CefAudioHandler delivers float32 PCM packets with a pts. GetAudioParameters returning true 'proceeds with audio stream capture'. The header does not say whether default-device playback stops during capture.",
+   "grade": "VERIFIED",
+   "source": "https://raw.githubusercontent.com/chromiumembedded/cef/master/include/cef_audio_handler.h"
+  },
+  {
+   "topic": "distance/sync",
+   "claim": "WD 1.12.2 defaults: client loadDistance 30 and unloadDistance 32 blocks (the browser is destroyed on unload); maxScreenSize 16x16 blocks; maxResolution 1920x1080. Screen updates (URL, typing, clicks) go only to players within 64 blocks (TargetPoint radius 64). The distance check visits one screen per client tick.",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/webdisplays/src/main/java/net/montoyo/wd/WebDisplays.java:143-152,185-198; client/ClientProxy.java:531-546; entity/TileEntityScreen.java:262-263"
+  },
+  {
+   "topic": "security",
+   "claim": "JCEF hard-codes settings.no_sandbox = true. CinemaMod MCEF launches CEF with --autoplay-policy=no-user-gesture-required, --disable-web-security and --enable-widevine-cdm. The WD blacklist compares only exact host names. miniserv opens TCP 25566 by default.",
+   "grade": "VERIFIED",
+   "source": "https://raw.githubusercontent.com/chromiumembedded/java-cef/master/native/context.cpp:193-197; /home/user/cinemamod/mcef/common/src/main/java/com/cinemamod/mcef/CefUtil.java:85-92; montoyo WebDisplays.java:145,171,498-509"
+  },
+  {
+   "topic": "Chromium versions",
+   "claim": "The CurseForge MCEF page says Chromium 116.0.5845.190, with the latest MCEF file dated 2025-01-16. The CurseForge WebDisplays page shows its last update on 2024-10-19. The jcefmaven artifact already in scratchpad is jcef-17e805a + CEF 152.0.6 + Chromium 152.0.7977.83 (jcefbuild 1.0.71), compiled to class major 52, i.e. Java 8-compatible. jcefmaven README asks for extra --add-opens/--add-exports on JDK 16+.",
+   "grade": "VERIFIED",
+   "source": "https://www.curseforge.com/minecraft/mc-mods/mcef ; https://www.curseforge.com/minecraft/mc-mods/webdisplays ; scratchpad jcef/x/build_meta.json, jcef/y/jcefmaven_build_meta.json, javap/od on CefApp.class; /home/user/jcefmaven/jcefmaven/README.md:84-101"
+  },
+  {
+   "topic": "codecs",
+   "claim": "CEF maintainers state that default CEF/Chromium builds disable proprietary codecs (H.264/AAC) because of FFmpeg patent licensing. A proposal (CEF issue #3559) enables OS hardware decoders only. ds58 (MCEF): 'Due to licensing reasons, I cannot provide precompiled CEF binaries with H264'.",
+   "grade": "VERIFIED",
+   "source": "https://github.com/chromiumembedded/cef/issues/3559 ; https://github.com/CinemaMod/mcef/issues/4 ; https://github.com/CinemaMod/mcef/issues/28"
+  },
+  {
+   "topic": "downloader",
+   "claim": "CinemaMod MCEFDownloader decides whether to redownload by comparing the local and remote .sha256 files byte for byte, and never hashes the downloaded archive. HttpURLConnection has no connect/read timeout and the URL is opened twice. extractTarGz writes new File(outputDirectory, entry.getName()) without a canonical-path check and only logs extraction errors. The install dir is the CWD-relative 'mods/mcef-libraries/'.",
+   "grade": "VERIFIED",
+   "source": "/home/user/cinemamod/mcef/common/src/main/java/com/cinemamod/mcef/MCEFDownloader.java:84-187; mixins/CefDownloadMixin.java:59-66"
+  },
+  {
+   "topic": "OSR rendering",
+   "claim": "MCEF 1.x copies every paint into its own buffer under a lock, then uploads with glTexImage2D/glTexSubImage2D (no PBO; issue #40 'Try PBOs' is still open). Every frame it re-sends the last mouse event as a workaround for YouTube video not rendering unless the mouse moves. CEF args default to '--disable-gpu'.",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/mcef/src/main/java/org/cef/browser/CefBrowserOsr.java:118-160; CefRenderer.java:122-187; MCEF.java:49; https://github.com/montoyo/mcef/issues/40"
+  },
+  {
+   "topic": "GTNH stack",
+   "claim": "Angelica rewrites GL calls in mod classes to its GL state manager via ModRedirector (with exclusion prefixes). lwjgl3ify has open keyboard issues: numpad keys return char \\0 (#332); Ctrl+V/Ctrl+A fail under non-Latin layouts on Java 17-25 (#329); the IME window is stuck (#371).",
+   "grade": "VERIFIED",
+   "source": "/home/user/gtnewhorizons/Angelica/glsm/src/main/java/com/gtnewhorizons/angelica/glsm/loading/ModRedirector.java:20-78; https://github.com/GTNewHorizons/lwjgl3ify/issues/332 ; /329 ; /371"
+  },
+  {
+   "topic": "maintenance",
+   "claim": "montoyo dropped 1.7.10 support in Mar 2019 ('I can't manage 2 versions'). 1.7.10 downloads were reported gone from montoyo.net in Sep 2024 (#261). The CinemaMod orphan-process bug #63 was reopened Dec 2023 and is still open, with macOS confirmation Jun 2025. A 'I want to take over this project' issue was filed on CinemaMod/mcef in Jul 2026.",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/webdisplays/issues/33 ; /261 ; https://github.com/CinemaMod/mcef/issues/63 ; /142"
+  },
+  {
+   "topic": "unreachable sources",
+   "claim": "The CurseForge WebDisplays/MCEF pages showed no comments section through WebFetch. old.reddit.com could not be fetched, and web searches surfaced only content-farm pages. The Minecraft Forum blocks r.jina.ai (Cloudflare 403) but works through WebFetch.",
+   "grade": "VERIFIED",
+   "source": "WebFetch attempts on curseforge.com/minecraft/mc-mods/webdisplays/comments, old.reddit.com; scratchpad forum/wd_p1.txt"
+  }
+ ],
+ "problems": [
+  {
+   "name": "Silent white/black screen ('virtual mode') hides every real failure",
+   "root_cause": "Any initialization failure in MCEF 1.x makes it fall back to VirtualBrowser, and the user just sees a white or blank screen with no error. Triggers include a mirror/config download error, TLS failure, the Java 9+ usr_paths hack, Linux LD_LIBRARY_PATH, unsupported arch, firewall/AV, or a GPU failure. This is the most common complaint: about 112 of 590 issue titles (19%). Typical answers are 'use MCEF 1.11b' or 'disable firewall'.",
+   "fix": "Never fail silently. Use an explicit init state machine with reason codes (DOWNLOAD_FAILED, TLS, HASH_MISMATCH, NATIVE_LOAD, GPU_CRASH, UNSUPPORTED_OS), drawn on the screen itself in pt-BR and en, and logged once. Add a /wd doctor command and a startup self-test that loads about:blank and checks that onPaint arrives. Add a 'copy diagnostics' button that redacts the username. Run a preflight on every player's client days before 25/10 and collect the results in an audit log.",
+   "severity": "blocker",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/mcef/src/main/java/net/montoyo/mcef/remote/RemoteConfig.java:96-125; client/ClientProxy.java:126-160; https://github.com/montoyo/webdisplays/issues/20 ; /26 ; /124 ; /255 ; https://github.com/montoyo/mcef/issues/88 ; https://github.com/CinemaMod/mcef/issues/11"
+  },
+  {
+   "name": "Native runtime download/CDN fragility (third-party single hosts, no verification)",
+   "root_cause": "The browser runtime (about 119 MiB archive per OS) is fetched at first launch from one third-party host. Those hosts have failed: montoyo.net under maintenance (#130, #102, mcef#116 Nov 2025), the ds58 mirror moved and its bucket is now NoSuchBucket (CinemaMod/mcef#20; probe), locales.zip 404 (#15), AccessDenied stuck at 0% (#145, 2026-09-11), Feather/regional failures (#109). The CinemaMod downloader has no timeouts. It treats the .sha256 file as a byte-compared marker (#143) and never hashes the archive. Extraction errors are only logged, so a partial or corrupt install leads to UnsatisfiedLinkError or missing d3dcompiler_47.dll (#24, #89, #95, #117). Fixes are 'delete mcef-libraries'. Packs also ship the wrong-OS libs (#137). Natives live in the CWD-relative mods/mcef-libraries.",
+   "fix": "Self-host the runtime on Akashic infrastructure (the game server or a CDN under your control), and offer a pre-bundled modpack option so nothing needs downloading on event day. Keep a signed manifest with per-file SHA-256 (reuse the AkashicFM ToolManager pattern). Downloads should be resumable, with connect/read timeouts, retries and a mirror list. Install atomically into <mcDataDir>/akashic-cef/<platform>/<buildHash>/, outside mods/, with a tar-slip guard. Re-verify hashes on every start and repair automatically. Push the download well before 25/10 and track coverage per player.",
+   "severity": "blocker",
+   "grade": "VERIFIED",
+   "source": "https://github.com/CinemaMod/mcef/issues/145 ; /143 ; /15 ; /20 ; /95 ; https://github.com/montoyo/mcef/issues/116 ; /110 ; https://github.com/montoyo/webdisplays/issues/130 ; /home/user/cinemamod/mcef/common/src/main/java/com/cinemamod/mcef/MCEFDownloader.java:84-187; mixins/CefDownloadMixin.java:61; curl probes 2026-10-06"
+  },
+  {
+   "name": "Pinned TLS certificate / old JRE trust store breaks downloads",
+   "root_cause": "MCEF 1.x trusts only one bundled Let's Encrypt intermediate for its HTTPS-only mirror. The X3 pin broke in Jan 2021 (fix commits dd75647/db8953e, with a wave of white screens: #102, #104, mcef#64 'download the beta'). The bundled R3 expired 2025-09-15, and montoyo.net now chains YR1 → ISRG Root YR → X1. Some launchers still run the 2015 JRE 8u51 (CurseForge jre-legacy in CinemaMod/webdisplays#71; '8u51' in #116), which lacks newer roots.",
+   "fix": "Don't pin intermediates. Merge the JRE trust store with bundled ISRG Root X1/X2/YR/YE roots as extra anchors only, and integrity-check content by SHA-256 rather than trusting the transport. Require a modern Java 8 (GTNH's) or 17+, and warn when java.version < 1.8.0_141. Test the download path on Java 8u51, a current 8u, 17 and 21.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/mcef/src/main/java/net/montoyo/mcef/MCEF.java:51,82-101; build.gradle:38-43; git show db8953e; openssl/curl chain of montoyo.net and https://montoyo.net/ShareX/root.crt (2026-10-06); https://github.com/montoyo/webdisplays/issues/116 ; https://github.com/CinemaMod/webdisplays/issues/71"
+  },
+  {
+   "name": "Java/JVM incompatibility (Java 9+, OpenJ9, Java 17-25 under lwjgl3ify)",
+   "root_cause": "MCEF 1.x injects its native dir into ClassLoader.usr_paths by reflection. That field is not visible on Java 21 (tested), so MCEF goes virtual. Reports: OpenJDK 9 (#35), Java 9 (#96), OpenJ9 (mcef#54), 1.20.1 on Java 21 (mcef#117). JCEF on JDK 16+ needs add-opens/add-exports. GTNH players run either Java 8 or Java 17-25 with lwjgl3ify.",
+   "fix": "Load natives with System.load(absolutePath) in dependency order, or pass the library path to CEF settings, with no java.library.path hacks. Build JCEF bindings against bytecode 52 (jcefmaven is already major 52) and test the full matrix: Java 8 (no lwjgl3ify) and Java 17/21/25 (lwjgl3ify). Declare any needed --add-opens through lwjgl3ify/RFB config. Detect JVM vendor (OpenJ9) and refuse with a clear message.",
+   "severity": "blocker",
+   "grade": "VERIFIED",
+   "source": "scratchpad jt/UsrPaths.java on OpenJDK 21 ('NoSuchFieldException: usr_paths'); /home/user/montoyo/mcef/src/main/java/net/montoyo/mcef/client/ClientProxy.java:126-145; https://github.com/montoyo/webdisplays/issues/35 ; /96 ; https://github.com/montoyo/mcef/issues/54 ; /117 ; /home/user/jcefmaven/jcefmaven/README.md:84-101"
+  },
+  {
+   "name": "Live video fails: no H.264/AAC (Twitch, MP4, many live streams), no Widevine DRM",
+   "root_cause": "Official CEF builds disable proprietary codecs for patent-licensing reasons, and MCEF maintainers cannot redistribute codec-enabled builds. Twitch is H.264-only (error #4000), MP4/AAC fail, and DRM services (Spotify, Netflix, Crunchyroll, Disney+) fail. Live streams have failed since 2018: about 48 titles, e.g. YouTube live not playing (#16, #65, #192, mcef#85). CinemaMod passes --enable-widevine-cdm, but its builds have no CDM. I infer that Globoplay-type Brazilian TV streams need login and DRM.",
+   "fix": "Before writing code, run the exact CEF build you will ship (e.g. jcefmaven Chromium 152) on the candidate live sources: YouTube channels of Brazilian broadcasters, TSE, etc. Use chrome://media-internals and a codec probe page, and drop sources that need H.264/AAC-only or DRM. Make the default telão source a controlled player page served by the mod's custom scheme. Feed it from a server-side relay that pulls the stream once (reuse AkashicFM yt-dlp ToolManager) and remuxes or transcodes to WebM VP9+Opus (or AV1), so every client gets codecs CEF supports. The page still runs in the real Chromium, so the owner's 'real browser' requirement holds. Optionally evaluate CEF's OS-decoder-only H.264 approach (CEF #3559) and its licensing. As a labelled safety net, prepare a VP9 re-stream URL in case the primary source fails.",
+   "severity": "blocker",
+   "grade": "VERIFIED",
+   "source": "https://github.com/chromiumembedded/cef/issues/3559 ; https://github.com/CinemaMod/mcef/issues/4 ; /28 ; https://github.com/montoyo/webdisplays/issues/27 ; /16 ; /89 ; /213 ; https://github.com/montoyo/mcef/issues/51 ; /85 ; /home/user/cinemamod/mcef/common/src/main/java/com/cinemamod/mcef/CefUtil.java:85-89"
+  },
+  {
+   "name": "Outdated Chromium: 'browser out of date', blocked sign-in, broken sites",
+   "root_cause": "The bundled Chromium falls behind and is never auto-updated. 1.7.10 MCEF 0.6 ships a 2014-era CEF (ffmpegsumo/pdf.dll file set), and YouTube calls it out of date (#267 May 2025, mcef#52). 1.12.2 MCEF 1.11 is Chromium 75 (mcef#89). CinemaMod MCEF 2.x is Chromium 116 (2023). Google blocks sign-in from embedded browsers (#240, mcef#65, CinemaMod/mcef#61; the UA workaround works). Twitch login is unsupported (CinemaMod/webdisplays#105). Windows 7 support was dropped with newer Chromium (CinemaMod/mcef#62).",
+   "fix": "Base the port on a current JCEF/CEF (jcefmaven/jcefbuild; the copy in scratchpad is Chromium 152.0.7977.83) and keep a scripted update path, with a build id checked at runtime. Set user_agent_product (as CinemaMod's 'MCEF/2' sign-in workaround). Never require logins on the telão. Tell Windows 7/8.1 players they are unsupported and give them a placeholder instead of a crash.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/webdisplays/issues/267 ; /39 ; /140 ; /182 ; /240 ; https://github.com/montoyo/mcef/issues/52 ; /89 ; https://github.com/CinemaMod/mcef/issues/61 ; /62 ; https://www.curseforge.com/minecraft/mc-mods/mcef ; scratchpad jcef/x/build_meta.json; https://montoyo.net/jcef/config2.json"
+  },
+  {
+   "name": "Orphan jcef_helper processes / JVM not exiting / locked files after exit",
+   "root_cause": "CEF shutdown is not reliably called, and JCEF threads keep the JVM alive. MCEF 1.x needed a coremod (ShutdownPatcher) and a VM arg, and its alternative shutdownJcef option 'makes the launcher think Minecraft crashed'. When the JVM dies, helpers can linger and burn CPU (CinemaMod/mcef#63, open since 2023, macOS confirmed 2025). They lock the cache dir, so the next launch gets a blank screen until jcef_helper.exe is killed (#33). They also lock debug.log and libcef.dll, blocking launcher start and folder deletion (CinemaMod/webdisplays#57, CinemaMod/mcef#113). Audio keeps playing after quitting (CinemaMod/webdisplays#113). The same bugs existed on 1.7.10 (mcef#5/#15/#27, WD#43, forum).",
+   "fix": "Use a deterministic shutdown: a Minecraft.shutdown mixin plus a JVM shutdown hook that closes browsers and then CefApp.dispose with a hard timeout. Put helper processes in a Windows Job Object with KILL_ON_JOB_CLOSE (prctl PDEATHSIG on Linux). Add a parent-PID watchdog in the helper or browser host. At startup, sweep stale helpers whose image path is inside our install dir. Keep cache_path and log_file per instance (or use no disk cache) so a stale lock can't blank the next session.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "https://github.com/CinemaMod/mcef/issues/63 ; /33 ; /113 ; https://github.com/CinemaMod/webdisplays/issues/57 ; /113 ; https://github.com/montoyo/mcef/issues/5 ; /15 ; /27 ; https://github.com/montoyo/webdisplays/issues/43 ; /home/user/montoyo/mcef/README.md:35; MCEF.java:50"
+  },
+  {
+   "name": "Browser lifecycle bugs: audio keeps playing after breaking/leaving, duplicate browsers",
+   "root_cause": "Screens are removed from tracking lists without their browsers being closed. CinemaMod's GiantLuigi4 found 'spots where the list of screens gets cleared without closing the browsers'. Duplicate browsers get created when joining a server. The result is audio continuing after a screen is broken or the world deleted (#9; CinemaMod/webdisplays#11, #65), duplicate 'millions of the same audio' (#113), never-closed browsers (#77), and a crash on world re-entry (forum p.110).",
+   "fix": "Use a single BrowserRegistry keyed by screen id with reference counting. Close browsers on TE invalidate, chunk unload, world unload, disconnect, dimension change and GUI close. Run a tick-time sweeper that closes any browser without a live owner. Add unit/integration tests: break, WorldEdit removal, logout, rejoin, dimension hop. With game-routed audio, stopping the OpenAL source guarantees silence even if a browser leaks.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "https://github.com/CinemaMod/webdisplays/issues/6 ; /11 ; /65 ; /77 ; /113 ; https://github.com/montoyo/webdisplays/issues/9 ; /home/user/montoyo/webdisplays/src/main/java/net/montoyo/wd/client/ClientProxy.java:650-656"
+  },
+  {
+   "name": "Audio not positional, not tied to Minecraft volume, audible across the map; YouTube-only distance volume",
+   "root_cause": "CEF plays audio straight to the OS device, bypassing Minecraft's sound system. The only attenuation is a JS setVolume() injected into YouTube pages (VideoType), and AutoVolume broke in 1.20 (#16). Other sites play at full volume until the browser unloads. Reports: 'Loud, audible across map' (#244), 'can't change through minecraft volume bars' (#78), distance/range requests (#3, #88, CinemaMod #24, #56). Per-client 'no sound for me but friends hear' (#10, #19, #87, #206, mcef#23) is attributed to JCEF/OS audio. The CefAudioHandler integrations are unfinished WIP (~43-packet delay).",
+   "fix": "Capture PCM with CefAudioHandler and push it into a jitter-buffered ring (AkashicFM TimedPcmRing/PcmRing). Play it as an OpenAL streaming source positioned at the screen centre, using AkashicFM's spatial engine (distance model, EFX occlusion/reverb) and Minecraft master/records volume. Hard-stop when the screen unloads. Verify that capture suppresses CEF's own device output; if not, mute it (e.g. --mute-audio plus capture, to be tested).",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/webdisplays/issues/3 ; /244 ; /206 ; https://github.com/CinemaMod/webdisplays/issues/16 ; /78 ; /88 ; /home/user/montoyo/webdisplays/src/main/java/net/montoyo/wd/utilities/VideoType.java:14-15; git log add-audio-handler (CinemaMod/mcef) and audio-handler (WD 3b7c4a5); https://raw.githubusercontent.com/chromiumembedded/cef/master/include/cef_audio_handler.h"
+  },
+  {
+   "name": "No multiplayer sync by design; per-client ads and live-edge drift; 'almost zero ms' is not achievable",
+   "root_cause": "Every client runs its own Chromium on its own internet connection, and the server stores only the URL. Players see different recommendations and videos, pause states and positions (#30, #38, #185, #199, #268; CinemaMod #19, #28, #103). Ads differ per client (#80). montoyo: 'This is a limit of WebDisplays and will always stay this way' (mcef#62), and server-side streaming would 'kill the server's bandwidth' (#44). Live streams additionally drift: each client joins the live edge at a different moment, and any reload (leaving range, crash) re-seeks. I infer per-client offsets of seconds; this was not measured.",
+   "fix": "Use a server-authoritative media state: source id, epoch, and a target delay behind live on the server clock. The controlled player page (custom scheme) seeks and rate-adjusts to that target, reusing AkashicFM ClockMath and server-relay timing. Serve the stream from the server relay so all clients decode the same segments. Avoid ad-carrying players (no youtube.com watch pages). Tell the owner to expect 'same picture within about 1 s across players, several seconds behind TV', not milliseconds. His own live channel adds its own encoder and CDN latency on top.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/mcef/issues/62 ; https://github.com/montoyo/webdisplays/issues/30 ; /38 ; /44 ; /185 ; https://github.com/CinemaMod/webdisplays/issues/19 ; /28 ; /80 ; /103"
+  },
+  {
+   "name": "Short load/sync ranges: telão blanks, restarts or desyncs for players at spawn",
+   "root_cause": "Defaults are loadDistance 30 and unloadDistance 32 blocks, and unloading destroys the browser, so video restarts on return (#71, #6 'resets the playback'). Updates go only to players within 64 blocks (TargetPoint 64), so farther players miss URL changes and desync (#6 montoyo: '>64 blocks can lead to serious de-sync'). Reports of the screen vanishing at about 40 blocks despite config (#95) and of distance configs not applying (CinemaMod #6, #24). Max screen size is 16x16 blocks.",
+   "fix": "Add per-screen overrides for the spawn telão: larger load range with hysteresis, and hide or pause instead of destroy (CefBrowser.wasHidden). Override getRenderBoundingBox to cover the whole multiblock and raise getMaxRenderDistanceSquared beyond the 1.7.10 default of 64 blocks. Sync state to every player watching the chunk, with a full resync when a player comes into range. Raise the max size limits for admin-placed screens.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/webdisplays/src/main/java/net/montoyo/wd/WebDisplays.java:143-152; client/ClientProxy.java:531-546; entity/TileEntityScreen.java:262-263; https://github.com/montoyo/webdisplays/issues/6 ; /71 ; /76 ; /95 ; https://github.com/CinemaMod/webdisplays/issues/6"
+  },
+  {
+   "name": "Security and abuse exposure on a public server",
+   "root_cause": "Each client loads attacker-chosen URLs in an unsandboxed Chromium (JCEF no_sandbox=true). CinemaMod's build is outdated (Chromium 116) and disables same-origin policy (--disable-web-security), which lets a page read responses from players' LAN or localhost (inferred). The WD blacklist is exact-host only, so subdomains or redirects bypass it, and the config is hard to find (CinemaMod #116). Any URL on the spawn screen makes every nearby player's PC contact that host, exposing their IPs (inferred). miniserv opens extra port 25566 and gets spammed ('invalid packet', #98; 'Unknown client', #101).",
+   "fix": "Lock the spawn screen: only staff, by permission, can change its source. Use an allow-list plus an SSRF guard (reuse AkashicFM UrlPolicy: block private/loopback/link-local, http(s) only, no file://). Keep web security on. Disable popups, downloads, devtools, remote debugging and the context menu. Keep CEF current. Drop or disable miniserv (port 0). Log every URL change in an audit log (reuse AkashicFM AuditLog). Rate-limit screen edits.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "https://raw.githubusercontent.com/chromiumembedded/java-cef/master/native/context.cpp:193-197; /home/user/cinemamod/mcef/common/src/main/java/com/cinemamod/mcef/CefUtil.java:86-88; /home/user/montoyo/webdisplays/src/main/java/net/montoyo/wd/WebDisplays.java:145,171,498-509; https://github.com/montoyo/webdisplays/issues/98 ; /101 ; https://github.com/CinemaMod/webdisplays/issues/116"
+  },
+  {
+   "name": "Native crashes of the game process (in-process libcef)",
+   "root_cause": "libcef's browser process lives inside the Minecraft JVM, so native faults kill the game. Reports: exit code -1/6 or a JVM crash on screen right-click or on load (forum p.100 'libcef.dll' crash on Win7 2015; WD #40 crash on YouTube; CinemaMod/mcef #34 SIGSEGV on macOS, #36 exit code 6 on Fedora, #86 crash on every startup after turning a display on; CinemaMod/webdisplays #103 a site crashing every client except the host's). Some come from mismatched or corrupt natives, others from GPU process or driver faults.",
+   "fix": "Preferred internal architecture (still a real Chromium on the screen): run CEF in a separate 'browser host' process (a small Java 17+ app on jcefmaven, or native). It sends BGRA frames over shared memory and PCM over a pipe, and a supervisor restarts it on crash; Minecraft only uploads textures and plays audio. This isolates crashes and Java-version or AWT/LWJGL conflicts and simplifies killing orphans. If in-process is kept, wrap every native call and keep the renderer fail-safe.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "https://www.minecraftforum.net/forums/mapping-and-modding-java-edition/minecraft-mods/1291044-web-displays-browse-on-the-internet-in-minecraft?page=100 ; https://github.com/montoyo/webdisplays/issues/40 ; https://github.com/CinemaMod/mcef/issues/34 ; /36 ; /86 ; https://github.com/CinemaMod/webdisplays/issues/103"
+  },
+  {
+   "name": "Performance cost: CPU decoding, full-frame uploads, 30 fps cap, lag at crowded spawn",
+   "root_cause": "MCEF 1.x defaults to --disable-gpu (software decode and raster). Each paint is copied twice and uploaded with glTex(Sub)Image2D, with no PBO (#40 open since 2019), and a synthetic mouse event goes out every frame. CEF OSR is capped at 30 fps (CinemaMod/mcef #27, #39, #112; BrowserSettings not exposed, #106). Reports: lag and slowness (#8, #172, CinemaMod/webdisplays #112, macOS 5-minute input lag #44). The 1.7.10 FAQ said to lower ppp and anisotropic filtering. In GTNH, clients are already heavy, and every player at spawn would run Chromium at once (inferred).",
+   "fix": "Share one browser per source across all screens. Cap the telão at 1280x720 and 30 fps (fine for TV news). Upload with double-buffered PBOs and dirty rects on the render thread. Stop painting when the screen is off-frustum or far away. Offer client presets (Off / Low 480p / Normal 720p), with an off switch for weak PCs, and measure FPS, heap and native RAM in the real GTNH pack on a low-end machine.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/mcef/src/main/java/org/cef/browser/CefBrowserOsr.java:118-160; CefRenderer.java:122-187; MCEF.java:49; https://github.com/montoyo/mcef/issues/40 ; https://github.com/CinemaMod/mcef/issues/27 ; /39 ; /44 ; /106 ; /112 ; https://github.com/CinemaMod/webdisplays/issues/112"
+  },
+  {
+   "name": "Rendering issues: shaders (Angelica/Iris), GL-state leaks, skewed or split frames, invisible chunks",
+   "root_cause": "The screen quad goes through the shader pipeline and comes out black, over-bright or over-contrasted (#2, where montoyo said disable shaders; #72, #134, #231; CinemaMod #45, #88). Resize or stride races produce split, slanted or striped frames (#24, #264, CinemaMod #69), plus IndexOutOfBounds in Buffer.checkIndex (forum p.115). GL state leaks cause a rainbow screen on chat/F3 (CinemaMod/mcef #124). A renderer exception hides the whole chunk when the CDN is blocked (CinemaMod #62 pihole, #43, #49). In GTNH, Angelica redirects mod GL calls into its state manager and ships Iris shaders (interaction inferred).",
+   "fix": "Render the screen full-bright and emissive (lightmap 240), with a shader-compat path tested in Angelica on and off and with 2-3 popular shader packs. Restore GL_UNPACK_ROW_LENGTH, SKIP and ALIGNMENT and bound-texture state, going through Angelica's GLSM-aware path. Reallocate the texture atomically on size change and drop frames whose size doesn't match. The TESR must catch every exception and draw a placeholder, never breaking chunk rendering.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/webdisplays/issues/2 ; /72 ; /134 ; /231 ; /264 ; https://github.com/CinemaMod/webdisplays/issues/45 ; /62 ; https://github.com/CinemaMod/mcef/issues/124 ; /home/user/gtnewhorizons/Angelica/glsm/src/main/java/com/gtnewhorizons/angelica/glsm/loading/ModRedirector.java:20-78"
+  },
+  {
+   "name": "GPU / OSR driver problems (white or black for one player only)",
+   "root_cause": "CEF's GPU process fails on some drivers or sandboxes. White screens were fixed with --disable-gpu on AMD (CinemaMod/mcef #11). Outdated drivers or AV caused crashes (#66). Black screen on RX 6800 with Java 21 (mcef#117), 'GPU process launch failed' (#120), white only for one player (CinemaMod/webdisplays #89). CinemaMod's code has a TODO saying --disable-gpu fixes white screens but 'shouldn't be done on all devices'.",
+   "fix": "For OSR default to software compositing (--disable-gpu --disable-gpu-compositing), which is enough at 720p30, with an opt-in GPU toggle. Detect GPU-process crash messages and fall back automatically. Report the GPU and driver in diagnostics.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "https://github.com/CinemaMod/mcef/issues/11 ; /66 ; /120 ; https://github.com/montoyo/mcef/issues/117 ; https://github.com/CinemaMod/webdisplays/issues/89 ; /home/user/cinemamod/mcef/common/src/main/java/com/cinemamod/mcef/CefUtil.java:89-92; /home/user/montoyo/mcef/src/main/java/net/montoyo/mcef/MCEF.java:49"
+  },
+  {
+   "name": "Install path, username and CWD problems (spaces, non-ASCII, relative dirs, natives inside mods/)",
+   "root_cause": "MCEF hung or crashed on a Unicode Windows username path (montoyo/mcef#50, C:\\Users\\Ｋｕｒｉｓｕ９３\\...). The collaborator's reply: 'Java on windows does not handle unicode in paths', closed as user error. Instance paths with spaces failed (CinemaMod/mcef#3). CurseForge instance names contain spaces and parentheses (CinemaMod/webdisplays#71 log). CinemaMod installs to the CWD-relative 'mods/mcef-libraries', so launchers with another CWD, Quick Play (#70) and packs shipping that folder (#95, #137) break it. Brazilian usernames like 'João' or 'Usuário' fit in cp1252, unlike the CJK case, but are untested with CEF 152 (inferred).",
+   "fix": "Derive the absolute canonical path from Minecraft's data dir, never the CWD, and keep natives outside mods/. Pass paths as wide or UTF-16 strings and quote them when spawning helpers. If the path isn't pure ASCII, fall back to an ASCII-safe location (e.g. %PROGRAMDATA%\\AkashicCEF\\<hash> or the GetShortPathNameW 8.3 form). Add CI and manual tests with 'C:\\Users\\João Conceição\\AppData\\Roaming\\.minecraft' and Prism/CurseForge instance names with spaces and parentheses.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/mcef/issues/50 ; https://github.com/CinemaMod/mcef/issues/3 ; /70 ; /95 ; /137 ; https://github.com/CinemaMod/webdisplays/issues/71 ; /home/user/cinemamod/mcef/common/src/main/java/com/cinemamod/mcef/mixins/CefDownloadMixin.java:59-66"
+  },
+  {
+   "name": "Keyboard, IME and layout bugs (ABNT2 dead keys, symbols, backspace/enter, Cyrillic)",
+   "root_cause": "remapKeycode sends the char code as the Windows VK for non-named keys, so '$'=Home, '%'=Left, '&'=Up and 'ç'=VK 0xE7. Symptoms: #55 (montoyo only tested a French keyboard), #58 ('input in any layout is not possible'), 1.7.10-0.6 Cyrillic (mcef#36), Backspace dead and Enter acting as Shift+Enter (#143, #178, CinemaMod/mcef#2), stuck keys (#138), Esc also opening the menu (CinemaMod #38), double typing on macOS (#29). lwjgl3ify on Java 17+ changes the semantics of Keyboard events: numpad char \\0 (#332), Ctrl+V/A broken with non-Latin layouts (#329), IME window stuck (#371).",
+   "fix": "Use a proper LWJGL-to-Windows VK table for named keys only. Deliver text as CEF KEYEVENT_CHAR from GuiScreen.keyTyped composed characters, so ABNT2 dead keys produce ã/ç/é. Use a clipboard paste path, and consume Esc. For the event, let admins change the telão through a GUI URL/preset selector, not in-world typing. Test ABNT2 and US-International on Java 8 and on Java 17+ with lwjgl3ify.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/mcef/src/main/java/org/cef/browser/CefBrowserOsr.java:243-262; https://github.com/montoyo/webdisplays/issues/55 ; /58 ; /143 ; /178 ; https://github.com/montoyo/mcef/issues/36 ; https://github.com/CinemaMod/mcef/issues/2 ; /29 ; https://github.com/GTNewHorizons/lwjgl3ify/issues/332 ; /329"
+  },
+  {
+   "name": "YouTube/player quirks: fullscreen, autoplay, controls overlay, scroll, mouse buttons",
+   "root_cause": "OSR fullscreen does not work ('No way to fix' for WD 0.11; mcef#12; CinemaMod #22). Autoplay needs --autoplay-policy=no-user-gesture-required (#48; CinemaMod sets it). MCEF 1.x re-sends a mouse move every frame, which I infer keeps YouTube's hover controls and title visible. Scroll broke in some versions (mcef#20, CinemaMod/mcef#102); extra mouse buttons crash (CinemaMod #73); drag is unsupported (#248).",
+   "fix": "Use a kiosk-style controlled page (custom scheme) that sizes the <video> to the viewport, so no fullscreen API is needed. Handle CefDisplayHandler fullscreen events by resizing. Turn on the autoplay switch, drop the mouse-spam hack (use invalidate or modern CEF begin-frame instead), and sanitize unknown mouse buttons.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "WD forum first post (1291044); https://github.com/montoyo/mcef/issues/12 ; /20 ; https://github.com/montoyo/webdisplays/issues/48 ; /248 ; https://github.com/CinemaMod/webdisplays/issues/22 ; /73 ; /home/user/montoyo/mcef/src/main/java/org/cef/browser/CefBrowserOsr.java:157-160"
+  },
+  {
+   "name": "Platform coverage: Linux, macOS, ARM, Win7, Android/Pojav, Wine",
+   "root_cause": "MCEF 1.x on Linux requires the user to export LD_LIBRARY_PATH and otherwise goes virtual. Linux white screens and crashes continue in 2025-26 (#232, mcef#111, #115; CinemaMod/mcef #9, #21, #36, #38). NixOS can't run the dynamically linked jcef_helper (#120). Arm64 Windows and Linux builds are actually x86_64 (#64, #129, #133). macOS crashes, quit freezes and lag (#10, #22, #34, #40, #41, #44, #68, #127; CinemaMod/webdisplays #110, 2026). Android/Pojav is impossible (#211, #221; CinemaMod/mcef #1). Win7 is unsupported on modern Chromium (#62).",
+   "fix": "Publish a support matrix: Windows 10/11 x64 first, then Linux x64 with glibc ≥ 2.31; macOS best-effort, and arm64 only after verifying the binaries. Any unsupported client must keep playing normally and see a clear placeholder on the screen; as a clearly labelled safety net, show a static image or text of the result. Detect arch from os.arch and verify the ELF/PE machine type of downloaded binaries.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/mcef/src/main/java/net/montoyo/mcef/client/ClientProxy.java:148-160; https://github.com/montoyo/webdisplays/issues/232 ; /211 ; https://github.com/montoyo/mcef/issues/111 ; /115 ; https://github.com/CinemaMod/mcef/issues/62 ; /64 ; /120 ; /133 ; https://github.com/CinemaMod/webdisplays/issues/110"
+  },
+  {
+   "name": "Antivirus/firewall/DNS-filter interference",
+   "root_cause": "AV or firewall blocks downloads or helper start. montoyo told users to check whether 'a proxy/firewall/antivirus [was] blocking connections ... to montoyo.net' (#26); disabling the firewall fixed #20. Kaspersky case (CinemaMod/mcef#66), with ItsK1tty: Avast 'intercepts some GPU calls'. The MCEF CurseForge page warns that AV 'may prevent MCEF from initializing'. A pihole block made chunks invisible (CinemaMod/webdisplays#62). jcef_helper.exe is an unsigned extra executable (inferred AV heuristic trigger).",
+   "fix": "Download only from Akashic hosts and verify hashes. Publish the file hashes and the exact folder to whitelist in a pt-BR guide. Detect helper-start failure or immediate exit and show AV-specific instructions. Consider code-signing the helper or host binary. Never write executables to %TEMP%.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/webdisplays/issues/20 ; /26 ; https://github.com/CinemaMod/mcef/issues/66 ; https://github.com/CinemaMod/webdisplays/issues/62 ; https://www.curseforge.com/minecraft/mc-mods/mcef"
+  },
+  {
+   "name": "WD/MCEF version coupling and packaging confusion",
+   "root_cause": "WebDisplays and the browser runtime ship as separate mods with a fragile API contract. In the 1.7.10 era, WD 0.11 with MCEF 0.7/0.8 caused NoSuchMethodError API.createBrowser (5+ forum pages) and NoClassDefFoundError CefFocusHandler$FocusSource (mcef#24). Since then: WD 1.0 vs MCEF 1.11 mismatch (#69), 'you need exactly 1.11/1.11b' (mcef#88), Modrinth single release with both loaders showing 'MCEF not installed' (CinemaMod/mcef #80, #83, #139, #141), and a JPMS split package with MixinExtras (#146).",
+   "fix": "Ship one Akashic WD jar with the browser runtime version-locked to it: a native build id in the manifest, checked at startup, with a clear pt-BR message on mismatch. One artifact per loader/side, and no transitive auto-download from Modrinth/CurseForge.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "WD forum ?page=110/115/120/125/130; https://github.com/montoyo/mcef/issues/10 ; /24 ; /88 ; https://github.com/montoyo/webdisplays/issues/69 ; https://github.com/CinemaMod/mcef/issues/80 ; /83 ; /146"
+  },
+  {
+   "name": "Dedicated server / side separation",
+   "root_cause": "WD 1.12.2 requires MCEF on the server (required-after:mcef) and imports MCEF's IBrowser in the common TileEntityScreen. In 1.7.10, MCEF on a server 'loads forever' and servers failed with 'MissingModsException: Missing Mods: MCEF'. Client crashes on screen use killed the integrated server ('Shutting down internal server'). CinemaMod/webdisplays#52 (server needs MCEF); CinemaMod says MCEF is functionally client-only (#53).",
+   "fix": "Keep all CEF types in a client-only package behind proxies and @SideOnly, so the server never loads natives or download code. Add CI that boots a dedicated GTNH server with the mod and places, loads and unloads a screen. Run integrated-server tests too.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "/home/user/montoyo/webdisplays/src/main/java/net/montoyo/wd/WebDisplays.java:60; entity/TileEntityScreen.java:21; MCEF forum thread ?page=3; WD forum ?page=100, ?page=115, ?page=125; https://github.com/CinemaMod/webdisplays/issues/52 ; https://github.com/CinemaMod/mcef/issues/53"
+  },
+  {
+   "name": "Legacy 1.7.10 WD 0.11 design pitfalls (entity screens, ID config, 32-bit, Flash)",
+   "root_cause": "WD 0.11 used entity-based screens with configurable entity IDs. Clients whose config didn't match the server's saw nothing or failed to join: 'Could not spawn entity ModID: WebDisplays Entity ID 6' (mcef#17), and LISARIAT's friends needed the server's WD config (mcef#29). It also required 32-bit Java, relied on Flash, and was abandoned (#33).",
+   "fix": "Port from the 1.12.2/modern TileEntity design, not 0.11, with no user-configurable IDs and auto-registered TE and entity IDs. Treat every 0.11 binary as reference only.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/mcef/issues/17 ; /29 ; https://github.com/montoyo/webdisplays/issues/33 ; WD forum first post (1291044)"
+  },
+  {
+   "name": "Mod conflicts (texture, render and mixin clashes)",
+   "root_cause": "Reported conflicts: Flan's Mod (missing textures, all game sound lost: #13, #19, #78, #208), Mystcraft (#139), WildNature crash (#49), Embeddium/Oculus (CinemaMod #60), Canary (#30), VS2/Eureka airships (#90, #270), Cleanroom white (#102), OpenComputers 'click' doing nothing (#86, #157). In GTNH the relevant risks are Angelica, lwjgl3ify and Hodgepodge (inferred, untested).",
+   "fix": "Test in the server's exact GTNH 2.8.x client pack: Angelica on and off, shaders on and off, Java 8 and Java 17+. Keep mixins narrow and namespaced. Run a smoke test before release, and again after every GTNH update.",
+   "severity": "medium",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/webdisplays/issues/13 ; /19 ; /49 ; /139 ; /208 ; https://github.com/CinemaMod/webdisplays/issues/30 ; /60 ; /90 ; /102"
+  },
+  {
+   "name": "Upstream abandonment: nobody to fix bugs before 25/10",
+   "root_cause": "montoyo dropped 1.7.10 in 2019 (#33) and the 1.7.10 downloads disappeared (#261). CinemaMod WebDisplays was last updated 2024-10-19 and MCEF on 2025-01-16. Long-open core bugs (#63 orphan processes) and a 2026 takeover request (#142) show there is no upstream support.",
+   "fix": "Treat the port as a fully owned fork. Vendor every dependency and host every binary, and plan internal QA, with no reliance on upstream fixes or hosts.",
+   "severity": "high",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/webdisplays/issues/33 ; /261 ; https://github.com/CinemaMod/mcef/issues/63 ; /142 ; https://www.curseforge.com/minecraft/mc-mods/webdisplays ; https://www.curseforge.com/minecraft/mc-mods/mcef"
+  },
+  {
+   "name": "miniserv / server block extra TCP port",
+   "root_cause": "WD's file-host 'server block' opens TCP 25566 by default. Reports: 'Query error' and timeouts (#81, #107, #195, CinemaMod #66), exit code 6 on right-click (#196), invalid-packet spam from scanners (#98), a 1 MiB quota (#220), uploaded MP4 breaking world save (#249).",
+   "fix": "Don't port miniserv. Serve internal pages through the mod's custom scheme with server-pushed assets; if file hosting is ever needed, set the port to 0 by default.",
+   "severity": "low",
+   "grade": "VERIFIED",
+   "source": "https://github.com/montoyo/webdisplays/issues/81 ; /98 ; /196 ; /249 ; /home/user/montoyo/webdisplays/src/main/java/net/montoyo/wd/WebDisplays.java:145-173"
+  },
+  {
+   "name": "Rebroadcast rights when the owner streams the server",
+   "root_cause": "I infer that showing third-party TV coverage on the in-game screen and re-streaming the server on the owner's channel can trigger Content ID claims or takedowns. This is not a WD bug, but it affects the event.",
+   "fix": "Choose sources whose terms allow embedding, or official public broadcasts. Be ready to mute the screen audio in the owner's stream mix. Confirm rights before 25/10.",
+   "severity": "medium",
+   "grade": "INFERRED",
+   "source": "reasoning; no source checked"
+  }
+ ],
+ "open_questions": [
+  "Does YouTube currently offer VP9/AV1 + Opus formats for the specific Brazilian live channels planned for 25/10, so they play in a CEF build without proprietary codecs (e.g. jcefmaven Chromium 152)? This needs a hands-on test (chrome://media-internals, yt-dlp -F on the live URL). Historical WD reports say live often failed.",
+  "Do jcefmaven/jcefbuild binaries include proprietary codecs? I found no statement either way and assume no.",
+  "Does capturing audio through CefAudioHandler stop CEF's own output to the default device? The CEF header doesn't say. Test needed.",
+  "Does MCEF 1.x actually fail TLS against montoyo.net today? Code and chain analysis say yes, but I did not run it.",
+  "How do lwjgl3ify (SDL-based input, Java 17-25) and JCEF's AWT-based OSR event classes coexist inside the GTNH client on Windows/Linux/macOS? How do Angelica's GLSM and Iris shaders interact with a TESR uploading BGRA textures? Untested.",
+  "Do accented Windows usernames such as C:\\Users\\João and CurseForge/Prism instance names with spaces or parentheses work with CEF 152 / JCEF 17e805a on Java 8 and Java 17+? Untested.",
+  "What do Akashic players actually run (Windows 7/8.1, macOS, Linux, Pojav, low-end iGPU, antivirus)? Unknown; a short in-game or Discord poll is needed to size the 'unsupported client' fallback.",
+  "CurseForge comment pages and Reddit could not be read (no comments section visible; old.reddit.com fetch blocked). CinemaMod/mcef#3 was fetched truncated, so the root cause of the spaces-in-path crash is unconfirmed.",
+  "Which latency target is acceptable to the owner? Same frame within about 1 s across players is plausible with a server-synced player page; 'almost 0 ms' vs live TV is not.",
+  "Not run: no Minecraft client or server, no build, no CEF runtime. The only executed tests were a Java 21 reflection check and curl/openssl probes of mirrors."
+ ]
+}

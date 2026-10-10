@@ -1,0 +1,693 @@
+{
+ "verdict": "CONDITIONAL YES (INFERRED, about 65-75% for the full outcome). A real Chromium can show live runoff coverage on a Web Displays-style multiblock telão at spawn on the GTNH 1.7.10 server on Sun 2026-10-25, if all of the following hold.\n\n(1) Platforms. The browser runs client-side and in-process. It uses our own build of CCBlueX java-cef (BSD), compiled to Java 8 bytecode. Supported clients are Windows 10/11 x64 (Tier 1) and Linux x64 (Tier 2), on the GTNH version the server freezes, on both Java 8 and Java 17-25 (lwjgl3ify), with Angelica on. Any other client (macOS, arm64, Win7/8.1, Pojav, or a failed install) sees a labelled placeholder and keeps playing. It does not crash.\n\n(2) Video source. The live video reaches the screen as a page we control on an Akashic HTTPS domain. The primary path is the Akashic relay: OBS/ffmpeg -> MediaMTX -> WebRTC (WHEP), with LL-HLS as fallback, carrying VP9 (or AV1) plus Opus. Measured on localhost inside JCEF/Chromium 150: 126 ms added delay over WebRTC and about 1.04 s over LL-HLS (VERIFIED, codec-path). These codecs need no proprietary CEF build. The backup path uses the same engine built against OBS's codec-enabled CEF 150 (7871), so an official YouTube embed (H.264/AAC) plays in each client. That build ran H.264/AAC, MSE TS, native HLS and WebRTC on Linux (VERIFIED). It has not been run on Windows: gate G1.\n\n(3) Rights. A source with retransmission rights (for the relay) or an embeddable YouTube source (for the backup) is chosen by Wed 10-21. Rights are the owner's call. Neither path is legal by default (Lei 9.610 art. 95; YouTube ToS forbids restreaming but allows the embed).\n\n(4) Scope. The work is cut to a telão-only MVP: an admin-locked screen block, URL presets, live-edge/clock sync and distance volume. No minePad, laser, peripherals, upgrades, JS API or miniserv before the event.\n\n(5) Gates. G1-G6 below pass on their dates. Staffing: the estimate is 16-28 person-days in 15 calendar days (INFERRED), so this needs two parallel streams (engine+relay, and the WD port) or the owner accepts a smaller MVP.\n\nWhat it will NOT be: \"almost 0 ms\" behind the real event. The broadcaster's and YouTube's delay (seconds) cannot be removed. What it can be: players within tens of ms of each other (WebRTC), or under about 100-250 ms (LL-HLS with server-clock steering, INFERRED, gate G4).\n\nLabelled safety nets, in order. SN1: the same in-game browser loads TSE's official results web page (a real web page, no video codecs needed). SN2: for clients without CEF, an AkashicFM radio relay of the coverage audio, only if rights allow. SN3: a static poster.\n\nEvidence status: nothing has been built or run inside Minecraft yet. Every in-game claim below is INFERRED until gates G1-G3.",
+ "architecture": "Each part below carries its evidence grade.\n\n1. ENGINE (which JCEF build).\n- Base: CCBlueX/java-cef, pinned commit (fe8cc9e was the one tested), BSD.\n- Why this base:\n  - It is already on CEF 152 (VERIFIED).\n  - It has no AWT/JOGL dependency.\n  - N_DoMessageLoopWork is public and pumping is left to the game.\n  - It has CefAudioHandler, for stage-2 audio.\n- Rejected alternatives:\n  - Upstream/jcefmaven: needs the AWT EDT and has no audio handler (VERIFIED).\n  - CinemaMod: Chromium 116, Java 21/GLFW only, --disable-web-security (VERIFIED). Kept only as an emergency fallback; its hosted natives do decode H.264/AAC (VERIFIED).\n  - montoyo MCEF 1.7.10: 2015 CEF, usr_paths hack fails on Java 9+ (VERIFIED).\n- Build: we fork CCBlueX's build-jcef.yml and build only windows-amd64 and linux-amd64. Each platform's libjcef is linked against the exact CEF distribution it ships with, because java-cef uses CEF's unversioned experimental API (VERIFIED).\n- Two variants from one workflow, selected by a build flag:\n  - (a) PRIMARY: OBS CEF 7871 (150.0.20 Windows / 150.0.19 Linux), codec-enabled, SHA-256 pinned as in OBS CMakePresets.json:54-66. Needs a 6-line #if guard in jni_util.cpp for 3 missing net error codes. Built and run on Linux in about 5 minutes (VERIFIED). Windows is untested (gate G1).\n  - (b) ALTERNATE: Spotify/jcefbuild CEF 152.0.6, codec-free. Used if the owner rejects codec distribution or the OBS build fails on Windows. Path D still works on it, because VP8/VP9/AV1/Opus are always built (VERIFIED from Chromium gni files). The runtime test on this build is still pending (INFERRED, gate G1).\n- Small native patches in the same build:\n  - (i) Plain-int JNI entry points for key, mouse and wheel input. The fork's input code looks up org/lwjgl/sdl classes that do not exist on Java 8 or lwjgl3ify 2.x (VERIFIED).\n  - (ii) Windows Job Object with KILL_ON_JOB_CLOSE, plus a uniquely named helper exe (akashicweb_helper), so orphan cleanup only ever targets our own helpers.\n  - (iii) Stage-2 only: audio_handler.cpp uses JCEF's cached-loader FindClass and reads back the audio params.\n- Java side:\n  - jcef classes compiled with --release 8 (class major 52), unrelocated, because JNI symbols are bound to org.cef names (VERIFIED).\n  - Our own OSR class in package org.cef.browser, a pattern proven with no JOGL (VERIFIED).\n  - DataPointer falls back to a reflective DirectByteBuffer.\n  - On startup, refuse with a clear message if another mod already loaded org.cef.\n- CEF threading: a dedicated daemon thread \"AkashicWeb-Pump\" runs CefApp init and the external message pump. onPaint copies the dirty rects into a triple buffer; the probe measured 0.85-1.14 ms per 1080p frame (VERIFIED). The render thread then uploads the newest frame.\n- CEF switches: --no-first-run (startup fails without it in the probe, VERIFIED), --no-default-browser-check, --autoplay-policy=no-user-gesture-required.\n  - NEVER --disable-web-security.\n  - Popups, downloads, devtools, remote debugging and the context menu are disabled.\n- Profile: a per-instance root_cache_path under <gameDir>/akashic-web/profile, because of the CEF singleton lock (VERIFIED).\n- Browser settings: windowless_frame_rate 30, telão browser fixed at 1280x720. A client preset can drop to 480p or Off.\n- In-process vs separate host process: in-process for the MVP, because it is the proven MCEF pattern and there is no time for an IPC layer. A separate browser-host process (shared-memory frames, supervisor) is post-election work.\n\n2. MOD STRUCTURE.\n- A new GTNH-buildscript mod, e.g. modid 'akashicwd', named as a Web Displays port with montoyo's public-domain credit and the CinemaMod MIT notice where fork code is borrowed.\n- Compiled with Jabel to class major 52, with a CI check that every class is major 52.\n- Packages:\n  - common: BlockScreen, Multiblock, BlockSide, hit2pixels, Rotation, TileEntityScreen with NBT and the telão lock, ScreenRights, the network subset.\n  - server: /telao command, policy, audit, rate limits.\n  - client: TESR, upload, GUIs, input mapping.\n  - client.web: the ONLY package that touches org.cef, so the dedicated server never loads natives (VERIFIED requirement from the issue history).\n- Mixins via UniMixins: only a Minecraft.shutdown hook.\n- Soft dependencies, all reflective:\n  - Angelica: TileEntityRenderBoundsRegistry.registerDynamicClass.\n  - lwjgl3ify 3.x: InputEvents.beginTextInput/endTextInput.\n  - AkashicFM: clock and stage-2 audio.\n- Not ported before the event: the JSON GUI framework, miniserv/server block/wd:// scheme (never: open TCP port), minePad, laser, peripherals, upgrades, JS/redstone API, advancements, ironic.ogg (never shipped).\n\n3. RENDERING.\n- The TESR only draws: one Tessellator quad, lightmap 240/240, lighting off, all exceptions caught with a placeholder drawn instead.\n- Upload happens once per frame on RenderTickEvent START, outside the TESR, because Iris's shadow pass calls TESRs again (VERIFIED).\n- The upload uses GL11/GL12 calls in our own (Angelica-redirected) classes:\n  - texture allocated once as GL_RGBA8, LINEAR filtering, CLAMP, no mipmaps;\n  - per dirty rect: set ROW_LENGTH/SKIP, glTexSubImage2D with GL_BGRA and GL_UNSIGNED_INT_8_8_8_8_REV, then reset all unpack state to 0, since Angelica beta66b does not track it (VERIFIED);\n  - no PBOs in the MVP.\n- getRenderBoundingBox returns the full multiblock AABB from the description packet, computed before the first render. The class is registered as a dynamic-bounds class with Angelica (VERIFIED requirement), and getMaxRenderDistanceSquared is raised to cover the plaza.\n- The browser is hidden (wasHidden, uploads stop) when off-frustum or beyond the load range, and closed beyond the unload range with hysteresis.\n\n4. INPUT (admin only).\n- Server-side right-click goes through hit2pixels and a MOUSE_CLICK broadcast. CEF button numbering differs from LWJGL2 (1 and 2 swapped).\n- Wheel deltas are normalised to notches x 120.\n- The keyboard GUI sends RAWKEYDOWN/KEYUP with real modifiers through an LWJGL2 -> Windows VK table, and text as KEYEVENT_CHAR. SDL text input is switched on under lwjgl3ify 3.x. Paste is read on the sending client with GuiScreen.getClipboardString; copy and cut are never replicated.\n- For the event, admins steer the screen through URL presets and commands, not in-world typing.\n\n5. AUDIO.\n- MVP: Chromium's own output, with volume set by our player page. Each tick the mod pushes a volume = distance gain (the curve from AkashicFM GainModel.sourceGain) x MC master x records. On pages that are not ours, the same value is applied by a generic script to every <video>/<audio>. Audio is muted and the browser closed on unload, world unload and disconnect.\n- Stage 2 (post-election, or a stretch goal if green by 10-18): CefAudioHandler -> drop-oldest ring -> AkashicFM AudioFeed -> AudioEngine.touch with LEFT/RIGHT EmitterSpecs, OcclusionField and RoomProbe. CEF mutes the source while capturing (mute_source=true, VERIFIED in CEF source). This needs three AkashicFM changes first: an ExternalAudioSources API so RadioAudioController stops releasing the key, a non-blocking PcmRing, and a timed feed against lip-sync drift.\n\n6. SYNC.\n- Server-authoritative state: URL/preset, the source epoch, and a target delay D behind the live edge.\n- All telão updates go to every player in the dimension, not the 64-block radius.\n- Clock: the AkashicFM pattern (C2SClockPing/S2CClockPong -> ServerClock/ClockSync, VERIFIED classes). It is copied into the mod or used through the soft dependency, and the mod pushes serverNow into the page by executeJavaScript every second.\n- The player page steers hls.js toward EXT-X-PROGRAM-DATE-TIME (hls.playingDate) = serverNow - D, using playbackRate within ±5% and seeking if more than 1 s off (INFERRED design, gate G4).\n- WebRTC is near-live by construction: 22 ms skew between two clients on localhost (VERIFIED).\n- Navigation is locked: onBeforeBrowse cancels anything outside the allowlist and reloads the server URL. This removes the 'CANNOT be fixed' navigation FIXME for the telão.\n- All packet sends go through main-thread queues, the AkashicFM ClientTaskQueue/ServerActionQueue pattern (VERIFIED requirement).\n\n7. RELAY (primary codec path D).\n- MediaMTX v1.21.1 runs on a VPS or the game host with at least 300 Mbit/s of egress. The owner's home link only uploads the ingest.\n- Ingest: OBS on the owner's PC sends SRT/RTMP H.264+AAC.\n  - Primary transcode: MediaMTX runOnAvailable runs ffmpeg libvpx-vp9 realtime 720p30 at 1.8 Mbit/s + libopus 128k. This is the exact measured pipeline: 0.40 core (VERIFIED). A 480p tier is also produced.\n  - Alternate: OBS WHIP AV1+Opus direct, no transcode (VERIFIED as supported by OBS, not measured end to end).\n- Delivery: WebRTC over WHEP, with a TCP fallback and webrtcAdditionalHosts set; LL-HLS over HTTPS :443 as automatic fallback.\n- The player page is served from an Akashic HTTPS domain behind a reverse proxy.\n- Backup path B: the same page in 'embed' mode (youtube-nocookie, with a Referer), on the codec build.\n\n8. NATIVES DISTRIBUTION.\n- A client-only CefNativesInstaller built from the AkashicFM ToolManager skeleton (VERIFIED class):\n  - a manifest pinned in the jar (platform, url, size, sha256, buildId);\n  - .part download with resume, timeouts and retries over a mirror list (GitHub Releases + Akashic host);\n  - SHA-256 checked BEFORE extraction;\n  - zip extraction with a canonical-path check;\n  - size caps raised to 512 MiB per file and 1 GiB total (libcef.so is 267.9 MB, VERIFIED);\n  - an atomic directory rename and a .complete marker;\n  - hashes re-verified at startup;\n  - installed to <mcDataDir>/akashic-web/<platform>/<buildId>, never mods/ and never relative to the working directory, with an ASCII-safe fallback path;\n  - player consent asked before the download; a manually supplied zip is accepted if it passes the same hash check.\n- The codec CEF payload is either downloaded on the player's machine from OBS's CDN with OBS's pinned hash (no mirroring by Akashic), or stripped and repackaged. The owner decides.\n- Everything is pre-downloaded from 10-20 on. On event day nothing should need downloading.\n\n9. SECURITY / ADMIN CONTROL.\n- The telão lock sets friendRights = otherRights = NONE. SetURL, Click, Type, Resolution and Sync require an OP level or the Akashic admin list.\n- The original dimension and 128-block checks are kept, plus per-player rate limits and length caps.\n- Server-side AkashicFM UrlPolicy: an https allowlist and isInternal blocking. AuditLog records every action.\n- Client-side, onBeforeBrowse/onBeforeResourceLoad block file://, chrome://, internal addresses and popups.\n- The sandbox stays off because JCEF hard-codes no_sandbox (VERIFIED). The allowlist is the mitigation.\n\n10. JAVA / PLATFORM SUPPORT.\n- Tier 1: Windows 10/11 x64 on Java 8 (LWJGL2) and on Java 17-25 (lwjgl3ify), Angelica on, on the frozen GTNH version. The recommendation is 2.8.4 stable; 2.9.0 is still RC-2 (VERIFIED).\n- Tier 2: Linux x64, glibc 2.31 or newer.\n- Unsupported, with placeholder and SN2: macOS (lwjgl3ify forces headless AWT and runs the game off the main thread; INFERRED incompatible with CEF on macOS), arm64, Win7/8.1, Pojav, OpenJ9.\n- The mod is required in the pack, because the block registry must match. The CEF natives are optional: a client without them joins and sees the placeholder.\n- A login handshake reports java.version, lwjgl3ify version, OS, GPU and preflight result to the server, collected in the audit log.",
+ "problem_fixes": [
+  {
+   "problem": "Old MCEF 1.7.10 (0.6/0.7, 2015 CEF) is not a viable base",
+   "fix": "Do not use it. Build our own natives from CCBlueX java-cef against OBS CEF 150 or Spotify CEF 152, behind a thin IWebView adapter in client.web.",
+   "when": "before-oct-25",
+   "source": "wd-code; issues (config2.json 1.7.10=0.6); /home/user/montoyo/mcef 65c2b1f ClientProxy"
+  },
+  {
+   "problem": "Any player can change the URL or click on a new screen (ScreenRights.DEFAULTS)",
+   "fix": "Add a telão lock: other/friend rights set to NONE; URL, click, type, resolution and sync need OP or the admin list; keep the dimension and 128-block checks; AkashicFM UrlPolicy allowlist and AuditLog.",
+   "when": "before-oct-25",
+   "source": "wd-code; ScreenRights.java:9-18; TileEntityScreen.java:276-278; AkashicFM UrlPolicy.java, AuditLog.java"
+  },
+  {
+   "problem": "Client-side navigation desyncs screens (onAddressChange FIXME)",
+   "fix": "On a locked telão, onBeforeBrowse cancels navigation outside the allowlist and reloads the server URL, and popups are blocked. On unlocked screens (post-event), the admin client reports navigation as a rate-limited SetURL queued on the main thread.",
+   "when": "before-oct-25",
+   "source": "wd-code; TileEntityScreen.java:679-693"
+  },
+  {
+   "problem": "No playback sync between players / desync by design / hls.js picks its own live edge",
+   "fix": "Server-authoritative source epoch and target delay D. The AkashicFM clock ping-pong (ServerClock/ClockSync) offset is pushed to the page. The page steers hls.playingDate toward serverNow-D (playbackRate ±5%, seek if more than 1 s off). WebRTC is near-live by design. Gate G4 measures the skew.",
+   "when": "before-oct-25",
+   "source": "wd-code; issues (mcef#62, WD#44); codec-path (2-client 22 ms/116 ms measured); AkashicFM server/relay/ServerClock.java, client/relay/ClockSync.java"
+  },
+  {
+   "problem": "Late joiners miss clicks; unattended autoplay blocked",
+   "fix": "The telão starts itself: the player page autoplays (--autoplay-policy=no-user-gesture-required), the URL and play state travel in the description packet, and a sync is sent on join. The design does not depend on clicks.",
+   "when": "before-oct-25",
+   "source": "wd-code; TileEntityScreen.java:457-502; CinemaMod CefUtil.java:85-92"
+  },
+  {
+   "problem": "Update radius (64 blocks) smaller than useful view distance; short load/unload ranges restart video",
+   "fix": "Send telão updates to every player in the dimension. Per-screen load range with hysteresis; hide (wasHidden) instead of destroying the browser inside the plaza; destroy only beyond the unload range.",
+   "when": "before-oct-25",
+   "source": "wd-code; issues (WD#6, #71, #95); TileEntityScreen.java:262-264"
+  },
+  {
+   "problem": "Audio not integrated with Minecraft (OS output, not positional, ignores volume sliders, YouTube-only JS volume)",
+   "fix": "MVP: our player page applies volume = distance gain (GainModel curve) x MC master x records, pushed every tick; a generic script does the same on any <video>/<audio>; mute and close on unload, world unload and disconnect. Positional OpenAL comes in stage 2.",
+   "when": "before-oct-25",
+   "source": "wd-code; issues (WD#3, #244); VideoType.java:14-15; AkashicFM audio/dsp/GainModel.java"
+  },
+  {
+   "problem": "No positional audio: upstream JCEF has no CefAudioHandler; fork audio WIP (~43 packets late)",
+   "fix": "Stage 2: CCBlueX CefAudioHandler -> drop-oldest ring -> AkashicFM AudioFeed -> AudioEngine.touch with EmitterSpec LEFT/RIGHT, OcclusionField and RoomProbe. CEF mutes the source while capturing.",
+   "when": "after-oct-25",
+   "source": "cef-tech; gtnh-integration; /home/user/ccbluex/java-cef/java/org/cef/handler/CefAudioHandler.java; AkashicFM client/audio/AudioEngine.java"
+  },
+  {
+   "problem": "Fork DataPointer requires LWJGL3 MemoryUtil (crashes on Java 8)",
+   "fix": "Our build of DataPointer uses MemoryUtil by reflection when it exists, otherwise a reflective DirectByteBuffer(long,int). Preferred long-term: a native NewDirectByteBuffer per channel.",
+   "when": "after-oct-25",
+   "source": "gtnh-integration; /home/user/ccbluex/java-cef/java/org/cef/misc/DataPointer.java:72-83"
+  },
+  {
+   "problem": "audio_handler.cpp uses raw FindClass on the native audio thread (LaunchClassLoader classes invisible)",
+   "fix": "Patch it to use JCEF's cached-loader FindClass (jni_scoped_helpers). This patch is folded into the same native build as the input patch.",
+   "when": "after-oct-25",
+   "source": "gtnh-integration (INFERRED); audio_handler.cpp:15,43,56"
+  },
+  {
+   "problem": "Audio parameters cannot be chosen from Java (null params, final fields)",
+   "fix": "Patch the native to read back the rate and layout and request 48 kHz stereo. Until then, resample with AkashicFM Resampler48k and downmix to stereo.",
+   "when": "after-oct-25",
+   "source": "gtnh-integration; cef-tech; audio_handler.cpp:40-77; AkashicFM audio/dsp/Resampler48k.java"
+  },
+  {
+   "problem": "AkashicFM RadioAudioController releases foreign playback keys every tick (retainOnly/stopAll/DRY room)",
+   "fix": "Add an ExternalAudioSources.register(Provider) API to AkashicFM, merged into keep, occlusion and room. WD soft-depends on it.",
+   "when": "after-oct-25",
+   "source": "gtnh-integration; AkashicFM client/audio/RadioAudioController.java:151-157,263-284"
+  },
+  {
+   "problem": "Lip-sync drifts after a game hitch (~1 s OpenAL queue)",
+   "fix": "Timed feed: map CEF pts to ClockSync time with latency of about 120-150 ms, and delay video by a matching 4-5 frame ring. Only relevant once stage-2 audio exists.",
+   "when": "after-oct-25",
+   "source": "gtnh-integration (INFERRED); AkashicFM client/audio/Playback.java:28-51"
+  },
+  {
+   "problem": "PcmRing.write blocks the CEF audio thread",
+   "fix": "Use a non-blocking drop-oldest ring, copied synchronously inside the callback.",
+   "when": "after-oct-25",
+   "source": "gtnh-integration; AkashicFM audio/dsp/PcmRing.java:45-63"
+  },
+  {
+   "problem": "Angelica render-bounds cache culls the multiblock; no isGlobalRenderer in 1.7.10",
+   "fix": "getRenderBoundingBox returns the full multiblock AABB (or INFINITE for the telão) from the description packet before the first render. Reflective TileEntityRenderBoundsRegistry.registerDynamicClass, and a raised getMaxRenderDistanceSquared. Gate G3 checks it in-game.",
+   "when": "before-oct-25",
+   "source": "wd-code; Angelica MixinTileEntity.java:27-113; TileEntityRenderBoundsRegistry.java:29-60"
+  },
+  {
+   "problem": "GL state coherence/corruption under Angelica (immediate mode, untracked unpack/PBO state, shadow-pass double TESR)",
+   "fix": "Draw with Tessellator, not glBegin. Upload once per frame at RenderTickEvent START with GL11 in our own classes, resetting ROW_LENGTH/SKIP to 0, no PBO in the MVP. The TESR only draws.",
+   "when": "before-oct-25",
+   "source": "wd-code; gtnh-integration; GLSMRedirector.java:181-211; beta66b GLStateManager:1097-1111; Iris ShadowRenderer.java:757-837"
+  },
+  {
+   "problem": "Rendering issues: shaders darkening the screen, skewed/split frames, renderer exception hides the chunk, rainbow GL leak",
+   "fix": "Full-bright quad (lightmap 240). The texture is reallocated atomically on resize, and frames whose size does not match are dropped. Every TESR exception is caught and a placeholder drawn instead. Shaders are smoke-tested on and off with 2 packs.",
+   "when": "before-oct-25",
+   "source": "issues (WD#2, #24, #264; CinemaMod/webdisplays#62; CinemaMod/mcef#124)"
+  },
+  {
+   "problem": "Unsafe packet sending from non-main threads (SimpleNetworkWrapper shared attributes)",
+   "fix": "Every send goes through main-thread queues drained on Client/ServerTickEvent (AkashicFM ClientTaskQueue / ServerActionQueue pattern). Remove addScheduledTask.",
+   "when": "before-oct-25",
+   "source": "wd-code; AkashicFM network/FmNetwork.java:13-16; client/ClientTaskQueue.java"
+  },
+  {
+   "problem": "Stock CEF has no H.264/AAC: YouTube live (AAC-only audio, H.264 HLS), Twitch and MP4 fail; white/black screens",
+   "fix": "PRIMARY: the Akashic relay converts to VP9 (or AV1) + Opus over WebRTC/LL-HLS. BACKUP: the engine built on OBS's codec CEF 7871 so a YouTube embed plays. Both are tested at G1 and G2.",
+   "when": "before-oct-25",
+   "source": "codec-path (yt-dlp#9043; relay measured 126 ms / 1.04 s); cef-tech probe; issues (WD#27, #114; CinemaMod/mcef#28)"
+  },
+  {
+   "problem": "Earlier research mislabelled CinemaMod CEF 116 as codec-less",
+   "fix": "Correct the shared notes: its hosted natives decode H.264/AAC (VERIFIED). Keep it only as an emergency fallback engine (Chromium 116, different fork API).",
+   "when": "before-oct-25",
+   "source": "codec-path p116 probe; CinemaMod/mcef#28"
+  },
+  {
+   "problem": "libjcef must match the exact CEF build (experimental API); OBS pins 150 while forks target 152",
+   "fix": "Build per platform against the exact OBS distribution, placed in third_party/cef with -DCEF_VERSION. Carry the 6-line jni_util.cpp guard. Pin OBS's SHA-256s. Run the Windows build at G1.",
+   "when": "before-oct-25",
+   "source": "codec-path build2.log; cef_api_hash.h; obs-studio CMakePresets.json:54-66"
+  },
+  {
+   "problem": "Codec patent/licence exposure of distributing Chrome-branded FFmpeg",
+   "fix": "The relay path is royalty-free and primary. If the codec build is used: no Akashic mirror; download from OBS's CDN on the player's machine with a hash pin and a consent screen; documented as optional; the owner gets legal input. Decision by 10-13.",
+   "when": "before-oct-25",
+   "source": "codec-path; cef#3559; Via LA fee page"
+  },
+  {
+   "problem": "Widevine/DRM sources (Globoplay etc.) unusable",
+   "fix": "Never pick a DRM source. Relay ingest uses OBS capture of an authorised source, or the official embed.",
+   "when": "before-oct-25",
+   "source": "cef-tech (EME NotSupportedError; cef#3820)"
+  },
+  {
+   "problem": "Silent white screen ('virtual mode') hides every failure",
+   "fix": "An explicit init state machine with reason codes (DOWNLOAD_FAILED, HASH_MISMATCH, NATIVE_LOAD, GPU_CRASH, UNSUPPORTED_OS, PROFILE_LOCKED), drawn on the screen in pt-BR and English. A /telao doctor command plus an about:blank onPaint self-test, with the preflight result reported to the server.",
+   "when": "before-oct-25",
+   "source": "issues (112/590 titles); montoyo mcef RemoteConfig.java:96-125"
+  },
+  {
+   "problem": "Native runtime download/CDN fragility (single third-party host, no hash check, no timeouts, tar-slip, CWD-relative mods/ dir)",
+   "fix": "CefNativesInstaller from the AkashicFM ToolManager skeleton: manifest pinned in the jar, SHA-256 checked before extraction, canonical-path zip guard, resume, timeouts and mirrors, atomic install under <mcDataDir>/akashic-web, re-verify on start, pre-download from 10-20.",
+   "when": "before-oct-25",
+   "source": "issues (CinemaMod/mcef#143, #145); cef-tech; gtnh-integration; AkashicFM server/ipod/ToolManager.java"
+  },
+  {
+   "problem": "Natives payload too large for ToolManager caps (libcef.so 267.9 MB > 250 MiB); large download (OBS zip 345 MB)",
+   "fix": "Caps of 512 MiB per file and 1 GiB total. Repackage only Release/ and Resources/, stripped where allowed. Progress overlay. Players pre-download in the week before the event.",
+   "when": "before-oct-25",
+   "source": "gtnh-integration; codec-path (libcef 279.5 MB stripped); ToolManager.java:49"
+  },
+  {
+   "problem": "Pinned TLS intermediate / old JRE trust store breaks downloads",
+   "fix": "No intermediate pinning. Integrity comes from SHA-256, not from the transport. Warn when java.version < 1.8.0_141.",
+   "when": "before-oct-25",
+   "source": "issues (montoyo MCEF.java:82-101; R3 expired 2025-09-15)"
+  },
+  {
+   "problem": "Java/JVM incompatibility (usr_paths hack fails on Java 9+, OpenJ9, JDK16+ add-opens)",
+   "fix": "Load natives with System.load(absolute path) in dependency order and set subprocess/resources/locales paths explicitly. Refuse OpenJ9 with a message. Rely on lwjgl3ify's existing --add-opens; we use no JOGL, so no extra exports are needed. Test Java 8 and 21.",
+   "when": "before-oct-25",
+   "source": "issues (Java 21 NoSuchFieldException test); gtnh-integration (java9args.txt); cef-tech harness"
+  },
+  {
+   "problem": "Upstream OSR is tied to JOGL/AWT and pumps on the AWT EDT; onPaint is off the GL thread and its buffer is valid only during the callback",
+   "fix": "CCBlueX fork (no AWT) plus our own OSR class in org.cef.browser. A dedicated AkashicWeb-Pump thread does init and pumping; onPaint copies into a triple buffer; the render thread uploads.",
+   "when": "before-oct-25",
+   "source": "cef-tech; gtnh-integration (probe paintThread=AWT-EventQueue-0)"
+  },
+  {
+   "problem": "Fork native input is coupled to SDL/GLFW classes and silently drops input on Java 8 and lwjgl3ify 2.x",
+   "fix": "Native patch: plain-int JNI entry points for key, mouse and wheel. Java-side LWJGL2 -> VK table.",
+   "when": "before-oct-25",
+   "source": "gtnh-integration; /home/user/ccbluex/java-cef/native/CefBrowser_N.cpp:1803-1840"
+  },
+  {
+   "problem": "Key-code mismatch; ABNT2 dead keys, '$%&' remapped to Home/Left/Up, Cyrillic, Backspace/Enter, clipboard replication",
+   "fix": "A VK table for named keys only; text sent as KEYEVENT_CHAR from composed chars; reflective SDL beginTextInput on lwjgl3ify 3.x; paste via GuiScreen.getClipboardString; copy/cut never replicated. Admins use presets for the event; ABNT2 is tested before release.",
+   "when": "before-oct-25",
+   "source": "wd-code; issues (WD#55, #58); gtnh-integration (InputEvents.java:173-182); montoyo CefBrowserOsr.java:243-262"
+  },
+  {
+   "problem": "lwjgl3ify input quirks (numpad char \\0 #332, Ctrl+V non-Latin #329, IME stuck #371)",
+   "fix": "Use the getClipboardString path for paste and treat numpad keys by key code. IME is out of scope for the event.",
+   "when": "after-oct-25",
+   "source": "issues; https://github.com/GTNewHorizons/lwjgl3ify/issues/332, /329, /371"
+  },
+  {
+   "problem": "YouTube/player quirks: fullscreen API, autoplay, hover controls from the mouse-spam hack, scroll, extra mouse buttons",
+   "fix": "A kiosk player page sizes the <video> to the viewport, so no fullscreen API is needed. Autoplay switch on. No synthetic mouse spam. Unknown mouse buttons are sanitised and the wheel is normalised.",
+   "when": "before-oct-25",
+   "source": "issues (mcef#12, WD#48, CinemaMod #73); montoyo CefBrowserOsr.java:157-160"
+  },
+  {
+   "problem": "YouTube embed requirements (Referer or Error 153, at least 200x200, no overlays, embedding may be disabled)",
+   "fix": "Host the page on an Akashic HTTPS domain with Referrer-Policy strict-origin-when-cross-origin and use youtube-nocookie.com/embed. The browser renders at 1280x720. Embedding is checked during rehearsal G4.",
+   "when": "before-oct-25",
+   "source": "codec-path (YouTube RMF; til.simonwillison.net)"
+  },
+  {
+   "problem": "YouTube picks a low quality for small viewports; bot-check from datacenter IPs",
+   "fix": "A fixed 1280x720 browser regardless of block size. The stock Chrome user agent. Rehearsals run from residential connections.",
+   "when": "before-oct-25",
+   "source": "cef-tech (montoyo/mcef#44)"
+  },
+  {
+   "problem": "yt-dlp YouTube ingest is brittle (PO tokens, SABR, bot wall)",
+   "fix": "Ingest via OBS on the owner's PC capturing an authorised source (browser window or capture card), sent over SRT/RTMP or WHIP. yt-dlp/streamlink is a secondary option only.",
+   "when": "before-oct-25",
+   "source": "codec-path; yt-dlp _video.py:3540,3703-3712"
+  },
+  {
+   "problem": "Outdated Chromium (YouTube 'browser out of date', blocked sign-in)",
+   "fix": "CEF 150/152 now. Build id checked at runtime. No login is ever needed on the telão. A scripted rebuild path for CEF patch releases.",
+   "when": "before-oct-25",
+   "source": "issues (WD#267; mcef#52); cef-tech"
+  },
+  {
+   "problem": "CinemaMod MCEF stack is stale (CEF 116, 30 fps cap, fake arm64, --disable-web-security, no tarball hash)",
+   "fix": "Not used as a base, only as the emergency engine. Borrow its ideas: dirty-rect upload and render-thread pumping.",
+   "when": "before-oct-25",
+   "source": "cef-tech; CinemaMod CefUtil.java:85-93; MCEFDownloader.java:84-110"
+  },
+  {
+   "problem": "CEF 152 fails without --no-first-run (exit code 28)",
+   "fix": "Always pass --no-first-run and --no-default-browser-check. The self-test logs ContentMainRun exit codes.",
+   "when": "before-oct-25",
+   "source": "cef-tech harness fr.txt"
+  },
+  {
+   "problem": "Orphan jcef_helper processes, JVM not exiting, locked cache/log files",
+   "fix": "A shutdown mixin plus a hook disposes CEF on the pump thread with a 3 s timeout, then a halt watchdog. Windows Job Object KILL_ON_JOB_CLOSE. A uniquely named helper, swept at startup (only ours). Per-instance cache and log.",
+   "when": "before-oct-25",
+   "source": "issues (CinemaMod/mcef#63, #33, #113); gtnh-integration"
+  },
+  {
+   "problem": "CEF profile singleton lock with multiple MC instances",
+   "fix": "Per-instance root_cache_path under <gameDir>/akashic-web/profile. On conflict, a PROFILE_LOCKED placeholder.",
+   "when": "before-oct-25",
+   "source": "gtnh-integration; java-cef CefSettings.java:110-135"
+  },
+  {
+   "problem": "Browser lifecycle bugs: audio continues after breaking or leaving, duplicate browsers",
+   "fix": "A single BrowserRegistry keyed by screen id with ref-counting. Close on invalidate, chunk unload, world unload, disconnect and dimension change, plus a tick sweeper. Scripted tests for break, logout, rejoin and dimension hop.",
+   "when": "before-oct-25",
+   "source": "issues (WD#9; CinemaMod/webdisplays#11, #65, #77, #113)"
+  },
+  {
+   "problem": "Client crashes when the browser is unavailable (RuntimeException 'MCEF is missing')",
+   "fix": "Degrade gracefully to a placeholder texture with the reason code. Never throw on join.",
+   "when": "before-oct-25",
+   "source": "wd-code; ClientProxy.java:142-151; CinemaMod/webdisplays#100"
+  },
+  {
+   "problem": "Native crashes kill the game (in-process libcef)",
+   "fix": "MVP: Tier-1 platforms only, software compositing fallback, every native call guarded, crash reason recorded for the next start, automatic disable after 2 consecutive crashes. Post-event: a separate browser-host process with a supervisor.",
+   "when": "after-oct-25",
+   "source": "issues (CinemaMod/mcef#34, #36, #86; WD#40)"
+  },
+  {
+   "problem": "GPU/OSR driver problems (white or black for one player)",
+   "fix": "OSR defaults to --disable-gpu-compositing, with a GPU toggle. GPU-process crash detection falls back to software. GPU and driver included in diagnostics.",
+   "when": "before-oct-25",
+   "source": "issues (CinemaMod/mcef#11, #66, #120)"
+  },
+  {
+   "problem": "Client cost: full-res upload and decode per player; CPU/RAM (0.54 GiB, 40% of a core at 1080p30 software)",
+   "fix": "Fixed 1280x720 at 30 fps, one shared browser per source, uploads paused when off-view or far, client presets Off/480p/720p, 8 GB RAM minimum documented. FPS measured at G3/G4.",
+   "when": "before-oct-25",
+   "source": "wd-code (arithmetic); cef-tech (harness pss1080, run1080p30)"
+  },
+  {
+   "problem": "Zero-copy accelerated paint not available (no upstream binding; EGL/EXT_memory_object not fit for 1.7.10)",
+   "fix": "CPU OnPaint path for the event. Accelerated paint as an opt-in on NVIDIA/Windows under lwjgl3ify later. PBO double-buffering after the event.",
+   "when": "after-oct-25",
+   "source": "cef-tech; java-cef PR #524/#547; CCBlueX CefAccelerationSupport.java"
+  },
+  {
+   "problem": "Frames delivered at Minecraft's FPS or blocking it",
+   "fix": "The dedicated pump thread decouples CEF from MC FPS. The render thread uploads only the newest frame.",
+   "when": "before-oct-25",
+   "source": "gtnh-integration"
+  },
+  {
+   "problem": "Three different client stacks (Java8+LWJGL2; Java17+ lwjgl3ify 2.x GLFW + Angelica beta66b; lwjgl3ify 3.x SDL3 + Angelica 2.x core profile)",
+   "fix": "Freeze the server's GTNH version on 10-11 (recommended: 2.8.4). Test that version on Java 8 and Java 21. Detect lwjgl3ify 3.x reflectively. Add Angelica and lwjgl3ify to the AkashicFM tools/prod harness.",
+   "when": "before-oct-25",
+   "source": "gtnh-integration; DreamAssemblerXXL manifests; AkashicFM tools/prod/packs.sh:7-16"
+  },
+  {
+   "problem": "Direct LWJGL3 references renamed under lwjgl3ify (non-Aware jars)",
+   "fix": "The mod stays non-Aware. LWJGL3/lwjgl3ify APIs are reached only by reflection with string names.",
+   "when": "before-oct-25",
+   "source": "gtnh-integration; LwjglRedirectTransformer.java:32-40"
+  },
+  {
+   "problem": "Jabel/Java 8 API only (ProcessHandle etc. unavailable)",
+   "fix": "Java 9+ APIs via MethodHandles behind a version check. A CI gate that every class is major 52, including the org.cef jar.",
+   "when": "before-oct-25",
+   "source": "gtnh-integration; AkashicFM gradle.properties:44-47"
+  },
+  {
+   "problem": "org.cef cannot be relocated; clashes with other mods shipping org.cef (e.g. MCEF via TeXTech)",
+   "fix": "Ship org.cef unrelocated and loaded by the same loader as our OSR class. Startup check: refuse with a message if org.cef.CefApp comes from another jar.",
+   "when": "before-oct-25",
+   "source": "gtnh-integration; java-cef CefApp.cpp:22,91"
+  },
+  {
+   "problem": "Late XInitThreads on Linux (window already exists)",
+   "fix": "OSR with an external single-threaded pump. libX11 1.8+ is thread-safe by default. If Linux shows X errors at G3, move CefApp.startup to the early-load phase.",
+   "when": "before-oct-25",
+   "source": "gtnh-integration (INFERRED); java-cef CefApp.cpp:91-95"
+  },
+  {
+   "problem": "macOS players cannot run CEF under lwjgl3ify (headless AWT, game off the main thread)",
+   "fix": "Declared unsupported for 10-25: placeholder 'Telão indisponível no macOS', plus SN2 (labelled safety net). Revisit after the event.",
+   "when": "after-oct-25",
+   "source": "gtnh-integration; lwjgl3ify Sys.java:38-42; java-cef context.cpp:232-235"
+  },
+  {
+   "problem": "Platform coverage gaps (Linux LD_LIBRARY_PATH, NixOS, fake arm64, Win7, Pojav)",
+   "fix": "Publish the support matrix: Windows 10/11 x64 Tier 1, Linux x64 glibc 2.31+ Tier 2, the rest placeholder. Check the ELF/PE machine type after download.",
+   "when": "before-oct-25",
+   "source": "issues (CinemaMod/mcef#62, #64, #120, #129)"
+  },
+  {
+   "problem": "Install path, Unicode/space usernames, CWD-relative dirs",
+   "fix": "Absolute canonical paths derived from the MC data dir. ASCII-safe fallback (%PROGRAMDATA%\\AkashicWeb or the 8.3 short path). Test 'C:\\Users\\João Conceição' and Prism names with spaces and parentheses.",
+   "when": "before-oct-25",
+   "source": "issues (montoyo/mcef#50; CinemaMod/mcef#3, #70)"
+  },
+  {
+   "problem": "Antivirus/firewall/DNS-filter interference",
+   "fix": "Download only from Akashic or pinned hosts. A pt-BR guide listing the folder and hashes to whitelist. Detect helper start failure and show AV instructions. Code signing after the event.",
+   "when": "before-oct-25",
+   "source": "issues (WD#20, #26; CinemaMod/mcef#66)"
+  },
+  {
+   "problem": "WD/MCEF version coupling and packaging confusion",
+   "fix": "One mod jar with the engine version-locked by buildId in the manifest. A clear pt-BR message on mismatch. No auto-download of third-party mods.",
+   "when": "before-oct-25",
+   "source": "issues (forum NoSuchMethodError; mcef#88)"
+  },
+  {
+   "problem": "Dedicated server must not load CEF (WD required MCEF on the server)",
+   "fix": "All org.cef code in client.web behind proxies and @SideOnly; the TE holds no CEF types. CI boots a dedicated server and places, loads and unloads a screen.",
+   "when": "before-oct-25",
+   "source": "issues (CinemaMod/webdisplays#52); WebDisplays.java:60"
+  },
+  {
+   "problem": "Legacy WD 0.11 pitfalls (entity screens, configurable IDs, 32-bit, Flash)",
+   "fix": "Port from the 1.12.2 TileEntity design only. No configurable IDs. 0.11 is reference only.",
+   "when": "before-oct-25",
+   "source": "issues (mcef#17, #29; WD#33)"
+  },
+  {
+   "problem": "Mod conflicts (Angelica, lwjgl3ify, Hodgepodge in GTNH)",
+   "fix": "Test in the exact server pack with Angelica on and off and shaders on and off. Narrow, namespaced mixins. Smoke test after every GTNH update.",
+   "when": "before-oct-25",
+   "source": "issues; gtnh-integration"
+  },
+  {
+   "problem": "Fork regression: lost range and remote checks; unbounded JSON/text",
+   "fix": "Re-add the dimension, 128-block and remote checks, plus per-player rate limits and length caps on URL, text and JSON.",
+   "when": "before-oct-25",
+   "source": "wd-code; C2SMessageScreenCtrl.java:163-185; SMessageScreenCtrl.java:282-300"
+  },
+  {
+   "problem": "Security/abuse: unsandboxed Chromium, attacker-chosen URLs, --disable-web-security, exact-host blacklist",
+   "fix": "Telão lock plus a server-side UrlPolicy allowlist with isInternal. Client onBeforeBrowse/onBeforeResourceLoad guard. Web security kept on. No popups, downloads, devtools or context menu. AuditLog. CEF kept current.",
+   "when": "before-oct-25",
+   "source": "issues; cef-tech; gtnh-integration; java-cef context.cpp:193-197; AkashicFM UrlPolicy.java:54,153"
+  },
+  {
+   "problem": "Miniserv opens public TCP 25566",
+   "fix": "Not ported, neither the server block nor the wd:// scheme. If ever needed, port 0 by default.",
+   "when": "before-oct-25",
+   "source": "wd-code; issues (WD#98, #101); WebDisplays.java:145"
+  },
+  {
+   "problem": "License hygiene (PD WD, MIT fork, LGPL CinemaMod MCEF, no-grant net.montoyo.mcef, jQuery, ironic.ogg)",
+   "fix": "Keep the PD headers and credit plus the MIT notice. Do not copy net.montoyo.mcef. CCBlueX java-cef is BSD: keep the LICENSE. Drop ironic.ogg. Record SHA-256 of every native bundle.",
+   "when": "before-oct-25",
+   "source": "wd-code; LICENSE files cited"
+  },
+  {
+   "problem": "Upstream abandonment (montoyo, CinemaMod)",
+   "fix": "A fully owned fork: vendored engine source and our own CI, binaries hosted by Akashic or pinned upstream hashes, no reliance on upstream fixes.",
+   "when": "before-oct-25",
+   "source": "issues (WD#33, #261; CinemaMod/mcef#142)"
+  },
+  {
+   "problem": "Retransmission rights and Content ID on the owner's restream",
+   "fix": "Source and rights decision: provisional 10-15, final 10-21. Relay only with a licence or permission (TV Câmara CC BY, TV Senado policy, or a broadcaster's written OK); YouTube-only sources via the official embed (backup B). On the owner's stream, mute, blur or switch the telão to the TSE page, and ask the rights holder to allowlist his channel.",
+   "when": "before-oct-25",
+   "source": "codec-path; issues; Lei 9.610 art. 95; youtube.com/t/terms; support.google.com/youtube/answer/3367684"
+  },
+  {
+   "problem": "Relay egress bandwidth (~1.9 Mbit/s per viewer at 720p; ~190 Mbit/s for 100)",
+   "fix": "MediaMTX on a VPS or the game host with at least 300 Mbit/s egress, a 480p tier, and the browser started only within range. 50-viewer load test at G2.",
+   "when": "before-oct-25",
+   "source": "codec-path bench bitrates (INFERRED totals)"
+  },
+  {
+   "problem": "WebRTC reachability (UDP 8189, NAT)",
+   "fix": "webrtcAdditionalHosts set to the public IP, webrtcLocalTCPAddress enabled, automatic LL-HLS fallback over HTTPS 443, TLS via reverse proxy.",
+   "when": "before-oct-25",
+   "source": "codec-path; mediamtx.yml v1.21.1:400-415"
+  },
+  {
+   "problem": "WebRTC first frame ~3 s (non-trickle ICE wait)",
+   "fix": "POST the WHEP offer after the first candidate or 300 ms (or trickle via PATCH). LL-HLS plays first while WebRTC connects.",
+   "when": "before-oct-25",
+   "source": "codec-path lat/www/index.html"
+  },
+  {
+   "problem": "Evidence gap: WebRTC VP9/AV1 not run on a no-codec build",
+   "fix": "Run the codec-path lat/ harness against both engine variants at G1.",
+   "when": "before-oct-25",
+   "source": "codec-path"
+  },
+  {
+   "problem": "Expectation of 'almost no ms' delay",
+   "fix": "Tell the owner plainly (see latency_answer). Use WebRTC as the primary delivery to minimise our added delay and the skew between players.",
+   "when": "before-oct-25",
+   "source": "cef-tech; codec-path; support.google.com/youtube/answer/7444635"
+  },
+  {
+   "problem": "Schedule risk: 16-28 person-days of work in 15 calendar days",
+   "fix": "Telão-only MVP, two parallel streams, a dated feature freeze on 10-20, and go/no-go gates with fallbacks at each.",
+   "when": "before-oct-25",
+   "source": "wd-code effort estimate (INFERRED)"
+  }
+ ],
+ "mvp_scope": [
+  "Engine: CCBlueX java-cef, pinned, built in our forked CI for windows-amd64 and linux-amd64 against OBS CEF 7871 (primary, codec-enabled) and Spotify CEF 152 (alternate, codec-free). Patches: jni_util guard, plain-int input JNI, Job Object, renamed helper. Java classes major 52.",
+  "client.web adapter (IWebView): create, resize, textureId, close, loadURL, executeJS, mouse/wheel/key, onBeforeBrowse lock, our own OSR class, AkashicWeb-Pump thread, triple-buffer onPaint copy, init state machine with reason codes and placeholder.",
+  "CefNativesInstaller: manifest pinned in the jar, SHA-256 before extract, zip-slip guard, resume/timeouts/mirrors, atomic install under <mcDataDir>/akashic-web, consent prompt, manual-zip import, /telao doctor, preflight report to the server.",
+  "Screen block + multiblock (2x2..16x16, raised limit for admin-placed screens), connected-border icons via getIcon, TileEntityScreen with NBT state (URL/preset, resolution fixed 1280x720, rotation, owner, lock flag, source epoch, target delay), sync via getDescriptionPacket/onDataPacket.",
+  "Networking subset: SetURL/preset, Click, Wheel, Type, Rotation, SyncState, Lock. Sent to all players in the dimension. Main-thread send queues. Rights, range and rate checks. AuditLog.",
+  "Admin control: /telao set <preset>|url, lock, unlock, sync, fallback <webrtc|hls|embed|tse|poster>, doctor, status. OP level or admin list. Server UrlPolicy allowlist.",
+  "Rendering: draw-only TESR (Tessellator, full-bright), upload once per frame at RenderTickEvent START, unpack state reset, Angelica dynamic-bounds registration, full-multiblock AABB, raised render distance, hide/close by distance with hysteresis, every exception caught.",
+  "Admin in-world input: right-click via hit2pixels, wheel, a minimal keyboard GUI (VK table + KEYEVENT_CHAR, SDL text input on lwjgl3ify 3.x).",
+  "Audio MVP: Chromium output with volume set by the page from distance x MC master x records; mute and close on unload, disconnect and world change.",
+  "Lifecycle: BrowserRegistry with ref-counting and a sweeper; deterministic CEF shutdown with timeout and halt watchdog; per-instance profile.",
+  "Relay (path D): MediaMTX v1.21.1 on a VPS/host with at least 300 Mbit/s; OBS ingest over SRT/RTMP; ffmpeg VP9 720p30 + Opus transcode with a 480p tier; WHEP plus LL-HLS (hls.js 1.7.3) fallback; TCP/ICE settings; TLS reverse proxy.",
+  "Akashic player page (HTTPS domain): modes webrtc / hls (with server-clock steering) / embed (youtube-nocookie, codec build only) / tse; volume and serverNow pushed by the mod via executeJavaScript.",
+  "Clock sync: AkashicFM-style C2SClockPing/S2CClockPong offset (copied or via soft dependency) fed to the page.",
+  "Client options: telão Off / 480p / 720p; 'hide telão' shows a poster.",
+  "Telemetry handshake: java.version, lwjgl3ify version, OS, GPU, preflight state (no player identifiers in committed logs).",
+  "Ops: pt-BR install guide, runbook with the fallback ladder, rehearsals G4/G5/G6, prefetch campaign from 10-20.",
+  "Labelled safety nets: SN1 TSE results page in the same browser; SN2 AkashicFM radio relay of the coverage audio for non-CEF clients (only if rights allow); SN3 static poster."
+ ],
+ "post_election_scope": [
+  "Stage-2 positional audio: CefAudioHandler -> AkashicFM AudioEngine (ExternalAudioSources API, non-blocking ring, timed feed / lip-sync, native params read-back, helper FindClass, DataPointer fallback).",
+  "Separate browser-host process (shared-memory frames, PCM pipe, supervisor restart) for crash isolation.",
+  "PBO double-buffered uploads; opt-in accelerated paint (NVIDIA/Windows, lwjgl3ify).",
+  "macOS support investigation (main-thread CEF vs lwjgl3ify); arm64 builds after verifying binaries.",
+  "Unlocked-screen mode for players: navigation reported to the server as SetURL, friends/rights GUI.",
+  "Keyboard peripheral + linker, remote controller, redstone controller (URL on edge).",
+  "Screen configurator full GUI (would need the JSON GUI framework port or a native 1.7.10 GUI).",
+  "Upgrades + JS query API (JSQueryDispatcher via CefMessageRouter), redstone in/out, GPS.",
+  "Laser pointer + hand renderer; minePad (per-item browsers); ownership thief.",
+  "OpenComputers interface (CC not in GTNH).",
+  "GT-style crafting recipes; achievements in place of advancements.",
+  "IME support, numpad/char quirks under lwjgl3ify, full ABNT2/US-Intl polish.",
+  "Code signing of the helper; CEF patch-release update pipeline; GTNH 2.9 final certification.",
+  "Server-side rendering (WebDisplaysTogether-style) evaluated only as a research item; never miniserv."
+ ],
+ "schedule": [
+  {
+   "dates": "Note",
+   "work": "Dates before Sun 2026-10-11 have passed. Every 10-06..10-10 milestone from the research (yt-dlp check 10-10, WAN smoke 10-08, Windows codec probe 10-10, choose path by 10-10, CCBlueX natives green by 10-12, load test 10-11) is rescheduled below. Streams: E = engine/natives, W = WD port, R = relay/ops, Q = QA. Assumes 2 developers working in parallel plus the owner for decisions and ops.",
+   "exit_criteria": "n/a"
+  },
+  {
+   "dates": "Sun 2026-10-11",
+   "work": "Owner decisions D1-D6: GTNH version freeze, codec-build stance, relay host/budget, admin list, source shortlist, staffing. E: fork CCBlueX java-cef and its build workflow, add the OBS CEF fetch+hash step and the jni_util guard, start linux-amd64 and windows-amd64 CI. R: provision VPS, MediaMTX v1.21.1, TLS proxy; owner runs 'yt-dlp -F' on candidate channels from his residential IP; Discord poll on OS/Java/GTNH. W: GTNH buildscript skeleton, proxies, config, major-52 CI check.",
+   "exit_criteria": "Decisions recorded in writing. A CI run produces a linux-amd64 artifact. MediaMTX reachable over WAN via HTTPS. Mod skeleton builds."
+  },
+  {
+   "dates": "Mon 2026-10-12",
+   "work": "E: native patches (plain-int input JNI, Job Object, helper rename); a Java 8 standalone probe (own OSR class, pump thread, --no-first-run). R: ffmpeg VP9/Opus transcode on runOnAvailable, 480p tier, player page with WHEP + hls.js fallback + clock steering stub. W: BlockScreen, Multiblock, hit2pixels, TileEntityScreen NBT, description packet.",
+   "exit_criteria": "Windows build artifact plus SHA-256 published to the internal release. Relay plays VP9+Opus in desktop Chrome over WAN. A screen forms in a dev client (no browser yet)."
+  },
+  {
+   "dates": "Tue 2026-10-13",
+   "work": "GATE G1 (engine) on a real Windows 10/11 PC and Linux. W: networking subset, telão lock, /telao commands, rights, rate limits, AuditLog/UrlPolicy integration. Owner: codec-build licensing stance final (from G1 evidence).",
+   "exit_criteria": "G1 passed, or the fallback engine chosen (Spotify CEF 152, or CinemaMod 116 emergency)."
+  },
+  {
+   "dates": "Wed 2026-10-14",
+   "work": "GATE G2 (relay WAN + 50-viewer load). E/W: CefNativesInstaller, client.web adapter in-game, texture upload at RenderTickEvent, draw-only TESR, Angelica bounds registration.",
+   "exit_criteria": "G2 passed. First in-game frame of about:blank or a test page in a dev client."
+  },
+  {
+   "dates": "Thu 2026-10-15",
+   "work": "W: relay page playing on an in-game screen on the frozen GTNH version, Windows Java 8. Lifecycle registry, hide/close by distance, placeholder and reason codes, /telao doctor. R: provisional source and rights decision (relay-licensed source vs embed-only). Q: extend the AkashicFM-style tools/prod harness with Angelica and lwjgl3ify.",
+   "exit_criteria": "Live relay video visible in-game on Windows Java 8 with Angelica on. Provisional source chosen."
+  },
+  {
+   "dates": "Fri 2026-10-16",
+   "work": "GATE G3 (in-game). W: audio MVP (page volume), clock offset push and hls steering, deterministic shutdown, telemetry handshake, client presets, shaders smoke test.",
+   "exit_criteria": "G3 passed on Java 8 and Java 21 (lwjgl3ify) with a dedicated server."
+  },
+  {
+   "dates": "Sat 2026-10-17",
+   "work": "Internal alpha with staff (5+ players, mixed Java). Linux client. Admin click, wheel and keyboard GUI. pt-BR install guide draft. Fix list.",
+   "exit_criteria": "All staff clients either show video or show a correct reason-code placeholder. Zero hard crashes."
+  },
+  {
+   "dates": "Sun 2026-10-18",
+   "work": "GATE G4: public rehearsal #1 at 20:00 BRT with 10+ players during a live news programme on the relay (and the embed backup, if the codec build passed G1). Measure skew, FPS, crashes and egress.",
+   "exit_criteria": "G4 criteria met, or a scoped fix list with owners."
+  },
+  {
+   "dates": "Mon 2026-10-19",
+   "work": "Fixes from G4. Fallback-switch drill (/telao fallback). Runbook draft. Prepare the pack update and natives prefetch.",
+   "exit_criteria": "All G4 blockers closed. The runbook covers every fallback."
+  },
+  {
+   "dates": "Tue 2026-10-20",
+   "work": "FEATURE FREEZE: RC1 tagged internally (not 'stable'). Publish the mod and installer to players with prefetch of natives. Run the P0/P1 test matrix.",
+   "exit_criteria": "RC1 artifacts with SHA-256 recorded. P0 matrix cells green. Prefetch campaign started."
+  },
+  {
+   "dates": "Wed 2026-10-21",
+   "work": "Final rights decision and written permission filed. Choose the primary mode (relay vs embed) for 10-25. Bug fixes only. P2 matrix smoke (2.7.4/2.9 RC if relevant).",
+   "exit_criteria": "The rights decision is documented. Primary and backup sources are locked into the allowlist presets."
+  },
+  {
+   "dates": "Thu 2026-10-22",
+   "work": "GATE G5: rehearsal #2 on RC1 with the full flow, including a live fallback switch and preflight coverage review.",
+   "exit_criteria": "G5 criteria met. If not, RC2 limited to G5 fixes."
+  },
+  {
+   "dates": "Fri 2026-10-23",
+   "work": "RC2 only if needed. Build the telão at spawn on the production server, lock it, set presets. Relay capacity final (egress headroom). Owner restream setup (mute or blur the telão source in OBS).",
+   "exit_criteria": "The production telão shows the relay test pattern for all staff. Egress headroom at least 1.5x the expected peak."
+  },
+  {
+   "dates": "Sat 2026-10-24",
+   "work": "GATE G6: dress rehearsal 17:00-20:00 BRT, including an unlisted owner restream and an ingest failover test. Final go/no-go at 22:00 BRT. Absolute code freeze.",
+   "exit_criteria": "G6 criteria met. A GO/NO-GO decision is recorded with the chosen primary and fallback order."
+  },
+  {
+   "dates": "Sun 2026-10-25",
+   "work": "13:00 BRT ingest and relay up; 14:00 checks (/telao status, doctor sample); 15:30 telão live at spawn; 17:00 official results. Fallback ladder: WebRTC -> LL-HLS -> embed (codec build) -> SN1 TSE page -> SN3 poster; SN2 audio relay for non-CEF clients. Afterwards: redacted logs and metrics archived as evidence.",
+   "exit_criteria": "The telão runs from 15:30 to the end of the coverage. Incidents are logged with timestamps."
+  }
+ ],
+ "gates": [
+  "G0 Sun 2026-10-11 22:00 BRT (decisions). Written answers on: GTNH version freeze, codec-build stance (provisional), relay host with at least 300 Mbit/s egress budgeted, admin list, a source shortlist with at least 2 candidates, and staffing (2 parallel streams). NO-GO: if staffing is 1 developer, cut admin keyboard input and Linux from the MVP immediately.",
+  "G1 Tue 2026-10-13 (engine), on a real Windows 10/11 x64 PC and on Linux x64. Standalone Java 8 probe with our CCBlueX build:\n(a) CEF starts 5 out of 5 times;\n(b) at least 25 paints/s at 1280x720 on a 30 fps page;\n(c) the relay's VP9+Opus over WebRTC and over LL-HLS plays with audio;\n(d) codec build only: an H.264/AAC MP4 and a YouTube embed of a live stream play;\n(e) the process tree is gone 5 s after exit.\nOutcomes: (a)-(c) and (e) fail on the OBS-150 build but pass on Spotify-152 -> ship 152, relay only. Both fail -> CinemaMod 116 emergency engine, decided by 10-14. (d) fails -> the embed backup is dropped and SN1 becomes the only backup.",
+  "G2 Wed 2026-10-14 (relay over WAN, from 2 residential ISPs). Pass needs all of the following:\n- added-delay median under 1.0 s for WebRTC and under 3.0 s for LL-HLS;\n- 30 minutes with zero stalls longer than 1 s;\n- 50 virtual viewers sustained, with relay CPU under 70% and egress matching about 1.9 Mbit/s per viewer.\nOn failure: switch to the 480p tier or a CDN/LL-HLS-only delivery; if still failing, the embed backup becomes primary (requires the G1 codec build).",
+  "G3 Fri 2026-10-16 (in-game), GTNH frozen version on Windows, Java 8 and Java 21/lwjgl3ify, Angelica default. Pass needs:\n- relay video and audio on a 16x9 screen;\n- no culling when the origin block is off-screen;\n- median FPS drop of 25% or less versus the same scene without the telão, on a mid-range PC;\n- 10 cycles of join/leave/break/dimension-hop with zero crashes and no lingering audio;\n- a dedicated server that boots and loads the screen without natives;\n- a missing-natives client joins and sees the placeholder.\nOn failure: cut the scope (drop keyboard input and the Linux tier) and slip G4 by at most 1 day.",
+  "G4 Sun 2026-10-18 20:00 BRT (public rehearsal #1, 10+ players). Pass needs:\n- at least 90% of players who passed preflight see video within 15 s of entering range;\n- skew between players of 150 ms or less on WebRTC and 250 ms or less on steered LL-HLS, measured by a burned-in clock/frame counter photographed or logged per client;\n- zero client crashes attributable to the mod;\n- no admin-lock bypass;\n- relay egress within plan.\nOn failure: fix list; LL-HLS-only mode if WebRTC is unreliable over NAT.",
+  "G5 Thu 2026-10-22 (rehearsal #2 on RC1). Pass needs:\n- all G4 criteria;\n- every fallback switch (webrtc -> hls -> embed -> tse -> poster) completes in under 10 s for all clients;\n- preflight OK reported by at least 80% of expected attendees (from the telemetry handshake);\n- the rights decision documented.",
+  "G6 Sat 2026-10-24 22:00 BRT (final go/no-go after the 17:00-20:00 dress rehearsal with the owner's unlisted restream). GO needs:\n- G5 criteria still met;\n- ingest failover (OBS restart) recovered in under 60 s;\n- the owner's restream shows no Content ID interruption with the telão audio muted or the TSE page shown.\nNO-GO -> run the event on SN1 (TSE results page in the same in-game browser), clearly labelled as a safety net, with relay video only for staff."
+ ],
+ "test_matrix": [
+  "Axes: OS {Windows 10/11 x64, Linux x64 (glibc 2.31+), macOS (placeholder-only check)} x Java {8 (LWJGL2), 21 (lwjgl3ify)} x GTNH {2.7.4 (lwjgl3ify 2.1.9, Angelica beta29), 2.8.4 (lwjgl3ify 2.1.16 GLFW, Angelica beta66b), 2.9.0-RC (lwjgl3ify 3.0.37 SDL3, Angelica 2.2.28 core profile)} x Angelica {default, shaders on (2 packs), off where the pack allows}. The version list is VERIFIED from the DreamAssemblerXXL manifests; GTNH 2.9 final does not exist yet.",
+  "P0 (must be green by RC1 on 10-20), assuming the frozen version is 2.8.4:\n- Win11 + Java 8 + Angelica default;\n- Win11 + Java 21 + Angelica default;\n- Win10 + Java 8 + Angelica default (low-end iGPU, 8 GB RAM);\n- dedicated server with Java 8 and with Java 21 (no natives loaded).\nEach cell runs: preflight, relay WebRTC, relay LL-HLS, embed (codec build), TSE page, fallback switch, join/leave/break/dimension hop, exit leaves no helper process, missing natives shows the placeholder.",
+  "P1 (by 10-21):\n- Win11 + Java 21 + shaders on;\n- Linux x64 + Java 8;\n- Linux x64 + Java 21;\n- Win11 + Java 8 + Angelica off (if the pack allows it);\n- Unicode username path 'C:\\Users\\João Conceição';\n- Prism instance name with spaces and parentheses;\n- ABNT2 keyboard: admin types 'ação ç $%&' on Java 8 and on Java 21;\n- two MC instances at once (profile lock placeholder).",
+  "P2 (smoke only, by 10-22, only if the server or players use these versions):\n- GTNH 2.9 RC + Java 21 (SDL3 input, Angelica core profile);\n- GTNH 2.9 RC + Java 8 (Angelica 2.x core profile on LWJGL2);\n- GTNH 2.7.4 + Java 8;\n- GTNH 2.7.4 + Java 21.\nIf the server freezes 2.9, it moves to P0 and 2.8.4 becomes P2.",
+  "Placeholder-only cells:\n- macOS (Intel and ARM) on Java 8 and Java 21: must join without a crash, show the 'Telão indisponível no macOS' texture, and get SN2 audio if enabled;\n- Windows on arm64;\n- Win7/8.1.",
+  "Load and network tests:\n- 50 virtual viewers on the relay (G2);\n- a strict-NAT client gets the TCP or LL-HLS fallback;\n- 20+ real players at spawn for FPS and egress (G4/G5).",
+  "Security tests:\n- a non-admin SetURL, Click or Type packet is rejected and audited;\n- an internal-IP or file:// URL is rejected server-side and blocked client-side;\n- a page navigation or popup to an off-allowlist host is cancelled and reloaded;\n- the rate limit triggers on spam.",
+  "Evidence rule (Akashic AGENTS-style): every cell is recorded with its grade (BUILD / AUTOMATED / LIVE-OBSERVED). Synthetic harness results never substitute for a LIVE-OBSERVED in-game cell. Hashes are recorded instead of committing jars or logs."
+ ],
+ "risks": [
+  {
+   "risk": "OBS CEF 150 + CCBlueX libjcef fails to build or run on Windows (only Linux was tested)",
+   "likelihood": "Medium",
+   "impact": "Lose the embed backup; possibly the primary engine",
+   "mitigation": "Build the Spotify CEF 152 variant in parallel (no patch needed); path D works on it. CinemaMod 116 as emergency engine. Decided at G1 on 10-13."
+  },
+  {
+   "risk": "No source with retransmission rights; YouTube-only coverage cannot legally be relayed",
+   "likelihood": "Medium-High",
+   "impact": "Relay path D unusable for the chosen coverage",
+   "mitigation": "Embed backup B on the codec build (YouTube permits its official embed). Public sources TV Câmara (CC BY) / TV Senado policy. SN1 TSE page. Provisional decision 10-15, final 10-21."
+  },
+  {
+   "risk": "Effort (16-28 person-days, INFERRED) exceeds capacity in 15 days",
+   "likelihood": "High",
+   "impact": "MVP incomplete by the freeze",
+   "mitigation": "Two parallel streams. Strict MVP. Keyboard input and the Linux tier are the first cuts. Gates G3/G4 trigger scope cuts."
+  },
+  {
+   "risk": "In-process libcef native crash takes down player clients at spawn",
+   "likelihood": "Medium",
+   "impact": "Crashes during the event",
+   "mitigation": "Tier-1 platforms only, software-compositing fallback, auto-disable after 2 crashes, 'hide telão' option, G3/G4 crash criteria. Separate host process after the event."
+  },
+  {
+   "risk": "Angelica (beta66b or 2.x core profile) breaks or culls the screen, or corrupts GL state",
+   "likelihood": "Medium",
+   "impact": "Invisible or black screen, or visual glitches in other mods",
+   "mitigation": "Draw-only Tessellator TESR, unpack-state reset, dynamic-bounds registration, shaders test at G3. Freeze the GTNH version."
+  },
+  {
+   "risk": "Low natives prefetch coverage (players never download about 150-350 MB before the event)",
+   "likelihood": "Medium",
+   "impact": "Many players see only the placeholder",
+   "mitigation": "Prefetch campaign from 10-20, consent prompt at login, telemetry coverage tracked at G5, manual-zip option, SN2 audio."
+  },
+  {
+   "risk": "Relay egress or VPS saturates at peak attendance",
+   "likelihood": "Medium",
+   "impact": "Stalls for everyone",
+   "mitigation": "50-viewer load test at G2, 480p tier, start the browser only within range, CDN/LL-HLS option, 1.5x headroom at 10-23."
+  },
+  {
+   "risk": "WebRTC blocked by NAT/firewall for some players",
+   "likelihood": "Medium",
+   "impact": "Those players fall back to higher latency",
+   "mitigation": "TCP ICE plus automatic LL-HLS fallback over HTTPS 443; steering keeps skew low (INFERRED)."
+  },
+  {
+   "risk": "Owner's restream hit by Content ID",
+   "likelihood": "High if coverage is visible or audible",
+   "impact": "His live stream is interrupted",
+   "mitigation": "Mute or blur the telão in his OBS scene, or switch his view to the TSE page; ask the rights holder to allowlist; tested at G6."
+  },
+  {
+   "risk": "Codec patent/licence exposure from distributing the H.264/AAC CEF",
+   "likelihood": "Low-Medium (INFERRED)",
+   "impact": "Legal/takedown risk",
+   "mitigation": "Relay (royalty-free) is primary. The codec build is optional, downloaded from OBS's CDN with a hash pin and consent, not mirrored. Owner decision with legal input."
+  },
+  {
+   "risk": "Ingest failure on election night (owner PC, ISP, OBS crash)",
+   "likelihood": "Low-Medium",
+   "impact": "Black telão",
+   "mitigation": "A secondary ingest machine or connection if available, OBS auto-reconnect, MediaMTX keeps the path, failover drill at G6, fallback ladder down to SN1."
+  },
+  {
+   "risk": "Admin-lock bypass or abusive URL on a public server",
+   "likelihood": "Low",
+   "impact": "Offensive content on spawn; player IP exposure",
+   "mitigation": "Server-authoritative rights, UrlPolicy allowlist plus internal-address block, client navigation lock, AuditLog, security tests in the matrix."
+  },
+  {
+   "risk": "Orphan helper processes or profile locks blank the screen on the next launch",
+   "likelihood": "Medium",
+   "impact": "Players report white screens",
+   "mitigation": "Job Object, unique helper name with startup sweep, per-instance profile, PROFILE_LOCKED reason code."
+  },
+  {
+   "risk": "YouTube changes (embed restrictions, bot checks) on the embed backup",
+   "likelihood": "Medium",
+   "impact": "Backup B fails",
+   "mitigation": "Verify embeddability at G4/G5, keep 2 allowlisted embed presets, SN1."
+  },
+  {
+   "risk": "Lip-sync and audio not positional in the MVP (Chromium OS output)",
+   "likelihood": "Certain (by design)",
+   "impact": "Lower immersion, audible via OS device",
+   "mitigation": "Page-level distance volume tied to MC sliders; stage-2 OpenAL after the event; mute when unloaded."
+  },
+  {
+   "risk": "GTNH 2.9 final ships during the window and players upgrade",
+   "likelihood": "Low-Medium",
+   "impact": "Untested stack (SDL3, core profile)",
+   "mitigation": "Server freezes its version; 2.9 RC smoke in P2; announce the supported version to players."
+  }
+ ],
+ "latency_answer": "Short answer for Gabriel: not \"almost no ms\" behind the TV, but almost no ms between players. Delay has three separate parts.\n\n(1) Source delay versus the real event. This is set by the broadcaster and cannot be removed by us.\n- If the coverage comes from YouTube, Google documents under 10 s for Low latency and under 5 s for Ultra-low latency, with no figure for Normal (VERIFIED, support.google.com/youtube/answer/7444635).\n- If OBS captures a TV signal, the TV chain's own delay applies (seconds, INFERRED).\n\n(2) Delay our system adds on top.\n- Akashic relay over WebRTC: 126 ms median measured on localhost inside JCEF/Chromium 150 (VERIFIED). Over the internet with capture and encode, about 0.3-0.6 s (INFERRED; gate G2 requires under 1 s).\n- Relay over LL-HLS: 1.04 s median on localhost (VERIFIED), about 1.3-2.5 s over the internet (INFERRED; G2 requires under 3 s).\n- Direct YouTube embed (codec backup): essentially 0 added, plus each client's own buffering.\n- CEF rendering itself: about 33-66 ms (1-2 frames at 30 fps, INFERRED from paint rates).\n\n(3) Difference between players.\n- WebRTC: tens of ms. 22 ms was measured between two local clients (VERIFIED); likely up to 100-200 ms across ISPs (INFERRED; G4 requires 150 ms or less).\n- LL-HLS: 116 ms measured unsynced (VERIFIED), under about 100-250 ms with server-clock steering (INFERRED; G4 requires 250 ms or less).\n- Direct YouTube embed: uncontrolled, likely 1-10 s (INFERRED). This is why the relay is primary.\n\nOn his own live channel, his viewers see only his client. Their delay is the total above plus his platform's latency (YouTube Ultra-low under 5 s / Low under 10 s), and differences between players do not matter to them.\n\nBottom line: on YouTube Ultra-low with our WebRTC relay, expect roughly 3-6 s behind the live event (INFERRED). Expect about 5-11 s if the broadcaster uses Low latency, and more on Normal. Players see the same moment within about a tenth of a second.",
+ "open_decisions_for_owner": [
+  "Freeze the server's GTNH version for the event: 2.8.4 stable (recommended), or 2.9 only if final ships and is certified by about 10-12. Which Java variants to officially support (recommended: both 8 and 17-25).",
+  "Source and rights: which coverage to show on 10-25 (a licensed or public broadcaster such as TV Câmara/TV Senado/TV Brasil, a commercial broadcaster with written permission, or a YouTube channel via the official embed only). Who obtains the permission, by when (provisional 10-15, final 10-21).",
+  "Codec build: accept distributing or downloading a codec-enabled CEF (OBS 7871, H.264/AAC via FFmpeg; patent grey area, legal input recommended), or ship codec-free CEF 152 and accept that the YouTube-embed backup is unavailable.",
+  "Relay hosting and budget: a VPS or the game host with at least 300 Mbit/s egress (or a CDN), and the ingest setup on election night (his PC and uplink of at least 6 Mbit/s, a backup ingest machine, capture card or browser capture).",
+  "Staffing: two parallel developers (engine+relay and the WD port) for 15 days, or accept a smaller MVP (no admin keyboard, Windows only).",
+  "Admin model: OP level vs an Akashic admin list vs specific UUIDs; whether URL/preset changes during the event need two-person confirmation.",
+  "Mod distribution: the mod becomes required in the server pack (block registry). Natives are optional with placeholder, prompted at login with consent, or bundled in the pack download.",
+  "Platform stance: officially declare macOS/arm64/Win7 unsupported for 10-25 (placeholder plus SN2 audio relay if rights allow).",
+  "Restream policy: on his own channel, mute or blur the telão, switch his view to the TSE page, or obtain allowlisting from the rights holder.",
+  "Quality tier: 720p30 default (about 1.9 Mbit/s per viewer) vs 480p default for low-end GTNH clients; whether 1080p opt-in is allowed.",
+  "AkashicFM API change (ExternalAudioSources, timed feed) for stage-2 positional audio after the event, given AkashicFM's own release gates.",
+  "Naming and credits for the port (Web Displays credit to montoyo/public domain, CinemaMod MIT notice) and the repository where it lives."
+ ]
+}

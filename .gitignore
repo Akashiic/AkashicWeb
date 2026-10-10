@@ -1,0 +1,33 @@
+# Gradle / IDE
+.gradle/
+build/
+out/
+run/
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# Native engine inputs and outputs: never commit binaries (record SHA-256 instead)
+third_party/
+jcef_build/
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.lib
+*.zip
+*.tar.gz
+*.tar.xz
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Logs and captures
+logs/
+*.log
+*.wav
+*.mp4
+*.webm
