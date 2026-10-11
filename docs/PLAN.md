@@ -139,6 +139,34 @@ Reuse from Web Displays (public domain, keep montoyo's credit and file headers):
 - Tier 2: Linux x64 (glibc floor measured from our build).
 - Placeholder only (keeps playing, sees a message): macOS, arm64, Windows 7/8.1, 32-bit Java, Pojav/Android, OpenJ9.
 
+### 4.11 Data model, packets, config and commands (proposal, AUTHORED)
+
+Starting point for day 1; names may change. Field names follow Web Displays where it helps reuse.
+
+**Screen state** (`TileEntityScreen` on the multiblock origin, one record per face, NBT + description packet): `side`, `size` (w, h in blocks), `resolution` (px), `rotation`, `url`, `owner` (UUID + name), `friends` (UUIDs), `friendRights`, `otherRights` (bits: CHANGE_URL, CLICK/TYPE, MANAGE_FRIENDS, MANAGE_RIGHTS, CHANGE_RESOLUTION), `locked` (admin), `controller` (UUID of who drives navigation now), `video` (`mediaTime`, `paused`, `rate`, `serverTimeStamp`), `epoch` (bumped on every URL change so stale packets are dropped).
+
+**Client → server** (all validated: rights, dimension, distance, rate limit, length caps; main thread only):
+
+| Packet | Content |
+|---|---|
+| `C2SSetUrl` | screen id, side, URL (from the address bar or a reported main-frame navigation), epoch |
+| `C2SNav` | back / forward / reload / home |
+| `C2SClick` | hit pixel x, y, button, press/release (or block-hit vector for server-side hit-to-pixel) |
+| `C2SWheel` | x, y, delta |
+| `C2SKey` | type (RAWKEYDOWN/KEYUP/CHAR), VK code, char, modifiers |
+| `C2SVideoState` | from the controller only: mediaTime, paused, rate, local time |
+| `C2SRights` | friends add/remove, rights bits, resolution, rotation |
+| `C2SClockPing` | AkashicFM clock ping |
+| `C2SPreflight` | opt-in: OS, arch, Java, lwjgl3ify version, GPU, init state |
+
+**Server → client**: `S2CScreenState` (full record, also via the description packet), `S2CUrl` (url, epoch), `S2CInput` (relayed click/wheel/key to every tracker), `S2CVideoState` (stamped with server time), `S2CClockPong`, `S2CPolicy` (site policy + kill switch flag at login), `S2CNotice` (reason codes, admin messages).
+
+**Config (GTNHLib `@Config`, reloadable where safe)**: `sitePolicy.mode` (ALLOWLIST/BLOCKLIST), `sitePolicy.allow[]`, `sitePolicy.block[]`, `screens.maxWidth/maxHeight`, `screens.adminMaxWidth/adminMaxHeight`, `screens.maxPerPlayer`, `browser.defaultResolution`, `browser.frameRate`, `client.loadDistance/unloadDistance`, `client.quality` (OFF/480P/720P), `client.gpu` (on/off), `limits.actionsPerSecond`, `limits.urlLength`, `admins[]` (plus OP level), `killSwitch`, `natives.mirrors[]`, `natives.consentRequired`, `audio.useAkashicFM`, `audio.maxDistance`, `telemetry.optIn`.
+
+**Admin command `/web`**: `list [radius]`, `info`, `clear <screen>`, `lock|unlock <screen>`, `takeover <screen>`, `kill on|off` (forces every client to the placeholder), `policy reload`, `doctor [player]`, `status`. Every action goes to the audit log, RCON-safe like AkashicFM's `/fm`.
+
+**Tests from day 1**: unit tests for multiblock formation, hit-to-pixel with every rotation, rights checks, site policy and `isInternal`, URL normalisation, packet codecs (round trip and malformed input), clock maths, installer (hash mismatch, zip-slip, resume, atomic install), key mapping tables. E2E with a dedicated server and real clients adapted from AkashicFM's `tools/e2e` and `tools/prod` (Linux), plus the Windows cells in section 8 on real PCs.
+
 ## 5. Latency: what to promise
 
 | Part | Delay | Controlled by |

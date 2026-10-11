@@ -12,7 +12,7 @@ Players build screens of any size, click, scroll, type and browse: YouTube (incl
 
 ## What changes compared with Web Displays
 
-| Problem in Web Displays | AkashicWeb |
+| Problem in Web Displays | AkashicWeb (planned, not built yet) |
 |---|---|
 | 1.7.10 version: Chromium from 2015, Windows-only, no public source; 1.12.2+ forks on Chromium 116 | Chromium 150 with H.264/AAC (OBS's codec-enabled CEF) on CCBlueX java-cef, Java 8 bytecode |
 | Silent white/black screens (19% of 590 issues) | Init state machine with reason codes shown on the screen in Portuguese and English, `/web doctor` |
