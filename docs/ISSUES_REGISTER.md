@@ -27,4 +27,3 @@ No GitHub issues exist yet. Create them from this table when the owner agrees (o
 | AW-21 | Risk | Codec patent exposure (H.264/AAC FFmpeg in CEF) | Low-Medium / Medium | No Akashic mirror on Windows; legal opinion; codec-free fallback documented | Owner | Open |
 | AW-22 | Risk | YouTube changes (bot checks, embed restrictions, old-browser warnings) | Medium / Medium | Current Chromium, stock UA, two allowlisted channels, TSE page as safety net | Build chat | Open |
 | AW-23 | Ops | Election-night single points of failure (one operator, server restarts, TPS at spawn) | Medium / High | Roles with deputies, no restarts 14:00-01:00, spawn chunk preload, printed runbook | Owner | Open |
-| AW-24 | Evidence | Relay latency numbers came from a localhost harness with muted autoplay and no archived result lines | — / Low | Re-run at G1 with unmuted audio if the relay is ever used | Build chat | Open |

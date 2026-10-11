@@ -12,6 +12,7 @@ Owner decisions are binding. Technical decisions are proposals from the research
 | D-004 | 10-10 | Code quality bar: "premium", like AkashicFM: GTNH buildscript, GTNHLib, UniMixins (minimal mixins), Hodgepodge/Angelica/lwjgl3ify compatibility, Java 8 bytecode, tests, E2E, evidence discipline. | See [`../AGENTS.md`](../AGENTS.md). |
 | D-005 | 10-10 | Sound should use **AkashicFM's audio technology** (3D, occlusion, reverb, organised sources). | Planned as Stretch for 10-25 with a distance-volume fallback (PLAN 4.6). |
 | D-006 | 10-10 | Low-delay lives are wanted. | Expectations set in PLAN section 5: browser adds tens of ms; the source sets the rest. |
+| D-008 | 10-11 | **Abandoned:** TSE results data and the "Akashic live relay" (OBS/MediaMTX/WebRTC re-streaming). The focus is only a Web Displays-like mod that runs a browser inside Minecraft; lives are watched by opening the site in the browser. | Owner, 2026-10-11. Raw research JSON still mentions both as history. |
 | D-007 | 10-10 | Repository `Akashiic/AkashicWeb` created by the owner; the build happens in a new chat from these docs. | — |
 
 ## Owner decisions (pending; ask at the start of the next chat)
@@ -27,7 +28,6 @@ Owner decisions are binding. Technical decisions are proposals from the research
 | P-07 | Which live channel(s) for the spawn telão, plus a second backup channel? Does it allow embedding? | Rehearsals and the fallback ladder use them. | Pick two by 10-18. |
 | P-08 | Repository licence for AkashicWeb (AkashicFM uses its own LICENSE). | Needed before publishing jars. Inputs: WD public domain, CCBlueX java-cef BSD, CinemaMod MCEF LGPL-2.1 (not used as a base), Web Displays fork MIT. | — |
 | P-09 | Telemetry opt-in text (LGPD) and retention. | Preflight/diagnostics report OS, GPU, Java. | Opt-in, no identifiers in committed evidence. |
-| P-10 | Optional Akashic relay (frame-level sync, licensed non-YouTube source): wanted for 10-25 or later? | Needs a VPS with ≥300 Mbit/s egress and rights. | Later, unless a licensed source needs it. |
 
 ## Technical decisions (proposed by the research; confirm at gates)
 
@@ -40,6 +40,5 @@ Owner decisions are binding. Technical decisions are proposals from the research
 | T-05 | Server-authoritative URL; controller navigation reported as SetURL; shared video clock (ServerClock pattern). | Design (INFERRED) | G4 |
 | T-06 | Natives installer from AkashicFM ToolManager, pinned manifest, SHA-256 before extraction, LOCALAPPDATA on Windows. | Pattern VERIFIED in AkashicFM | G3 |
 | T-07 | Minimal mixins (shutdown hook); Angelica/lwjgl3ify/AkashicFM via reflection. | Design | — |
-| T-08 | Akashic relay (MediaMTX) is optional, not the primary path. | Superseded by the interactive scope + codec build | — |
 | T-09 | No `--disable-web-security`; allowlist/blocklist site policy; internal-address block on both sides. | Security review | Security tests |
 | T-10 | Native buildId frozen on 10-16; afterwards only Java-side fixes so players never re-download. | Feasibility review | — |

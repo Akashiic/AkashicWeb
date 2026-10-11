@@ -10,4 +10,7 @@
 ### Changed (2026-10-11)
 - Self-review of the docs against the raw research (the automated review agents hit the usage limit): removed kiosk-scope leftovers from `docs/PROBLEM_FIX_MATRIX.md` (codec build is now the primary video path; `/web` command), added a data model / packet / config / command / test sketch to `docs/PLAN.md` (section 4.11), marked README comparisons as planned and the H.264 patent date as INFERRED.
 
+### Removed (2026-10-11)
+- TSE results data notes and the live-relay material (relay latency harness, encode benchmark, YouTube format parser), per owner decision D-008: the project is only a Web Displays-like browser mod.
+
 No code, build or release yet.

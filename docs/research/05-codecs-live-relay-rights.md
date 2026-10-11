@@ -4,6 +4,8 @@
 
 Why YouTube live fails on stock CEF, the codec-enabled OBS CEF build (built and run on Linux), the Akashic relay measurements (WebRTC/LL-HLS), latency budget per path, and rights (YouTube ToS, Lei 9.610/98).
 
+> **Note (2026-10-11):** the relay and re-streaming parts of this stream were abandoned by the owner (DECISIONS D-008). What still matters here: YouTube live formats, the OBS codec-enabled CEF build, latency and rights.
+
 ## Summary
 
 I picked up where the earlier run stopped and finished the task. Two results change the earlier picture, and both are backed by tests run in this container.

@@ -32,8 +32,6 @@ The research files use VERIFIED (≈ STATIC or AUTOMATED, with a source) and INF
 - Codec probe on stock CEF 152: VP9, AV1, Opus, MP3, Vorbis yes; H.264, AAC, HEVC, MPEG-TS no. AUTOMATED.
 - CinemaMod CEF 116 natives: H.264/AAC MP4 played. AUTOMATED.
 - CCBlueX java-cef (fe8cc9e) compiled against OBS CEF 150.0.19 (Linux) with a 6-line patch: H.264/AAC, MSE TS, native HLS, WebRTC VP8/VP9/H.264/AV1 + Opus. AUTOMATED (Linux only).
-- Relay (MediaMTX v1.21.1, VP9 720p30 + Opus) inside the JCEF 150 browser on localhost: WebRTC median 126 ms, LL-HLS median ~1.04 s, two-client skew 22 ms / 116 ms. AUTOMATED (localhost, muted autoplay; result lines not archived, so not re-verifiable).
-- ffmpeg realtime encode cost on 4 vCPU: VP9 720p30 0.40 core, 480p 0.26, VP8 720p30 0.57, SVT-AV1 p12 ~0.56, Opus 0.014. AUTOMATED.
 - CCBlueX Java sources compile with `javac --release 8` (143 files). BUILD.
 
 ## What was NOT run

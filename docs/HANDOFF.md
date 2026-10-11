@@ -37,6 +37,8 @@ Written 2026-10-10 at the end of the research chat. The build continues in a new
 
 ## Facts that are easy to get wrong
 
+- TSE results data and the live relay were **abandoned** (D-008). Do not bring them back; the product is the browser.
+
 - Old research said CinemaMod CEF 116 has no codecs: **wrong**, it does (stream 05 tested it).
 - Angelica's `TileEntityRenderBoundsRegistry` exists only in Angelica 2.x (GTNH 2.9), not in GTNH 2.8.4's beta66b.
 - CCBlueX `CefApp.initialize()` overwrites `browser_subprocess_path`; renaming the helper needs a Java patch too.
@@ -49,7 +51,7 @@ Written 2026-10-10 at the end of the research chat. The build continues in a new
 
 ## Things the research container had that are gone
 
-The downloaded OBS CEF archives, the built `libjcef.so`, the MediaMTX binary and config, the test clip and all probe logs. Only the sources in [`/spikes`](../spikes) and the raw research JSON in [`research/raw`](research/raw) were kept. Rebuild as needed.
+The downloaded OBS CEF archives, the built `libjcef.so`, the test clip and all probe logs. Only the sources in [`/spikes`](../spikes) and the raw research JSON in [`research/raw`](research/raw) were kept. Rebuild as needed.
 
 ## Conversation notes (owner)
 

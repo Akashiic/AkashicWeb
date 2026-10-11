@@ -102,7 +102,6 @@ Reuse from Web Displays (public domain, keep montoyo's credit and file headers):
 - Main-frame navigations on the controller's client are reported as a rate-limited `SetURL`; the server validates (rights, UrlPolicy, site policy, length) and broadcasts; non-controlling clients cancel their own main-frame navigations and load the server URL. This removes WD's "cannot be fixed" FIXME.
 - Video: the controller reports the main media element state; the server stamps it with `ServerClock` time; followers steer with `playbackRate` (±5%) or seek when more than ~1 s off. Lives are held at a common offset behind the live edge when DVR exists. Target skew 0.5-2 s (INFERRED; measured at G4).
 - Updates go to every player tracking the chunk (plus a margin), not WD's fixed 64 blocks.
-- Optional, not in the MVP: the **Akashic relay** (OBS/ffmpeg → MediaMTX → WebRTC/LL-HLS with VP9/AV1 + Opus). Measured locally inside JCEF: WebRTC 126 ms added delay, 22 ms between two clients; LL-HLS ~1.04 s. Useful only for frame-level sync or a licensed non-YouTube source; needs ~2 Mbit/s egress per viewer and per-player tokens. See [05](research/05-codecs-live-relay-rights.md).
 
 ### 4.6 Audio
 
@@ -174,7 +173,6 @@ Starting point for day 1; names may change. Field names follow Web Displays wher
 | Live vs. the real event | YouTube: under 5 s (ultra-low latency), under 10 s (low), more on normal; the broadcaster chooses | The broadcaster |
 | Added by the in-game browser | Tens of ms (render at 30 fps) | Us |
 | Between players | 1-10 s without sync; target 0.5-2 s with the shared video clock (INFERRED) | Us |
-| With the optional relay | +0.3-0.6 s (WebRTC, INFERRED over WAN; 126 ms measured locally) and tens of ms between players | Us |
 | The owner's own restream | His platform's latency on top; his viewers see only his client | His channel settings |
 
 "Almost zero ms" behind the real event is impossible for any internet live. What we can deliver: the same latency as watching in Chrome, and players close to each other.
@@ -207,7 +205,7 @@ Cut order if behind (first cut first): Linux tier → 3D audio (keep distance vo
 - **G3 (in game, 10-16)**, frozen GTNH version, Windows, Java 8 and Java 21 (lwjgl3ify), Angelica default: video + audio on a 16x9 screen; no culling with the origin block off-screen; median FPS drop ≤25% on the owner's PC and one iGPU laptop at a fixed position and view (60 s average); 10 join/leave/break/dimension-hop cycles with zero crashes and no lingering audio; dedicated server boots without natives; a client without natives joins and sees the placeholder; a forced native kill + rejoin triggers the crash guard.
 - **G4 (public rehearsal, 10-18)**, 10+ players: ≥90% of preflight-OK players see video within 15 s of entering range (first-frame telemetry); skew between players ≤2 s measured from page telemetry; zero mod-attributable crashes; no rights bypass; no internal-address or off-policy navigation.
 - **G5 (rehearsal #2, 10-22)**: G4 criteria on RC1; kill switch and URL fallback work in under 10 s for all clients; preflight OK for ≥60% of players active in the last 14 days (named action if below).
-- **G6 (dress, 10-24)**: G5 still met; recovery from a browser crash and from the source stream dropping; the owner's restream mitigation (mute/blur/switch) works in under 5 s. NO-GO → the telão shows the TSE official results page (still a real web page in the browser), labelled as the safety net.
+- **G6 (dress, 10-24)**: G5 still met; recovery from a browser crash and from the source stream dropping; the owner's restream mitigation (mute/blur/switch) works in under 5 s. NO-GO → the browser ships for normal use and the telão runs only for staff until the blockers are fixed.
 
 ## 8. Test matrix
 
@@ -222,7 +220,7 @@ Evidence rule: every cell is recorded with its grade (BUILD / AUTOMATED / LIVE-O
 
 ## 9. Election-night operations (outline)
 
-Roles with deputies: director (telão URL), relay/ingest operator (only if the relay is used), server operator (TPS, restarts disabled), support (#telao-suporte from 14:00). Fallback ladder for the telão: primary YouTube live → second allowlisted channel → TSE official results page → poster. Kill switch documented in a printed pt-BR runbook. No server restarts, backups or world saves that pause the server between 14:00 and 01:00. Raise max players, preload spawn chunks, watch TPS.
+Roles with deputies: director (telão URL), server operator (TPS, restarts disabled), support (#telao-suporte from 14:00). Fallback for the telão: primary live channel → second channel → static poster. Kill switch documented in a printed pt-BR runbook. No server restarts, backups or world saves that pause the server between 14:00 and 01:00. Raise max players, preload spawn chunks, watch TPS.
 
 ## 10. Honest odds
 

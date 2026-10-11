@@ -6,7 +6,7 @@ Atualizado em 10/10/2026. Mantenha em dia com [`PROJECT_STATE.md`](PROJECT_STATE
 
 Um mod novo para o Minecraft 1.7.10, feito sobre a stack do GTNH, que coloca um **navegador de verdade** em telas dentro do mundo, com a ideia do [Web Displays](https://github.com/montoyo/webdisplays). É para o Web Displays o que o AkashicFM é para o OpenFM: mesma ideia, engenharia nova. O Web Displays é domínio público, então as partes boas dele (multibloco, clique para pixel, rotação, permissões) podem ser reaproveitadas com crédito ao montoyo.
 
-Os jogadores constroem telas, clicam, rolam, digitam e navegam. O telão do spawn é uma tela grande do Gabriel, onde ele abre a live pela barra de endereço. Não é um quiosque controlado por comandos nem um painel de resultados.
+Os jogadores constroem telas, clicam, rolam, digitam e navegam. O telão do spawn é uma tela grande do Gabriel, onde ele abre a live pela barra de endereço. Não é um quiosque controlado por comandos nem um painel de resultados. Dados do TSE e a "ponte" para retransmitir lives foram abandonados (D-008): o foco é só o mod de navegador.
 
 ## Estado
 
