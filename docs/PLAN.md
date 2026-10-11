@@ -181,7 +181,7 @@ Starting point for day 1; names may change. Field names follow Web Displays wher
 
 | Date | Work | Exit criteria |
 |---|---|---|
-| Sun 10-11 | Owner decisions P-01..P-08. Fork CCBlueX java-cef; CI job #1 = Windows x64 against OBS CEF 7871 (and Spotify 152 in parallel); Linux in an old container. Mod skeleton (GTNH buildscript, proxies, GTNHLib config, major-52 check) | Decisions in writing; Windows artifact building |
+| Sun 10-11 | Owner decisions (P-01..P-04 answered: D-009..D-012; P-11 mod list pending). Fork CCBlueX java-cef; CI job #1 = Windows x64 against OBS CEF 7871 (and Spotify 152 in parallel); Linux in an old container. Mod skeleton (GTNH buildscript, proxies, GTNHLib config, major-52 check) | Decisions in writing; Windows artifact building |
 | Mon 10-12 | Native patches (input JNI, Job Object + helper rename, audio FindClass/params/NewDirectByteBuffer). Standalone Java 8 probe on the owner's Windows PC | First Windows artifact + SHA-256 on the owner's PC |
 | Tue 10-13 | **G1 engine gate** on Windows and Linux. Screen block, multiblock, hit-to-pixel, TileEntity NBT, description packet | G1 pass or fallback engine chosen |
 | Wed 10-14 | NativesInstaller; client.web adapter; upload at RenderTickEvent; draw-only TESR; Angelica bounds | First in-game frame on Windows Java 8 |

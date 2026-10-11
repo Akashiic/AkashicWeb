@@ -13,4 +13,7 @@
 ### Removed (2026-10-11)
 - TSE results data notes and the live-relay material (relay latency harness, encode benchmark, YouTube format parser), per owner decision D-008: the project is only a Web Displays-like browser mod.
 
+### Decided (2026-10-11)
+- Owner answers recorded: Forbidden Series on Crucible (D-009), AkashicFM in the pack (D-010), codec build accepted (D-011), team = owner + AI (D-012). New risks AW-25..AW-27; new pending item P-11 (pack mod list).
+
 No code, build or release yet.

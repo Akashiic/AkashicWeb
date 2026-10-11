@@ -36,15 +36,19 @@ Os jogadores constroem telas, clicam, rolam, digitam e navegam. O telão do spaw
 | 24/10 | Ensaio geral e decisão final (G6) |
 | 25/10 | Telão no ar às 15:30 |
 
+## Decisões tomadas em 11/10
+
+- Servidor: **Forbidden Series** (Technic) com servidor **Crucible**, não o GTNH.
+- O AkashicFM já está no pacote, então o som 3D usa o motor dele.
+- Chromium com codecs H.264/AAC: aceito.
+- Equipe: Gabriel + assistente.
+
 ## Decisões que faltam (ver [`DECISIONS.md`](DECISIONS.md))
 
-1. **Servidor:** qual recebe o mod, o GTNH (e em que versão) ou o Forbidden Series?
-2. **AkashicFM:** vai estar no pacote? Ele é necessário para o som 3D.
-3. **Codecs:** aceitar o Chromium com H.264/AAC?
-4. **Equipe:** é só o Gabriel com o assistente?
-5. **Sites:** lista de permitidos ou de bloqueados nas telas públicas? E quem são os admins?
-6. **Canais:** quais duas lives vão para o telão?
-7. **Licença** do repositório.
+1. **Lista de mods** do Forbidden Series (a pasta `mods/`), para confirmar as dependências.
+2. **Sites:** lista de permitidos ou de bloqueados nas telas públicas? E quem são os admins?
+3. **Canais:** quais duas lives vão para o telão?
+4. **Licença** do repositório.
 
 ## Onde está cada coisa
 

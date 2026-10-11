@@ -5,8 +5,11 @@ No GitHub issues exist yet. Create them from this table when the owner agrees (o
 | ID | Type | Title | Likelihood / impact | Mitigation | Owner of next step | State |
 |---|---|---|---|---|---|---|
 | AW-01 | Risk | OBS CEF 150 + CCBlueX libjcef fails to build or run on Windows (only Linux tested) | Medium / High | Spotify-152 build in parallel (no lives); CinemaMod 116 emergency; decided at G1 (10-13) | Build chat | Open |
-| AW-02 | Decision | Server/pack and version not confirmed (GTNH vs Forbidden Series) | — / High | P-01 on 10-11; freeze the current version | Owner | Open |
-| AW-03 | Decision | Codec build acceptance and distribution model | — / High | P-03; download from OBS CDN on Windows | Owner | Open |
+| AW-02 | Decision | Server/pack and version not confirmed (GTNH vs Forbidden Series) | — / High | Answered: Forbidden Series on Crucible (D-009) | Owner | Closed |
+| AW-25 | Risk | The Forbidden pack's mod list is unknown (GTNHLib, UniMixins, Angelica, Hodgepodge, OptiFine presence) | — / High | P-11: owner sends the `mods/` listing; until then only soft dependencies | Owner | Open |
+| AW-26 | Risk | Crucible (Bukkit hybrid) server: permissions, plugins, akashic-world-firewall guard, Velocity transfers | Medium / Medium | Test the server side on Crucible Java 21; Bukkit permissions by reflection | Build | Open |
+| AW-27 | Risk | Android (ForbiddenMobile) players cannot run CEF | Certain / Low | Placeholder on Android; never crash | Build | Accepted |
+| AW-03 | Decision | Codec build acceptance and distribution model | — / High | Accepted (D-011); Windows downloads from OBS's CDN | Owner | Closed |
 | AW-04 | Risk | Scope (interactive browser) exceeds one developer in 15 days | High / High | Cut order in PLAN 6; buffer days 10-19 and 10-23 | Owner + build chat | Open |
 | AW-05 | Risk | In-process libcef crash takes down clients at spawn; crash loop on join | Medium / High | Crash guard, delayed creation, server kill switch, Tier-1 only; host process after the event | Build chat | Open |
 | AW-06 | Risk | Angelica (beta66b or 2.x core profile) culls the screen or corrupts GL state | Medium / High | Draw-only TESR, unpack reset, reflective bounds registry, G3 with shaders | Build chat | Open |

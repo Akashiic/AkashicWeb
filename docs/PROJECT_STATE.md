@@ -48,6 +48,10 @@ Anything on Windows or macOS; anything inside Minecraft (any GTNH version, Angel
 | G5 rehearsal #2 | 2026-10-22 | Not started |
 | G6 dress rehearsal + go/no-go | 2026-10-24 | Not started |
 
-## Blocking owner decisions
+## Owner decisions
 
-P-01 (server/pack and version), P-02 (AkashicFM in the pack), P-03 (codec build), P-04 (staffing). See [`DECISIONS.md`](DECISIONS.md).
+Answered on 2026-10-11: Forbidden Series (Technic) on Crucible, not GTNH (D-009); AkashicFM is in the pack (D-010); codec-enabled Chromium accepted (D-011); team = owner + AI assistant (D-012). Pending: the pack's mod list (P-11), site policy and admins (P-05), channels (P-07), licence (P-08), telemetry text (P-09). See [`DECISIONS.md`](DECISIONS.md).
+
+## In progress
+
+A skeptical technology review (seven specialists: engine and process model, frame transport, codecs, audio, mod stack for Forbidden/Crucible, natives distribution, multiplayer model) followed by architecture decision records. Its results will update `PLAN.md`.

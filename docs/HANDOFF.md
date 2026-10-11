@@ -10,7 +10,7 @@ Written 2026-10-10 at the end of the research chat. The build continues in a new
 
 ## First actions in the new chat
 
-1. Ask the owner the pending decisions P-01..P-04 (server/pack + version, AkashicFM in the pack, codec build, staffing). Ask in Brazilian Portuguese. Record answers in `DECISIONS.md`.
+1. P-01..P-04 were answered on 2026-10-11 (D-009..D-012). Ask for the remaining items (P-11 pack mod list first) in Brazilian Portuguese and record answers in `DECISIONS.md`.
 2. Start the native build first, because it is the longest pole and only Windows matters for G1:
    - fork or vendor [CCBlueX/java-cef](https://github.com/CCBlueX/java-cef) at fe8cc9e (or a newer pin) under the Akashiic organisation, or add it as a build input of this repo;
    - CI job that downloads OBS CEF `cef_binary_7871_windows_x64.zip` from `https://cdn-fastly.obsproject.com/downloads/`, verifies the SHA-256 pinned in obs-studio `CMakePresets.json` (starts `54cd191a`), extracts it to `third_party/cef/cef_binary_<ver>_windows64` (the zip has no top-level folder) and builds with `-DCEF_VERSION=<exact version from include/cef_version.h>`;
@@ -36,6 +36,8 @@ Written 2026-10-10 at the end of the research chat. The build continues in a new
 | `Akashiic/AkashicFM` | Buildscript, ToolManager, UrlPolicy, AuditLog, ServerClock/ClockSync, audio engine, E2E and prod harnesses |
 
 ## Facts that are easy to get wrong
+
+- The target pack is the **Forbidden Series** (Technic) on a **Crucible** server, not GTNH (D-009). GTNH-specific versions in the research are reference only until the pack's mod list (P-11) is checked.
 
 - TSE results data and the live relay were **abandoned** (D-008). Do not bring them back; the product is the browser.
 

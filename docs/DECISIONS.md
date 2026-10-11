@@ -13,16 +13,19 @@ Owner decisions are binding. Technical decisions are proposals from the research
 | D-005 | 10-10 | Sound should use **AkashicFM's audio technology** (3D, occlusion, reverb, organised sources). | Planned as Stretch for 10-25 with a distance-volume fallback (PLAN 4.6). |
 | D-006 | 10-10 | Low-delay lives are wanted. | Expectations set in PLAN section 5: browser adds tens of ms; the source sets the rest. |
 | D-008 | 10-11 | **Abandoned:** TSE results data and the "Akashic live relay" (OBS/MediaMTX/WebRTC re-streaming). The focus is only a Web Displays-like mod that runs a browser inside Minecraft; lives are watched by opening the site in the browser. | Owner, 2026-10-11. Raw research JSON still mentions both as history. |
+| D-009 | 10-11 | Target pack: the Rede Akashic **Forbidden Series** Technic modpack (Forge 10.13.4.1614), server **Crucible 1.7.10** (Java 21 in production), not GTNH. (Answers P-01.) | Desktop players use the Technic launcher (Java 8 typical); Android players use ForbiddenMobile and get a placeholder. The pack's exact mod list is still needed. |
+| D-010 | 10-11 | AkashicFM is already in the Forbidden pack; 3D audio uses its engine. (Answers P-02.) | AkashicFM hard-depends on GTNHLib, so GTNHLib is probably in the pack (INFERRED until the mod list is checked). |
+| D-011 | 10-11 | The codec-enabled Chromium (H.264/AAC) is accepted. (Answers P-03.) | Windows: download from OBS's CDN on the player's PC. Linux: decide later. |
+| D-012 | 10-11 | Team until 10-25: the owner (tests on his Windows PC, decides) + the AI assistant (writes code). (Answers P-04.) | Cut order in PLAN section 6 applies. |
 | D-007 | 10-10 | Repository `Akashiic/AkashicWeb` created by the owner; the build happens in a new chat from these docs. | — |
 
-## Owner decisions (pending; ask at the start of the next chat)
+## Owner decisions (pending)
+
+New: **P-11** — send the Forbidden Series pack's `mods/` folder listing (file names + versions), so dependencies (GTNHLib, UniMixins, Angelica, Hodgepodge, OptiFine) are confirmed, not guessed.
+
 
 | ID | Question | Why it matters | Recommendation |
 |---|---|---|---|
-| P-01 | Which server and modpack get the mod: GT New Horizons (which exact version, Java 8 / 17-25?) or the Technic "Forbidden Series" (Crucible + Velocity, per Akashic-Voice docs)? | Changes the stack (Angelica/lwjgl3ify versions), the test matrix and the server software (Crucible changes commands/permissions). | Freeze the CURRENT version for the event; never migrate the world for this. |
-| P-02 | Is AkashicFM in (or going into) that server's pack? | 3D audio uses its engine; without it the screen uses distance volume only. | — |
-| P-03 | Accept the codec-enabled Chromium (OBS CEF 150, H.264/AAC via FFmpeg)? Patent status is a grey area (CEF maintainer warns about codec licensing; last major US H.264 patent reportedly ~2027-11, INFERRED from secondary sources). Windows: download from OBS's CDN on the player's PC (no Akashic redistribution) or ship a repackaged bundle? Linux: repackage (redistribution) or codec-free? | Without it, YouTube live and Twitch do not play. | Accept on Windows with download-from-OBS + selective extraction; decide Linux separately. Get a quick legal opinion if possible. |
-| P-04 | Staffing: only the owner + an AI assistant? | The schedule assumes one developer; cut order in PLAN 6. | — |
 | P-05 | Site policy for public screens: allowlist or blocklist? Who are admins (OP level, list, UUIDs)? | IP-logger and abuse risk (PLAN 4.7). | Allowlist at spawn and public areas; blocklist elsewhere. |
 | P-06 | Platform stance: Windows Tier 1, Linux Tier 2, macOS placeholder for 10-25? | Sets what is tested and announced. | Yes. |
 | P-07 | Which live channel(s) for the spawn telão, plus a second backup channel? Does it allow embedding? | Rehearsals and the fallback ladder use them. | Pick two by 10-18. |
