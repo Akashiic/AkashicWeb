@@ -1,0 +1,43 @@
+package com.akashiic.web.client.host;
+
+import com.akashiic.web.common.SitePolicy;
+
+/**
+ * The game's view of the AkashicWebHost process (docs/CONTRACTS.md, M2→M5). Every method is non-blocking and safe
+ * from the client thread; commands issued before READY are queued and replayed. Contract type.
+ */
+public interface BrowserHost {
+
+    HostStatus status();
+
+    /** Returns a new screen id (> 0). */
+    int createScreen(CreateSpec spec);
+
+    void destroyScreen(int screenId);
+
+    void navigate(int screenId, String url);
+
+    /** back, forward, reload or stop. */
+    void action(int screenId, String action);
+
+    void input(int screenId, InputEvent event);
+
+    void audio(int screenId, boolean muted, float volume);
+
+    void render(int screenId, int fps, boolean painting);
+
+    void resize(int screenId, int width, int height);
+
+    void sync(int screenId, SyncCommand cmd);
+
+    void policy(SitePolicy policy);
+
+    /** Frame ring of a screen, or null if the id is unknown. */
+    FrameRing frames(int screenId);
+
+    void addListener(HostListener listener);
+
+    void removeListener(HostListener listener);
+
+    void shutdown();
+}

@@ -2,6 +2,7 @@ package com.akashiic.web.common;
 
 import com.akashiic.web.AkashicWeb;
 import com.akashiic.web.Tags;
+import com.akashiic.web.common.net.ClientHooks;
 import com.akashiic.web.protocol.Protocol;
 
 import cpw.mods.fml.common.event.FMLInitializationEvent;
@@ -21,4 +22,9 @@ public class CommonProxy {
     public void postInit(FMLPostInitializationEvent event) {}
 
     public void serverStarting(FMLServerStartingEvent event) {}
+
+    /** Receiver for server→client packets. The dedicated server never receives them. */
+    public ClientHooks clientHooks() {
+        return ClientHooks.NOOP;
+    }
 }

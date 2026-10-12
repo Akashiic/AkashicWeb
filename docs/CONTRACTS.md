@@ -1,6 +1,6 @@
 # Module contracts (v1)
 
-Grade: AUTHORED 2026-10-12. These are the seams between modules so they can be built in parallel. Packages are under `com.akashiic.web`. Each module owns its paths; only the owner edits them. Shared wiring (proxies, `AkashicWeb.java`) is owned by the module named below.
+Grade: AUTHORED 2026-10-12; the interfaces below exist as compiling Java in the repository (BUILD). These are the seams between modules so they can be built in parallel. Packages are under `com.akashiic.web`. Each module owns its paths; only the owner edits them. Shared wiring (proxies, `AkashicWeb.java`) is owned by the module named below.
 
 ## Ownership
 
@@ -13,6 +13,23 @@ Grade: AUTHORED 2026-10-12. These are the seams between modules so they can be b
 | M5 game client (Java) | `client/ClientProxy.java`, `client/render/**`, `client/gui/**`, `client/screen/**`, `client/sync/**`, `client/net/**` | server packages |
 
 Lang keys from M3/M5 are listed in their reports and merged into M4's files at integration.
+
+## Contract files
+
+These files are the contract. Their owner may add members; nobody changes or removes existing ones without updating this document and every user in the same commit.
+
+| Package | Files | Owner after integration |
+|---|---|---|
+| `client.host` | `BrowserHost`, `HostListener`, `HostStatus`, `CreateSpec`, `InputEvent`, `SyncCommand`, `FrameRing`, `FrameSlot`, `HostProtocol` | M2 |
+| `client.install` | `EngineLocator`, `EngineState` | M3 |
+| `common` | `ScreenKey`, `ScreenMode`, `ScreenState`, `ScreenTile`, `Rights`, `ReasonCode`, `SitePolicy`, `ModContent` | M4 |
+| `common.net` | `ScreenInput`, `MediaSample`, `RightsChange`, `ServerBound`, `ClientHooks` | M4 |
+
+## M4 ↔ M5: network seam (`common.net`)
+
+- **Client → server.** M5 calls `ModContent.toServer` (a `ServerBound`). M4 implements `ServerBound` over the `akashicweb` SimpleNetworkWrapper channel and assigns it in `init`.
+- **Server → client.** M4's client-side packet handlers hop to the client thread and call `AkashicWeb.proxy.clientHooks()` (a `ClientHooks`). `CommonProxy` returns `ClientHooks.NOOP`; M5's `ClientProxy` returns its implementation. M4's tile entity also calls `onScreenState` from `onDataPacket` and `onScreenRemoved` from `invalidate`/`onChunkUnload` on the client world.
+- **Rendering.** M4 assigns `ModContent.screenBlock` and `ModContent.screenTileClass` in `preInit`; its tile entity implements `ScreenTile`. M5 binds its TESR to `ModContent.screenTileClass` and casts to `ScreenTile`, never to the concrete class.
 
 ## M2 → M5: browser host API (`client.host`)
 

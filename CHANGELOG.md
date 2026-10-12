@@ -26,6 +26,7 @@
 - Mod skeleton on the GTNH buildscript (Forge 1.7.10, Jabel `--release 8`, JUnit 5): `AkashicWeb` `@Mod`, `CommonProxy`/`ClientProxy`, `protocol.Protocol` (major 1), `client.host.HostProtocol` (AKW1 framing, FRAME header validation) with tests.
 - `docs/PROTOCOL.md` (game↔host IPC v1 and server↔client packets) and `docs/CONTRACTS.md` (module ownership and interfaces).
 - `host/`: AkashicWebHost package with the JS protocol codec and `node --test` tests.
+- Contract types in Java for parallel module work (`client.host`, `client.install`, `common`, `common.net`), documented in `docs/CONTRACTS.md`.
 - Build evidence (Linux container): `./gradlew build` green, 4 JUnit + 3 node tests pass, class major 52. Not run: Windows, Minecraft client, Crucible server.
 
 No release yet.

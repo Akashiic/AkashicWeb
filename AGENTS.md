@@ -21,7 +21,7 @@ Scope: this repository. Changes needed in AkashicFM (for example the external-au
 - Distinguish AUTHORED, STATIC, BUILD, AUTOMATED, LIVE-OBSERVED, LIVE-APPROVED. State the OS for AUTOMATED results.
 - Windows behaviour is proven only on real Windows PCs. A Linux/Xvfb harness never approves a native feature for Windows.
 - Add regression tests for repairs; a historical pass does not approve a changed tree.
-- Record SHA-256 for every native bundle and release jar; do not commit binaries, logs or captures.
+- Record SHA-256 for every native bundle and release jar; do not commit binaries, logs or captures. Sole exception: the standard Gradle wrapper `gradle/wrapper/gradle-wrapper.jar` (copied from AkashicFM; SHA-256 `7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d`).
 - No release tag, "stable" wording or production deployment without the gate evidence in `docs/PLAN.md`.
 - Report uncertainty and blocked validation; never claim zero defects or guaranteed performance.
 - Review passes by one assistant are not independent external reviewers.
