@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>akw-test</title>
+<style>
+  html, body { margin: 0; background: rgb(10, 200, 30); height: 3000px; font: 16px sans-serif; }
+  #t { position: absolute; left: 10px; top: 200px; width: 300px; height: 30px; font-size: 16px; }
+  #ta { position: absolute; left: 10px; top: 250px; width: 300px; height: 60px; }
+  #pop { position: absolute; left: 400px; top: 200px; width: 100px; height: 30px; }
+  #fs { position: absolute; left: 400px; top: 250px; width: 100px; height: 30px; }
+  #file { position: absolute; left: 400px; top: 300px; width: 150px; height: 30px; }
+  #spin { position: absolute; left: 500px; top: 40px; width: 40px; height: 40px; background: #0000ff; animation: s 1s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  body.static #spin { animation: none; }
+  /* Repaints the whole page every frame: makes every FRAME a full 640x360 frame (backpressure test). */
+  body.busy { animation: bg 0.5s linear infinite; }
+  @keyframes bg { from { background: rgb(10, 200, 30); } to { background: rgb(10, 120, 60); } }
+</style>
+</head>
+<body>
+<input id="t" autocomplete="off">
+<textarea id="ta"></textarea>
+<button id="pop">pop</button>
+<button id="fs">fs</button>
+<input id="file" type="file">
+<div id="spin"></div>
+<audio id="au" src="tone.wav" loop autoplay></audio>
+<iframe id="fr" src="frame.html" style="position:absolute;left:10px;top:330px;width:120px;height:20px;border:0"></iframe>
+<script>
+  // Everything the test needs to observe is mirrored into document.title, which reaches the game
+  // through STATE messages: no extra channel into the page exists.
+  const t = document.getElementById('t');
+  const ta = document.getElementById('ta');
+  const au = document.getElementById('au');
+  const state = { fetch: 'none', keydowns: 0, frameVol: '-', frameGuard: '-', fileClick: '-' };
+  function report() {
+    document.title = 'v:' + t.value + '|ta:' + JSON.stringify(ta.value) + '|sy:' + Math.round(window.scrollY)
+      + '|vol:' + au.volume.toFixed(2) + '|fs:' + (document.fullscreenElement ? 1 : 0) + '|fetch:' + state.fetch
+      + '|kd:' + state.keydowns + '|lang:' + navigator.language + '|ua:' + (navigator.userAgent.includes('Electron') ? 'electron' : 'chrome')
+      + '|pg:' + (String(window.print).includes('[native code]') ? 'native' : 'guarded')
+      + '|file:' + state.fileClick + '|fvol:' + state.frameVol + '|fpg:' + state.frameGuard;
+  }
+  window.addEventListener('message', e => {
+    if (!e.data || !e.data.akwFrame) return;
+    state.frameVol = e.data.vol;
+    state.frameGuard = e.data.guarded ? 'guarded' : 'native';
+  });
+  // Target-phase listener: sees whether the host guard's capture-phase listener cancelled the chooser.
+  document.getElementById('file').addEventListener('click', e => { state.fileClick = e.defaultPrevented ? 'prevented' : 'open'; report(); });
+  t.addEventListener('input', report);
+  ta.addEventListener('input', report);
+  window.addEventListener('scroll', report);
+  window.addEventListener('keydown', () => { state.keydowns++; report(); });
+  au.addEventListener('volumechange', report);
+  document.addEventListener('fullscreenchange', report);
+  document.getElementById('pop').addEventListener('click', () => {
+    window.open(location.href.split('#')[0].replace('page.html', 'page2.html'), '_blank');
+  });
+  document.getElementById('fs').addEventListener('click', () => {
+    document.documentElement.requestFullscreen().then(report, e => { state.fetch = 'fs-denied'; report(); });
+  });
+  // The test sets the hash to ask the page to probe the loopback sink; the fetch must never arrive.
+  window.addEventListener('hashchange', () => {
+    if (location.hash === '#busy') {
+      document.body.classList.add('busy');
+      return;
+    }
+    if (location.hash === '#static') {
+      // Freeze everything that paints on its own (spinner, caret, busy background) for the canvas comparison.
+      document.body.classList.remove('busy');
+      document.body.classList.add('static');
+      if (document.activeElement) document.activeElement.blur();
+      return;
+    }
+    const m = /probe=(\d+)(?:&host=([a-z0-9.-]+))?/.exec(location.hash);
+    if (!m) return;
+    state.fetch = 'pending';
+    report();
+    fetch('http://' + (m[2] || '127.0.0.1') + ':' + m[1] + '/from-page', { mode: 'no-cors' })
+      .then(() => { state.fetch = 'reached'; report(); }, () => { state.fetch = 'failed'; report(); });
+  });
+  setInterval(report, 500);
+  report();
+</script>
+</body>
+</html>

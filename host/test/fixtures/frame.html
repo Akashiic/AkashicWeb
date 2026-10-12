@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>akw-frame</title></head>
+<body style="margin:0;background:#222">
+<audio id="fa" src="tone.wav" preload="auto"></audio>
+<script>
+  // Reports to the parent page what the host's frame scripts did inside this iframe: the media
+  // volume (inject.js reaching subframes) and whether print() was replaced by the guard.
+  const fa = document.getElementById('fa');
+  setInterval(() => {
+    const guarded = !String(window.print).includes('[native code]');
+    parent.postMessage({ akwFrame: true, vol: fa.volume.toFixed(2), guarded }, '*');
+  }, 250);
+</script>
+</body>
+</html>
