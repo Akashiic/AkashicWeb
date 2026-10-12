@@ -33,7 +33,35 @@ public enum ReasonCode {
     TOO_FAR,
     STALE_EPOCH,
     // client budget (M5)
-    BROWSER_BUDGET;
+    BROWSER_BUDGET,
+    // server decisions (M4, added with the server implementation)
+    URL_INVALID,
+    WRONG_DIMENSION,
+    UNKNOWN_SCREEN,
+    /** A client packet could not be decoded or broke a length cap. */
+    BAD_PACKET,
+    /** Another player holds the controller lock and the requester may not pre-empt it. */
+    CONTROLLER_BUSY,
+    /** The claimed pointer position is behind the screen or outside the player's view. */
+    OUT_OF_VIEW,
+    UNKNOWN_PLAYER,
+    TOO_MANY_FRIENDS,
+    BAD_RESOLUTION,
+    /** The action does not exist for this screen's mode (e.g. a controller on a PRIVATE screen). */
+    WRONG_MODE,
+    FAKE_PLAYER,
+    // screen multiblock (M4)
+    SCREEN_TOO_SMALL,
+    SCREEN_TOO_BIG,
+    SCREEN_INVALID_SHAPE,
+    /** The new screen would cover a screen the player may not manage. */
+    SCREEN_OVERLAP,
+    /** The player already owns the configured maximum number of screens. */
+    SCREEN_LIMIT,
+    /** Part of the screen is in an unloaded chunk. */
+    CHUNK_NOT_LOADED,
+    /** Blocks of an existing screen were removed, so the screen was dissolved. */
+    SCREEN_DISSOLVED;
 
     public String langKey() {
         return "akashicweb.reason." + name().toLowerCase(java.util.Locale.ROOT);

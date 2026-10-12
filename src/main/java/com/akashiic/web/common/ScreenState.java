@@ -34,4 +34,37 @@ public final class ScreenState {
     public UUID controller;
 
     public ScreenMode mode = ScreenMode.SHARED;
+
+    // ---- added by M4 (additive; existing members unchanged) ----
+
+    /** Friend names as last seen by the server, for the rights GUI (UUID -> name). Same keys as {@link #friends}. */
+    public final java.util.Map<UUID, String> friendNames = new java.util.LinkedHashMap<>();
+
+    /** Deep copy, so a receiver can keep a snapshot while the owner keeps mutating its record. */
+    public ScreenState copy() {
+        ScreenState c = new ScreenState();
+        c.key = key;
+        c.widthBlocks = widthBlocks;
+        c.heightBlocks = heightBlocks;
+        c.resolutionW = resolutionW;
+        c.resolutionH = resolutionH;
+        c.rotation = rotation;
+        c.url = url;
+        c.epoch = epoch;
+        c.owner = owner;
+        c.ownerName = ownerName;
+        c.friends.addAll(friends);
+        c.friendNames.putAll(friendNames);
+        c.friendRights = friendRights;
+        c.otherRights = otherRights;
+        c.locked = locked;
+        c.controller = controller;
+        c.mode = mode;
+        return c;
+    }
+
+    @Override
+    public String toString() {
+        return key + " " + widthBlocks + "x" + heightBlocks + " epoch=" + epoch + " mode=" + mode;
+    }
 }
