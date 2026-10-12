@@ -93,12 +93,40 @@ public final class HostProtocol {
 
     /** Reads one message; returns null on a clean EOF before a header starts. */
     public static Message read(DataInputStream in) throws IOException {
-        int magic;
-        try {
-            magic = in.readInt();
-        } catch (EOFException eof) {
-            return null;
+        Header h = readHeader(in);
+        if (h == null) return null;
+        byte[] payload = new byte[h.length];
+        in.readFully(payload);
+        return new Message(h.type, h.flags, h.screenId, h.seq, payload);
+    }
+
+    /** The 20-byte header of one message. Lets the reader stream large payloads (FRAME) without a copy. */
+    public static final class Header {
+
+        public final int type;
+        public final int flags;
+        public final int screenId;
+        public final int seq;
+        /** Payload bytes that follow, 0..{@link #MAX_PAYLOAD}. */
+        public final int length;
+
+        public Header(int type, int flags, int screenId, int seq, int length) {
+            this.type = type;
+            this.flags = flags;
+            this.screenId = screenId;
+            this.seq = seq;
+            this.length = length;
         }
+    }
+
+    /**
+     * Reads and validates one header; the caller must then consume exactly {@code length} payload bytes. Returns null
+     * on a clean EOF before the header starts; an EOF inside the header is an {@link EOFException}.
+     */
+    public static Header readHeader(DataInputStream in) throws IOException {
+        int b0 = in.read();
+        if (b0 < 0) return null;
+        int magic = (b0 << 24) | (in.readUnsignedByte() << 16) | (in.readUnsignedShort());
         if (magic != MAGIC) throw new ProtocolException("bad magic 0x" + Integer.toHexString(magic));
         int type = in.readUnsignedShort();
         int flags = in.readUnsignedShort();
@@ -106,9 +134,7 @@ public final class HostProtocol {
         int seq = in.readInt();
         int length = in.readInt();
         if (length < 0 || length > MAX_PAYLOAD) throw new ProtocolException("bad length " + length);
-        byte[] payload = new byte[length];
-        in.readFully(payload);
-        return new Message(type, flags, screenId, seq, payload);
+        return new Header(type, flags, screenId, seq, length);
     }
 
     /** Header of a FRAME payload: page size and the dirty rectangle carried in the rest of the payload. */
@@ -133,20 +159,32 @@ public final class HostProtocol {
 
         /** Parses and validates the header; the pixel data starts at offset {@link #BYTES}. */
         public static FrameHeader parse(byte[] payload) throws ProtocolException {
-            if (payload.length < BYTES) throw new ProtocolException("short FRAME");
+            return parse(payload, payload.length);
+        }
+
+        /**
+         * Parses the first {@link #BYTES} bytes of a FRAME payload whose total length is {@code payloadLength}, so the
+         * pixel rows can be streamed afterwards. Same validation as {@link #parse(byte[])}.
+         */
+        public static FrameHeader parse(byte[] head, long payloadLength) throws ProtocolException {
+            if (payloadLength < BYTES || head.length < BYTES) throw new ProtocolException("short FRAME");
             FrameHeader f = new FrameHeader(
-                u16(payload, 0),
-                u16(payload, 2),
-                u16(payload, 4),
-                u16(payload, 6),
-                u16(payload, 8),
-                u16(payload, 10));
+                u16(head, 0),
+                u16(head, 2),
+                u16(head, 4),
+                u16(head, 6),
+                u16(head, 8),
+                u16(head, 10));
             if (f.width == 0 || f.height == 0 || f.w == 0 || f.h == 0 || f.x + f.w > f.width || f.y + f.h > f.height)
                 throw new ProtocolException("bad FRAME rect");
             long expected = (long) BYTES + (long) f.w * f.h * 4L;
-            if (payload.length != expected)
-                throw new ProtocolException("FRAME size " + payload.length + " != " + expected);
+            if (payloadLength != expected)
+                throw new ProtocolException("FRAME size " + payloadLength + " != " + expected);
             return f;
+        }
+
+        public boolean isFullFrame() {
+            return x == 0 && y == 0 && w == width && h == height;
         }
 
         private static int u16(byte[] b, int off) {
