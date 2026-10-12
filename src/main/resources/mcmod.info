@@ -1,0 +1,15 @@
+[
+  {
+    "modid": "${modId}",
+    "name": "${modName}",
+    "description": "A real web browser on in-world screens, in the spirit of Web Displays (montoyo, public domain).",
+    "version": "${modVersion}",
+    "mcversion": "${minecraftVersion}",
+    "url": "https://github.com/Akashiic/AkashicWeb",
+    "authorList": ["Akashic"],
+    "credits": "Rede Akashic. Web Displays by montoyo (public domain) inspired this mod.",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]

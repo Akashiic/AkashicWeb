@@ -1,0 +1,10 @@
+/*
+ * AkashicWeb dependencies. Runtime hard dependencies: Minecraft 1.7.10 + Forge 10.13.4.1614 only (ADR-009).
+ * Optional integrations (Angelica, Bukkit/Crucible, AkashicFM, WAILA) are reached by reflection or compileOnly
+ * APIs and never shipped in the jar.
+ */
+dependencies {
+    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}

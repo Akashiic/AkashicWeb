@@ -1,6 +1,6 @@
 # Project state
 
-Last update: 2026-10-10 (UTC). Phase: **research complete, no code.** Nothing is built, released, tested in game, or live-approved.
+Last update: 2026-10-12 (UTC). Phase: **implementation started (skeleton).** Nothing is released, tested in game, or live-approved.
 
 ## Evidence grades used in this repository
 
@@ -22,7 +22,9 @@ The research files use VERIFIED (≈ STATIC or AUTOMATED, with a source) and INF
 | Research on Web Displays, MCEF, issues, CEF engines, GTNH integration, codecs, latency, rights | Done ([`research/`](research/)) | STATIC / AUTOMATED (Linux container) |
 | Plan, decisions, problem→fix matrix, risk register | Written | AUTHORED |
 | Probe and harness sources from the research | Kept in [`/spikes`](../spikes) | AUTOMATED (Linux container only) |
-| Mod source code | None | — |
+| Mod skeleton (Forge 1.7.10, GTNH buildscript, Jabel, JUnit 5): `@Mod`, proxies, `Protocol`, `HostProtocol` framing | Compiles; 4 JUnit tests pass; all 9 classes are major 52 (Linux container, Java 21 toolchain via RFG) | BUILD / AUTOMATED |
+| Host app protocol codec (`host/src/protocol.js`) | 3 `node --test` tests pass (Node 22, Linux container) | AUTOMATED |
+| IPC and module contracts ([`PROTOCOL.md`](PROTOCOL.md), [`CONTRACTS.md`](CONTRACTS.md)) | Written | AUTHORED |
 | Native builds (libjcef/jcef.dll) | None kept; the Linux build in the research container was a throwaway | — |
 | Releases | None | — |
 

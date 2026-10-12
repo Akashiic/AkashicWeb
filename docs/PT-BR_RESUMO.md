@@ -10,7 +10,7 @@ Os jogadores constroem telas, clicam, rolam, digitam e navegam. O telão do spaw
 
 ## Estado
 
-**Pesquisa concluída, nenhum código ainda.** Nada foi compilado para o Minecraft, testado no Windows ou visto dentro do jogo. Os testes da pesquisa rodaram num container Linux.
+**Implementação começou (esqueleto).** O mod compila (Forge 1.7.10, buildscript GTNH, Java 8 bytecode) e os testes de protocolo passam, só num container Linux. Nada foi testado no Windows, no cliente do Minecraft ou no servidor Crucible.
 
 ## O que a pesquisa mostrou
 

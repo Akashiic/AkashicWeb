@@ -22,4 +22,10 @@
 ### Decided (2026-10-12)
 - Technology review: ADR-001..ADR-016 in `docs/adr/README.md` (with reviewer amendments) and the challenges in `docs/research/08-tech-challenge.md`. D-014 (owner delegates, produce without date pressure) and D-015 (browser in a separate AkashicWebHost process on official Electron 44.x; JCEF/OBS fallback). Electron host and natives probes added to `spikes/`.
 
-No code, build or release yet.
+### Added (2026-10-12, code)
+- Mod skeleton on the GTNH buildscript (Forge 1.7.10, Jabel `--release 8`, JUnit 5): `AkashicWeb` `@Mod`, `CommonProxy`/`ClientProxy`, `protocol.Protocol` (major 1), `client.host.HostProtocol` (AKW1 framing, FRAME header validation) with tests.
+- `docs/PROTOCOL.md` (game↔host IPC v1 and server↔client packets) and `docs/CONTRACTS.md` (module ownership and interfaces).
+- `host/`: AkashicWebHost package with the JS protocol codec and `node --test` tests.
+- Build evidence (Linux container): `./gradlew build` green, 4 JUnit + 3 node tests pass, class major 52. Not run: Windows, Minecraft client, Crucible server.
+
+No release yet.

@@ -1,0 +1,11 @@
+{
+  "name": "akashicweb-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AkashicWebHost: offscreen browser host for the AkashicWeb Minecraft mod (runs inside the official Electron build).",
+  "main": "src/main.js",
+  "license": "UNLICENSED",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

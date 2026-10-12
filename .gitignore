@@ -31,3 +31,14 @@ logs/
 *.wav
 *.mp4
 *.webm
+
+# Minecraft dev runs (GTNH buildscript)
+/run/
+/eclipse/
+/bin/
+/crash-reports/
+/saves/
+usernamecache.json
+usercache.json
+/build/
+.gradle/
