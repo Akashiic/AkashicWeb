@@ -17,11 +17,12 @@ Owner decisions are binding. Technical decisions are proposals from the research
 | D-010 | 10-11 | AkashicFM is already in the Forbidden pack; 3D audio uses its engine. (Answers P-02.) | AkashicFM hard-depends on GTNHLib, so GTNHLib is probably in the pack (INFERRED until the mod list is checked). |
 | D-011 | 10-11 | The codec-enabled Chromium (H.264/AAC) is accepted. (Answers P-03.) | Windows: download from OBS's CDN on the player's PC. Linux: decide later. |
 | D-012 | 10-11 | Team until 10-25: the owner (tests on his Windows PC, decides) + the AI assistant (writes code). (Answers P-04.) | Cut order in PLAN section 6 applies. |
+| D-013 | 10-12 | Pack facts from the owner's files (answers P-11): UniMixins 0.3.1, GTNHLib 0.11.51 and ModularUI2 2.3.85 on client and server; Angelica 2.2.20 + BSL/Complementary shaders on the client; LWJGL2 Technic client; Crucible staging-67b53034 on RFB + Java 21 with lwjgl3ify 3.0.31; LuckPerms/WorldGuard/GriefPreventionPlus/FinalForgeRestrictor/BlockLimiter plugins. | [`research/07-forbidden-pack-inventory.md`](research/07-forbidden-pack-inventory.md) |
 | D-007 | 10-10 | Repository `Akashiic/AkashicWeb` created by the owner; the build happens in a new chat from these docs. | — |
 
 ## Owner decisions (pending)
 
-New: **P-11** — send the Forbidden Series pack's `mods/` folder listing (file names + versions), so dependencies (GTNHLib, UniMixins, Angelica, Hodgepodge, OptiFine) are confirmed, not guessed.
+P-11 (pack mod list) answered on 10-12 (D-013).
 
 
 | ID | Question | Why it matters | Recommendation |

@@ -42,13 +42,13 @@ Os jogadores constroem telas, clicam, rolam, digitam e navegam. O telão do spaw
 - O AkashicFM já está no pacote, então o som 3D usa o motor dele.
 - Chromium com codecs H.264/AAC: aceito.
 - Equipe: Gabriel + assistente.
+- Pack inventariado em 12/10: UniMixins, GTNHLib e ModularUI2 nos dois lados; Angelica 2.2.20 com shaders no cliente; servidor Crucible com Java 21, LuckPerms e plugins de proteção (ver `research/07-forbidden-pack-inventory.md`).
 
 ## Decisões que faltam (ver [`DECISIONS.md`](DECISIONS.md))
 
-1. **Lista de mods** do Forbidden Series (a pasta `mods/`), para confirmar as dependências.
-2. **Sites:** lista de permitidos ou de bloqueados nas telas públicas? E quem são os admins?
-3. **Canais:** quais duas lives vão para o telão?
-4. **Licença** do repositório.
+1. **Sites:** lista de permitidos ou de bloqueados nas telas públicas? E quem são os admins?
+2. **Canais:** quais duas lives vão para o telão?
+3. **Licença** do repositório.
 
 ## Onde está cada coisa
 

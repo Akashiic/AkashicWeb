@@ -6,8 +6,10 @@ No GitHub issues exist yet. Create them from this table when the owner agrees (o
 |---|---|---|---|---|---|---|
 | AW-01 | Risk | OBS CEF 150 + CCBlueX libjcef fails to build or run on Windows (only Linux tested) | Medium / High | Spotify-152 build in parallel (no lives); CinemaMod 116 emergency; decided at G1 (10-13) | Build chat | Open |
 | AW-02 | Decision | Server/pack and version not confirmed (GTNH vs Forbidden Series) | — / High | Answered: Forbidden Series on Crucible (D-009) | Owner | Closed |
-| AW-25 | Risk | The Forbidden pack's mod list is unknown (GTNHLib, UniMixins, Angelica, Hodgepodge, OptiFine presence) | — / High | P-11: owner sends the `mods/` listing; until then only soft dependencies | Owner | Open |
+| AW-25 | Risk | The Forbidden pack's mod list is unknown (GTNHLib, UniMixins, Angelica, Hodgepodge, OptiFine presence) | — / High | Answered (D-013): see research/07 | Owner | Closed |
 | AW-26 | Risk | Crucible (Bukkit hybrid) server: permissions, plugins, akashic-world-firewall guard, Velocity transfers | Medium / Medium | Test the server side on Crucible Java 21; Bukkit permissions by reflection | Build | Open |
+| AW-28 | Risk | Angelica 2.2.20 section-gated TESR culling, occlusion culling and entityculling hide the large screen; no-error GL context makes upload mistakes undefined | Medium / High | Dynamic-bounds registration, correct GL usage, test with BSL and Complementary | Build | Open |
+| AW-29 | Risk | Protection plugins (WorldGuard, GriefPreventionPlus, PlotMe, FinalForgeRestrictor, BlockLimiter) and the Akashic-World-Firewall block or ignore our blocks/packets | Medium / Medium | Consult protections via Bukkit, add plugin entries, declare to the firewall | Build + owner | Open |
 | AW-27 | Risk | Android (ForbiddenMobile) players cannot run CEF | Certain / Low | Placeholder on Android; never crash | Build | Accepted |
 | AW-03 | Decision | Codec build acceptance and distribution model | — / High | Accepted (D-011); Windows downloads from OBS's CDN | Owner | Closed |
 | AW-04 | Risk | Scope (interactive browser) exceeds one developer in 15 days | High / High | Cut order in PLAN 6; buffer days 10-19 and 10-23 | Owner + build chat | Open |

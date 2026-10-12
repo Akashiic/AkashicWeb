@@ -10,6 +10,7 @@ Done 2026-10-05..10 in the research chat: five parallel research agents, one pla
 | [04-gtnh-integration.md](04-gtnh-integration.md) | GTNH Java/LWJGL variants, Angelica, lwjgl3ify, threading, input, packaging, AkashicFM audio bridge |
 | [05-codecs-live-relay-rights.md](05-codecs-live-relay-rights.md) | YouTube live formats, OBS codec CEF build, latency, rights (its relay part is abandoned, D-008) |
 | [06-plan-reviews.md](06-plan-reviews.md) | Feasibility and technical reviews of the first (kiosk-scope) plan |
+| [07-forbidden-pack-inventory.md](07-forbidden-pack-inventory.md) | The real Forbidden Series client pack (TEOF-3.6) and server composition: libraries, Angelica settings, Crucible, plugins |
 | [`raw/`](raw/) | Raw JSON of every agent, including the superseded kiosk-scope plan (`06-plan-kiosk-scope.json`) |
 
 Grades: **VERIFIED** = seen in code, docs, a page or a command output (with a source); **INFERRED** = reasoning or estimate. Mapping to the repository grades is in [`../PROJECT_STATE.md`](../PROJECT_STATE.md).
