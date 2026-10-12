@@ -19,4 +19,7 @@
 ### Added (2026-10-12)
 - `docs/research/07-forbidden-pack-inventory.md`: client pack TEOF-3.6 and server composition facts (D-013); risks AW-28, AW-29.
 
+### Decided (2026-10-12)
+- Technology review: ADR-001..ADR-016 in `docs/adr/README.md` (with reviewer amendments) and the challenges in `docs/research/08-tech-challenge.md`. D-014 (owner delegates, produce without date pressure) and D-015 (browser in a separate AkashicWebHost process on official Electron 44.x; JCEF/OBS fallback). Electron host and natives probes added to `spikes/`.
+
 No code, build or release yet.

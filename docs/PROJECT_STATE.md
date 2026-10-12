@@ -52,6 +52,10 @@ Anything on Windows or macOS; anything inside Minecraft (any GTNH version, Angel
 
 Answered on 2026-10-11: Forbidden Series (Technic) on Crucible, not GTNH (D-009); AkashicFM is in the pack (D-010); codec-enabled Chromium accepted (D-011); team = owner + AI assistant (D-012). Pending: the pack's mod list (P-11), site policy and admins (P-05), channels (P-07), licence (P-08), telemetry text (P-09). See [`DECISIONS.md`](DECISIONS.md).
 
-## In progress
+## Technology review (done 2026-10-12)
 
-A skeptical technology review (seven specialists: engine and process model, frame transport, codecs, audio, mod stack for Forbidden/Crucible, natives distribution, multiplayer model) followed by architecture decision records. Its results will update `PLAN.md`.
+Seven specialists, an architect and an adversarial reviewer produced ADR-001..ADR-016 ([`adr/README.md`](adr/README.md); challenges in [`research/08-tech-challenge.md`](research/08-tech-challenge.md)). Main outcome: the browser moves out of the game JVM into AkashicWebHost on the official Electron 44.x build (D-015). Electron OSR, H.264/AAC playback, PCM capture, ABNT2 input and process cleanup were VERIFIED only in a Linux container; Windows is untested.
+
+## Now
+
+Building: mod skeleton (GTNHGradle + Jabel, Forge-only), host protocol v1, AkashicWebHost app, HostSupervisor, screen block and texture path. Dates are not the driver (D-014).

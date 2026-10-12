@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#000;overflow:hidden}#t{position:absolute;left:10px;top:5px;width:400px;font-size:18px;z-index:2}video{position:absolute;left:0;top:0;width:100vw;height:100vh}</style></head>
+<body><input id="t" value=""><video id="v" autoplay playsinline></video>
+<script>
+const q = new URLSearchParams(location.search); const mode = q.get('mode') || 'mp4';
+const v = document.getElementById('v'); window.__status = {mode};
+window.__clicks = 0; document.addEventListener('mousedown', () => window.__clicks++);
+window.__wheel = 0; document.addEventListener('wheel', e => window.__wheel += e.deltaY);
+const S = window.__status;
+S.mse_avc1 = MediaSource.isTypeSupported('video/mp4; codecs="avc1.64001f"');
+S.mse_mp4a = MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"');
+S.mse_heaac = MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.5"');
+S.mse_vp9 = MediaSource.isTypeSupported('video/webm; codecs="vp9"');
+S.mse_ts = MediaSource.isTypeSupported('video/mp2t; codecs="avc1.64001f,mp4a.40.2"');
+S.canPlay_hls = v.canPlayType('application/vnd.apple.mpegurl');
+S.canPlay_mp4 = v.canPlayType('video/mp4; codecs="avc1.64001f, mp4a.40.2"');
+v.onerror = () => { S.error = v.error && (v.error.code + ' ' + v.error.message); console.log('VIDEO_ERROR ' + S.error); };
+if (mode === 'mp4') v.src = 'test.mp4';
+else if (mode === 'hls') v.src = 'hls/index.m3u8';
+else if (mode === 'mse') {
+  const ms = new MediaSource(); v.src = URL.createObjectURL(ms);
+  ms.addEventListener('sourceopen', async () => {
+    try { const sb = ms.addSourceBuffer('video/mp4; codecs="avc1.640020,mp4a.40.2"');
+      const buf = await (await fetch('frag.mp4')).arrayBuffer(); sb.appendBuffer(buf);
+      sb.addEventListener('updateend', () => { try { ms.endOfStream(); } catch (e) {} });
+    } catch (e) { S.error = 'mse ' + e.message; console.log('MSE_ERROR ' + e.message); }
+  });
+}
+setInterval(() => { const pq = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : {};
+  S.t = +v.currentTime.toFixed(2); S.paused = v.paused; S.ready = v.readyState; S.decoded = pq.totalVideoFrames; S.droppedVideo = pq.droppedVideoFrames;
+  S.audioBytes = v.webkitAudioDecodedByteCount; S.videoBytes = v.webkitVideoDecodedByteCount; }, 500);
+setTimeout(() => console.log('STATUS ' + JSON.stringify(S)), 3000);
+</script></body></html>

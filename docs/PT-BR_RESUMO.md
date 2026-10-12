@@ -44,6 +44,12 @@ Os jogadores constroem telas, clicam, rolam, digitam e navegam. O telão do spaw
 - Equipe: Gabriel + assistente.
 - Pack inventariado em 12/10: UniMixins, GTNHLib e ModularUI2 nos dois lados; Angelica 2.2.20 com shaders no cliente; servidor Crucible com Java 21, LuckPerms e plugins de proteção (ver `research/07-forbidden-pack-inventory.md`).
 
+## Decisões técnicas de 12/10
+
+- Revisão cética com sete especialistas, arquiteto e revisor: 16 decisões de arquitetura em [`adr/README.md`](adr/README.md).
+- O navegador roda num processo próprio (AkashicWebHost) com o Electron oficial (Chromium 152, codecs e sandbox). Tudo o que o jogador vê e faz continua dentro do Minecraft: telas no mundo, cliques, teclado e sincronia vinda do servidor. Se o navegador travar, a tela pisca e volta, sem derrubar o jogo.
+- Sem prazos fixos: produzir direto.
+
 ## Decisões que faltam (ver [`DECISIONS.md`](DECISIONS.md))
 
 1. **Sites:** lista de permitidos ou de bloqueados nas telas públicas? E quem são os admins?

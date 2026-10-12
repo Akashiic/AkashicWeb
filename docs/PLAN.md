@@ -1,5 +1,7 @@
 # AkashicWeb: plan
 
+> **2026-10-12: the architecture decision records in [`adr/README.md`](adr/README.md) supersede sections 4.1-4.10 and 6-8 of this plan** (engine = out-of-process AkashicWebHost on official Electron, D-015). Sections 1, 2, 4.11 and 5 still describe the product; dates are no longer the driver (D-014).
+
 Status on 2026-10-10: **research complete, no code yet.** Everything here is AUTHORED or INFERRED unless a line cites a VERIFIED spike or source (see [`research/`](research/)). Nothing has been built for Minecraft, run on Windows, or observed in game.
 
 Target event: Sunday **2026-10-25**, second round of the Brazilian presidential election. Official results start at 17:00 BRT. The owner wants a big screen (telão) at spawn showing a live coverage stream inside a real in-game web browser.

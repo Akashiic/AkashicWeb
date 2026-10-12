@@ -18,6 +18,8 @@ Owner decisions are binding. Technical decisions are proposals from the research
 | D-011 | 10-11 | The codec-enabled Chromium (H.264/AAC) is accepted. (Answers P-03.) | Windows: download from OBS's CDN on the player's PC. Linux: decide later. |
 | D-012 | 10-11 | Team until 10-25: the owner (tests on his Windows PC, decides) + the AI assistant (writes code). (Answers P-04.) | Cut order in PLAN section 6 applies. |
 | D-013 | 10-12 | Pack facts from the owner's files (answers P-11): UniMixins 0.3.1, GTNHLib 0.11.51 and ModularUI2 2.3.85 on client and server; Angelica 2.2.20 + BSL/Complementary shaders on the client; LWJGL2 Technic client; Crucible staging-67b53034 on RFB + Java 21 with lwjgl3ify 3.0.31; LuckPerms/WorldGuard/GriefPreventionPlus/FinalForgeRestrictor/BlockLimiter plugins. | [`research/07-forbidden-pack-inventory.md`](research/07-forbidden-pack-inventory.md) |
+| D-014 | 10-12 | The owner delegated the engine, codec and test-planning choices to the engineering lead ('fique a seu critério'), asked for a solution as integrated in Minecraft as possible with server-to-client sync, and said to stop planning around dates and produce. | Owner answers on 2026-10-12. |
+| D-015 | 10-12 | Engineering decision under D-014: the browser runs in a separate host process (AkashicWebHost) using the official Electron 44.x build (Chromium 152, H.264/AAC, sandbox on); fallback = JCEF on OBS CEF 7871 in a child process. Everything the player sees and does stays in Minecraft: in-world screens, input, server-authoritative URL and media clock. D-011 (codecs accepted) is applied to Electron's bundled ffmpeg; players download it from Electron's GitHub releases. | [`adr/README.md`](adr/README.md) ADR-001..ADR-016 with reviewer amendments. Rationale: Chromium is always multi-process (even Web Displays/MCEF spawn helpers); only the location of Chromium's main process changes, and keeping it out of javaw.exe means a browser crash never takes down the game. |
 | D-007 | 10-10 | Repository `Akashiic/AkashicWeb` created by the owner; the build happens in a new chat from these docs. | — |
 
 ## Owner decisions (pending)
@@ -34,6 +36,8 @@ P-11 (pack mod list) answered on 10-12 (D-013).
 | P-09 | Telemetry opt-in text (LGPD) and retention. | Preflight/diagnostics report OS, GPU, Java. | Opt-in, no identifiers in committed evidence. |
 
 ## Technical decisions (proposed by the research; confirm at gates)
+
+> **Superseded on 2026-10-12** by the ADRs in [`adr/README.md`](adr/README.md) (D-015). Kept for history.
 
 | ID | Decision | Evidence | Gate |
 |---|---|---|---|
