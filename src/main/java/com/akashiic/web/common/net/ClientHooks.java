@@ -6,9 +6,10 @@ import com.akashiic.web.common.ScreenState;
 import com.akashiic.web.common.SitePolicy;
 
 /**
- * Server→client packets and client-side tile lifecycle, as calls. M4's packet handlers and tile entity call it on the
- * CLIENT MAIN THREAD (they hop there first); M5 implements it and returns it from ClientProxy. On the dedicated
- * server the proxy returns {@link #NOOP}. Contract type.
+ * Server→client packets and client-side tile lifecycle, as calls. M4's packet handlers call it straight from the
+ * Netty thread (FML custom packets) and its tile entity from the client thread, so M5's implementation must hop to
+ * the client thread itself before touching Minecraft. M4's handler classes stay free of client classes because the
+ * dedicated server instantiates them too. On the dedicated server the proxy returns {@link #NOOP}. Contract type.
  */
 public interface ClientHooks {
 

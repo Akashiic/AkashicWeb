@@ -28,7 +28,7 @@ These files are the contract. Their owner may add members; nobody changes or rem
 ## M4 ↔ M5: network seam (`common.net`)
 
 - **Client → server.** M5 calls `ModContent.toServer` (a `ServerBound`). M4 implements `ServerBound` over the `akashicweb` SimpleNetworkWrapper channel and assigns it in `init`.
-- **Server → client.** M4's client-side packet handlers hop to the client thread and call `AkashicWeb.proxy.clientHooks()` (a `ClientHooks`). `CommonProxy` returns `ClientHooks.NOOP`; M5's `ClientProxy` returns its implementation. M4's tile entity also calls `onScreenState` from `onDataPacket` and `onScreenRemoved` from `invalidate`/`onChunkUnload` on the client world.
+- **Server → client.** M4's client-side packet handlers call `AkashicWeb.proxy.clientHooks()` (a `ClientHooks`) from the Netty thread; M5's implementation hops to the client thread. The handler classes must not reference client classes, because FML instantiates them on the dedicated server too. `CommonProxy` returns `ClientHooks.NOOP`; M5's `ClientProxy` returns its implementation. M4's tile entity also calls `onScreenState` from `onDataPacket` and `onScreenRemoved` from `invalidate`/`onChunkUnload` on the client world.
 - **Rendering.** M4 assigns `ModContent.screenBlock` and `ModContent.screenTileClass` in `preInit`; its tile entity implements `ScreenTile`. M5 binds its TESR to `ModContent.screenTileClass` and casts to `ScreenTile`, never to the concrete class.
 
 ## M2 → M5: browser host API (`client.host`)
