@@ -42,3 +42,6 @@ usernamecache.json
 usercache.json
 /build/
 .gradle/
+
+# Agent worktrees (temporary, per session)
+/.claude/worktrees/
