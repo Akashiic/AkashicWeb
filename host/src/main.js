@@ -107,6 +107,9 @@ function configureApp() {
   // key would toggle a public screen, and Windows would show our page title in its overlay).
   app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,MediaSessionService');
   app.commandLine.appendSwitch('lang', 'pt-BR'); // WELCOME's locale also sets Accept-Language per session
+  // FRAME width/height must equal the CREATE/RESIZE size on any display scaling (Windows 125%/150%):
+  // device scale factor 1 for the whole process, on top of offscreen.deviceScaleFactor in screens.js.
+  app.commandLine.appendSwitch('force-device-scale-factor', '1');
   if (!args.gpu) app.disableHardwareAcceleration();
   // Every renderer sandboxed, whatever a window asks for (ADR-013). The one exception is a Linux
   // tier-2 / test launch with --no-sandbox (refused on Windows by args.js): Chromium then cannot

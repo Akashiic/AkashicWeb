@@ -650,6 +650,33 @@ test('public site through a loopback proxy: preload (volume, MEDIA while loading
   });
 });
 
+test('display scaling: FRAME size equals the CREATE/RESIZE size and the page sees devicePixelRatio 1', { skip: SKIP, timeout: 90000 }, async t => {
+  // A 200% display is simulated with --force-device-scale-factor=2 (unpackaged test run). Windows
+  // 125%/150% scaling itself is not reproducible here; on Linux Electron's OSR stayed at 1x even
+  // without the fix (measured), so this guards the contract rather than reproducing a failure.
+  const game = new Game();
+  const port = await game.listen();
+  const site = path.join(game.dir, 'site');
+  fs.mkdirSync(site, { recursive: true });
+  fs.writeFileSync(path.join(site, 'dpr.html'), '<!doctype html><title>dpr</title><body style="background:#123"><script>'
+    + 'setInterval(()=>{document.title="dpr:"+devicePixelRatio+"|w:"+innerWidth+"|h:"+innerHeight},100)</script></body>');
+  t.after(() => game.close());
+  game.spawnHost(port, { extraArgs: ['--akw-test-allow-file', '--force-device-scale-factor=2'] });
+  await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
+  game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: [] }, locale: 'pt-BR' });
+  game.send(P.T.CREATE, 1, { width: 640, height: 360, fps: 10, url: pathToFileURL(path.join(site, 'dpr.html')).href, session: 'shared', audio: 'os', volume: 0 });
+  await titleOf(game, 1, title => title === 'dpr:1|w:640|h:360', 'devicePixelRatio 1 at 640x360', 15000);
+  const since = game.mark();
+  await sleep(500);
+  const got = frames(game, 1, 0);
+  assert.ok(got.length > 0);
+  for (const m of got) assert.deepStrictEqual([frameHeader(m).width, frameHeader(m).height], [640, 360]);
+  game.send(P.T.RESIZE, 1, { width: 320, height: 240 });
+  const f = await game.waitFor(m => m.type === P.T.FRAME && m.screenId === 1 && frameHeader(m).width !== 640, 8000, 'resized frame', since);
+  assert.deepStrictEqual(frameHeader(f), { width: 320, height: 240, x: 0, y: 0, w: 320, h: 240 });
+  assert.strictEqual(f.payload.length, 12 + 320 * 240 * 4);
+});
+
 test('CREATE/DESTROY churn reuses cleared partitions: flat memory, nothing carried over', { skip: SKIP || (process.platform !== 'linux' && 'needs /proc'), timeout: 180000 }, async t => {
   // Wave 1 made a new partition per SHARED CREATE; Electron never frees one, so the host grew by about
   // 0.7 MB per CREATE/DESTROY. Now partitions are pooled and cleared before reuse.
