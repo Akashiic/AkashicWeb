@@ -98,7 +98,15 @@ public enum ReasonCode {
     /** The engine install folder is not writable. */
     INSTALL_DIR_NOT_WRITABLE,
     /** An old engine folder is still in use by another process. */
-    ENGINE_IN_USE;
+    ENGINE_IN_USE,
+    // W3-0 (proposed by the host author, M1)
+    /**
+     * The host could not resolve the page's name and this PC reaches the web through a proxy: the proxy might reach
+     * it, but the host cannot check the address, so the page is refused (host blocked-url reason dns-via-proxy).
+     */
+    URL_DNS_VIA_PROXY,
+    /** The host could not read the site policy it was sent and blocks every page (host EVENT policy-error). */
+    POLICY_INVALID;
 
     public String langKey() {
         return "akashicweb.reason." + name().toLowerCase(java.util.Locale.ROOT);

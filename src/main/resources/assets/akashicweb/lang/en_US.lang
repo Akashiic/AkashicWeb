@@ -110,6 +110,8 @@ akashicweb.reason.upload_failed=Failed to draw the page. %s
 akashicweb.reason.texture_too_large=Resolution too large for this GPU. %s
 akashicweb.reason.install_dir_not_writable=The browser folder is not writable. %s
 akashicweb.reason.engine_in_use=Another Minecraft is using the browser engine (maybe another AkashicWeb version); close it, then press Repair. %s
+akashicweb.reason.url_dns_via_proxy=Could not check the site because this PC uses a proxy: %s
+akashicweb.reason.policy_invalid=The browser could not read the server's site rules, so every page is blocked. %s
 
 # Placeholder card on the screen
 akashicweb.placeholder.title=AkashicWeb

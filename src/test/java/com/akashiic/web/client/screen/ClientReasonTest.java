@@ -43,7 +43,8 @@ class ClientReasonTest {
     @Test
     void hostBlockedUrlReasonsMapToCodes() {
         assertEquals(ReasonCode.URL_DNS_FAILED, blocked("dns-failed", "navigate").failure);
-        assertEquals(ReasonCode.URL_DNS_FAILED, blocked("dns-via-proxy", "navigate").failure);
+        assertEquals(ReasonCode.URL_DNS_VIA_PROXY, blocked("dns-via-proxy", "navigate").failure);
+        assertEquals(ReasonCode.URL_DNS_VIA_PROXY, blocked("dns-via-proxy", "request-script").notice);
         assertEquals(ReasonCode.URL_INTERNAL, blocked("internal-ip", "response").failure);
         assertEquals(ReasonCode.URL_INTERNAL, blocked("internal-dns", "navigate").failure);
         assertEquals(ReasonCode.URL_INVALID, blocked("scheme", "navigate").failure);

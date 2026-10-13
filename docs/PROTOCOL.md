@@ -142,9 +142,9 @@ Screen key = `(dimension, x, y, z, side)` of the multiblock origin. `epoch` incr
 - Live rule: target lag = the largest known lag (the controller's `liveLagMs` and its lag measured on the follower's own timeline) + 0.5 s, never past the edge. When the two disagree by more than 20 s, followers steer on the lags alone. While the live edge is not yet known, the follower holds rate 1 with no seek.
 - A hello that follows a world unload (proxy transfer) resets the client clock; a re-sent hello (policy reload, kill switch) does not.
 - Host EVENT mapping:
-  - `blocked-url` reasons map to `URL_INVALID` / `URL_INTERNAL` / `URL_BLOCKED` / `URL_DNS_FAILED` / `POPUP_BLOCKED`.
+  - `blocked-url` reasons map to `URL_INVALID` / `URL_INTERNAL` / `URL_BLOCKED` / `URL_DNS_FAILED` / `URL_DNS_VIA_PROXY` (reason `dns-via-proxy`) / `POPUP_BLOCKED`.
   - `screen-limit` maps to `BROWSER_BUDGET` or `TEXTURE_TOO_LARGE` by reason, and `capture-error` to `CAPTURE_FAILED`.
   - A refusal of the screen's own page fails the screen. A link, redirect or sub-request refusal is only a notice to the driving player, at most one per screen and reason every 10 s.
   - A crashed page is recreated after 5 s, doubling up to 60 s.
-  - Host-level EVENTs (screen 0) go to the log and `/awdoctor`.
+  - Host-level EVENTs (screen 0) go to the log and `/awdoctor`. A `policy-error` (the host now blocks every page) also fails every screen that has a browser with `POLICY_INVALID`; the next navigation clears it.
 

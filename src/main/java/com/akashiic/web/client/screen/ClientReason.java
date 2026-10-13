@@ -22,8 +22,8 @@ import com.akashiic.web.common.ReasonCode;
  * <li>{@code renderer-gone} PAGE_CRASHED, {@code unresponsive} PAGE_UNRESPONSIVE (cleared by {@code responsive}),
  * {@code capture-error} CAPTURE_FAILED, {@code download-cancelled} and {@code permission-denied} notices.</li>
  * </ul>
- * Host-level EVENTs (screen 0, e.g. {@code policy-error}) never reach this mapper: ClientScreens logs them and lists
- * them in /awdoctor.
+ * Host-level EVENTs (screen 0, e.g. {@code policy-error}) never reach this mapper: ClientScreens logs them, lists
+ * them in /awdoctor and, for {@code policy-error}, fails every screen that has a browser with POLICY_INVALID.
  */
 public final class ClientReason {
 
@@ -135,10 +135,10 @@ public final class ClientReason {
             case "internal-ip":
                 return ReasonCode.URL_INTERNAL;
             case "dns-failed":
-                // The host could not resolve the name itself (it sits behind a proxy), so it could not check it either.
-                // M1 proposed a dedicated URL_DNS_VIA_PROXY code; until common has it, the DNS text is the closest.
-            case "dns-via-proxy":
                 return ReasonCode.URL_DNS_FAILED;
+            case "dns-via-proxy":
+                // The host could not resolve the name itself (it sits behind a proxy), so it could not check it either.
+                return ReasonCode.URL_DNS_VIA_PROXY;
             case "popup":
                 return ReasonCode.POPUP_BLOCKED;
             case "not-allowed":
