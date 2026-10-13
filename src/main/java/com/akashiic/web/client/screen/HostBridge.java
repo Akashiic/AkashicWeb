@@ -46,10 +46,11 @@ final class HostBridge implements HostListener {
         if (media != null) clientThread.execute(() -> screens.onHostMedia(screenId, media));
     }
 
+    /** Screen EVENTs and host-level ones (screen 0, e.g. policy-error); M2's two local EVENTs come the same way. */
     @Override
     public void onEvent(int screenId, String json) {
-        String kind = HostMessages.eventKind(json);
-        if (kind != null) clientThread.execute(() -> screens.onHostEvent(screenId, kind));
+        HostEvent event = HostMessages.event(json);
+        if (event != null) clientThread.execute(() -> screens.onHostEvent(screenId, event));
     }
 
     // onPcm stays the default no-op: OS audio mode never asks for PCM; SPATIAL is the ADR-008 stretch goal.

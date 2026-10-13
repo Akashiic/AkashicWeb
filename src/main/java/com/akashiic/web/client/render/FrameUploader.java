@@ -29,25 +29,43 @@ public final class FrameUploader {
     private static final Logger LOG = LogManager.getLogger(AkashicWeb.NAME);
     /** Log the first GL failure and then one in this many, so a broken driver does not flood the log. */
     private static final int LOG_EVERY = 200;
+    /** Consecutive frames at a size other than the requested one before the screen shows BAD_RESOLUTION. */
+    static final int WRONG_SIZE_LIMIT = 60;
 
     private final ClientScreens screens;
     private final LongSupplier timeMs;
     private final Supplier<TextureTarget> textures;
     private final IntSupplier maxTextureSize;
-    private final UploadBudget budget = new UploadBudget(UploadBudget.DEFAULT_BYTES_PER_FRAME);
+    private final UploadBudget budget;
+    private final UploadScope scope;
+    private boolean scopeEntered;
     private final UploadStats stats = new UploadStats();
 
     /** The game's uploader: GL textures, GL_MAX_TEXTURE_SIZE from the driver. */
     public FrameUploader(ClientScreens screens, LongSupplier timeMs) {
-        this(screens, timeMs, ScreenTexture::new, ScreenTexture::maxTextureSize);
+        this(
+            screens,
+            timeMs,
+            ScreenTexture::new,
+            ScreenTexture::maxTextureSize,
+            UploadBudget.DEFAULT_BYTES_PER_FRAME,
+            new UploadScope.UnpackBuffer());
     }
 
     FrameUploader(ClientScreens screens, LongSupplier timeMs, Supplier<TextureTarget> textures,
         IntSupplier maxTextureSize) {
+        this(screens, timeMs, textures, maxTextureSize, UploadBudget.DEFAULT_BYTES_PER_FRAME, UploadScope.NONE);
+    }
+
+    /** Tests: a small budget forces the skip-and-carry paths with small pages; the scope stands in for GL state. */
+    FrameUploader(ClientScreens screens, LongSupplier timeMs, Supplier<TextureTarget> textures,
+        IntSupplier maxTextureSize, long budgetBytesPerFrame, UploadScope scope) {
         this.screens = screens;
         this.timeMs = timeMs;
         this.textures = textures;
         this.maxTextureSize = maxTextureSize;
+        this.budget = new UploadBudget(budgetBytesPerFrame);
+        this.scope = scope;
     }
 
     public UploadStats stats() {
@@ -63,7 +81,14 @@ public final class FrameUploader {
         for (ClientScreen s : screens.all()) {
             if (s.hostScreenId() != 0) entries.add(new UploadBudget.Entry<>(s, s.uploadPriority(), s.skippedFrames));
         }
-        for (ClientScreen s : UploadBudget.order(entries)) uploadOne(s, host);
+        try {
+            for (ClientScreen s : UploadBudget.order(entries)) uploadOne(s, host);
+        } finally {
+            if (scopeEntered) {
+                scopeEntered = false;
+                scope.end();
+            }
+        }
     }
 
     private void uploadOne(ClientScreen s, BrowserHost host) {
@@ -109,11 +134,23 @@ public final class FrameUploader {
                 stats.recordDroppedSize();
                 s.carriedDamage = Rect.EMPTY; // the next frame at the new size reallocates and uploads in full
                 ring.release(slot);
+                // A few stale frames follow every resize; a page that keeps arriving at another size never shows,
+                // so after about two seconds of them the screen says so (once) instead of "Loading" forever.
+                if (++s.wrongSizeFrames == WRONG_SIZE_LIMIT) {
+                    String detail = slot.width + "x" + slot.height;
+                    s.onUploadFailure(ReasonCode.BAD_RESOLUTION, detail);
+                    LOG.warn(
+                        "AkashicWeb: {} paints {} but {}x{} was requested; frames are dropped",
+                        s.key,
+                        detail,
+                        s.pageWidth(),
+                        s.pageHeight());
+                }
                 return;
             case DROP_INVALID:
                 stats.recordDroppedInvalid();
                 if (slot.width > maxTexture || slot.height > maxTexture)
-                    s.onUploadFailure(ReasonCode.TEXTURE_TOO_LARGE);
+                    s.onUploadFailure(ReasonCode.TEXTURE_TOO_LARGE, slot.width + "x" + slot.height);
                 ring.release(slot);
                 return;
             default:
@@ -128,6 +165,10 @@ public final class FrameUploader {
         }
         long t0 = System.nanoTime();
         try {
+            if (!scopeEntered) {
+                scopeEntered = true; // set first: end() runs even if begin() throws half-way
+                scope.begin(); // once per frame, only when something is uploaded
+            }
             if (plan.kind == UploadPlan.Kind.ALLOCATE) {
                 if (s.texture == null) s.texture = textures.get();
                 s.texture.allocate(slot.width, slot.height);
@@ -136,6 +177,7 @@ public final class FrameUploader {
             stats.recordUpload(System.nanoTime() - t0, plan.bytes(), timeMs.getAsLong());
             s.carriedDamage = Rect.EMPTY;
             s.skippedFrames = 0;
+            s.wrongSizeFrames = 0;
             s.onFrameUploaded();
         } catch (RuntimeException e) {
             // Documented boundary (ADR-004 "On any exception, draw the placeholder"): the screen shows UPLOAD_FAILED

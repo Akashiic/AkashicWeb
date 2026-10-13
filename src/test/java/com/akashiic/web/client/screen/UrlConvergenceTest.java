@@ -37,6 +37,22 @@ class UrlConvergenceTest {
         assertFalse(UrlConvergence.shouldReport(server, null, true, false, SETTLED, 10_000, 0, false));
     }
 
+    /** Review low finding (security): a login callback must not reach the server log or the followers' browsers. */
+    @Test
+    void urlsCarryingCredentialsOrTooLongAreNeverReported() {
+        String server = "https://a.com/";
+        for (String login : new String[] { "https://a.com/cb?code=abc&state=1", "https://a.com/cb#access_token=x",
+            "https://a.com/?ID_TOKEN=x", "https://a.com/magic?login_token=1", "https://a.com/x?a=1&password=2" }) {
+            assertTrue(UrlConvergence.carriesCredentials(login), login);
+            assertFalse(UrlConvergence.shouldReport(server, login, true, false, SETTLED, 10_000, 0, false), login);
+        }
+        assertFalse(UrlConvergence.carriesCredentials("https://www.youtube.com/watch?v=abc&t=10"));
+        assertFalse(UrlConvergence.carriesCredentials("https://a.com/codes/token"), "path words are fine");
+        StringBuilder longUrl = new StringBuilder("https://a.com/?q=");
+        while (longUrl.length() <= UrlConvergence.MAX_REPORT_LENGTH) longUrl.append('x');
+        assertFalse(UrlConvergence.reportable(longUrl.toString()), "NetCodec would cut it into another URL");
+    }
+
     @Test
     void reportsAreRateLimited() {
         String server = "https://a.com/";

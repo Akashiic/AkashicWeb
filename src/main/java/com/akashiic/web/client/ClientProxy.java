@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.LongSupplier;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraftforge.client.ClientCommandHandler;
 import net.minecraftforge.common.MinecraftForge;
@@ -14,6 +15,7 @@ import org.lwjgl.input.Keyboard;
 import com.akashiic.web.AkashicWeb;
 import com.akashiic.web.client.gui.ClientNotices;
 import com.akashiic.web.client.gui.DoctorCommand;
+import com.akashiic.web.client.gui.InstallCommand;
 import com.akashiic.web.client.gui.LangKeys;
 import com.akashiic.web.client.net.ClientNetHooks;
 import com.akashiic.web.client.net.ClientTaskQueue;
@@ -23,7 +25,6 @@ import com.akashiic.web.client.render.ScreenRenderer;
 import com.akashiic.web.client.screen.BrowserBudget;
 import com.akashiic.web.client.screen.ClientEvents;
 import com.akashiic.web.client.screen.ClientScreens;
-import com.akashiic.web.client.screen.ClientServices;
 import com.akashiic.web.client.screen.HostAccess;
 import com.akashiic.web.client.screen.ScreenInteraction;
 import com.akashiic.web.client.screen.SystemMemory;
@@ -43,6 +44,7 @@ import cpw.mods.fml.common.event.FMLPreInitializationEvent;
  */
 public class ClientProxy extends CommonProxy {
 
+    private ClientWiring wiring;
     private ClientScreens screens;
     private ClientNetHooks hooks;
     private FrameUploader uploader;
@@ -94,8 +96,18 @@ public class ClientProxy extends CommonProxy {
             .bus()
             .register(new ClientEvents(screens, uploader, keyboardKey, addressKey));
         MinecraftForge.EVENT_BUS.register(new WorldEvents(screens, renderer));
-        MinecraftForge.EVENT_BUS.register(new ScreenInteraction(screens));
+        ScreenInteraction pointer = new ScreenInteraction(screens);
+        MinecraftForge.EVENT_BUS.register(pointer);
+        FMLCommonHandler.instance()
+            .bus()
+            .register(pointer.frameListener());
         ClientCommandHandler.instance.registerCommand(new DoctorCommand(this::diagnostics));
+        if (wiring != null) {
+            FMLCommonHandler.instance()
+                .bus()
+                .register(wiring);
+            ClientCommandHandler.instance.registerCommand(new InstallCommand(wiring::openConsentLater));
+        }
     }
 
     @Override
@@ -104,21 +116,12 @@ public class ClientProxy extends CommonProxy {
     }
 
     /**
-     * Integration point for the other client modules (docs/CONTRACTS.md): wire M2's host and M3's engine locator and
-     * consent GUI here, e.g.
-     *
-     * <pre>
-     * EngineLocator locator = new ...; // M3
-     * ClientServices.setEngineLocator(locator);
-     * ClientServices.setHostFactory(() -> new BrowserHostImpl(locator, ...)); // M2, started lazily
-     * ClientServices.setConsentOpener(() -> ...); // M3's consent GUI
-     * </pre>
-     *
-     * Until then every screen shows HOST_UNAVAILABLE and the client plays normally.
+     * Integration point for the other client modules (docs/CONTRACTS.md): {@link ClientWiring} builds M3's engine
+     * locator for this game folder, M2's host factory (started lazily, once the engine is READY) and the install
+     * prompt. If wiring fails, every screen shows HOST_UNAVAILABLE and the client plays normally.
      */
     protected void wireServices() {
-        if (ClientServices.engineLocator() == null)
-            AkashicWeb.LOG.warn("AkashicWeb: no engine locator / browser host wired; screens show placeholders");
+        wiring = ClientWiring.install(Minecraft.getMinecraft().mcDataDir);
     }
 
     /** Lines for /awdoctor (and for M4's /web doctor if it wants the client view). */
@@ -126,6 +129,8 @@ public class ClientProxy extends CommonProxy {
         long now = monotonicMs();
         List<String> lines = new ArrayList<>();
         lines.add("AkashicWeb client doctor");
+        if (wiring != null) lines.addAll(wiring.diagnostics());
+        else lines.add("engine and browser host: not wired (see the log)");
         if (screens == null) return lines;
         lines.addAll(screens.diagnostics(now));
         lines.add(

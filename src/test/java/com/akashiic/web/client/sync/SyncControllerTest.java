@@ -204,6 +204,65 @@ class SyncControllerTest {
         assertEquals(Kind.SEEK, c.update(server(109.0), SERVER_NOW, live(100.0, 10.0, later), later, Double.NaN).kind);
     }
 
+    private static MediaClock liveServer(double mediaTime, int liveLagMs) {
+        return new MediaClock(1, mediaTime, 1f, false, SERVER_STAMP, true, liveLagMs);
+    }
+
+    /** D-016: S2CMediaClock carries the controller's own lag behind its edge; it counts as an in-range lag. */
+    @Test
+    void theControllersReportedLagSetsTheTargetWhenItIsTheLargest() {
+        MediaClock server = liveServer(101.0, 3_000); // 1 s behind our edge by position, 3 s by its own report
+        SyncDecision d = new SyncController().update(server, SERVER_NOW, live(101.0, 1.0), 0, server.liveLagSeconds());
+        // Our edge 102, target lag 3.0 + 0.5 -> target 98.5: we steer back (rate < 1), never forward past the edge.
+        assertEquals(98.5, d.command.targetMediaTime, 1e-9);
+        assertTrue(d.command.rate < 1.0f);
+        assertEquals(3.0, server.liveLagSeconds(), 1e-9);
+        assertTrue(Double.isNaN(new MediaClock(1, 0, 1f, false, 0, false, 500).liveLagSeconds()), "VOD: no lag");
+        assertTrue(Double.isNaN(liveServer(0, -1).liveLagSeconds()), "garbage from the wire: unknown");
+    }
+
+    /** ADR-012 fallback: when live currentTime is not comparable across clients, steer on lags alone. */
+    @Test
+    void incomparableLiveTimelinesSteerOnTheReportedLagInsteadOfSeekingFar() {
+        // The controller's player counts from 10 s, ours from 100 s: by position it is 92 s behind our edge.
+        MediaClock server = liveServer(10.0, 1_000);
+        SyncController c = new SyncController();
+        SyncDecision d = c.update(server, SERVER_NOW, live(100.0, 2.0), 0, server.liveLagSeconds());
+        assertTrue(d.kind != Kind.SEEK, "no 90 s jump backwards: " + d);
+        assertEquals(100.5, d.command.targetMediaTime, 1e-9, "1.0 s reported lag + 0.5 s behind our edge (102)");
+        assertFalse(SyncController.comparableTimelines(92.0, 1.0));
+        assertTrue(SyncController.comparableTimelines(2.0, 1.0));
+        assertTrue(SyncController.comparableTimelines(92.0, Double.NaN), "without a report we must assume so");
+    }
+
+    @Test
+    void aLiveOurPlayerDoesNotKnowYetPlaysAtNormalSpeed() {
+        SyncDecision d = new SyncController().update(liveServer(500.0, 2_000), SERVER_NOW, vod(10.0), 0, 2.0);
+        assertEquals(Kind.LIVE_EDGE_UNKNOWN, d.kind);
+        assertEquals(1.0f, d.command.rate);
+        assertFalse(d.command.seek, "a VOD-style seek to 500 s could run past the live edge");
+        assertTrue(d.live);
+    }
+
+    /** Review medium finding (ADR-012 item 6): the follower's error is at least measured on this client. */
+    @Test
+    void syncStatsKeepTheLastMinuteOfAbsoluteErrors() {
+        SyncStats s = new SyncStats(240);
+        assertTrue(Double.isNaN(s.quantile(0.95)));
+        assertEquals("err n=0", s.toString());
+        for (int i = 1; i <= 100; i++) s.add((i % 2 == 0 ? 1 : -1) * i / 1000.0); // 1..100 ms, both signs
+        s.add(Double.NaN);
+        assertEquals(100, s.count());
+        assertEquals(0.050, s.quantile(0.5), 1e-9);
+        assertEquals(0.095, s.quantile(0.95), 1e-9);
+        assertEquals("err p50=50ms p95=95ms n=100", s.toString());
+        for (int i = 0; i < 240; i++) s.add(2.0);
+        assertEquals(240, s.count(), "a sliding window");
+        assertEquals(2.0, s.quantile(0.5), 1e-9);
+        s.reset();
+        assertEquals(0, s.count());
+    }
+
     @Test
     void livePauseIsFollowedWithoutSeeking() {
         MediaClock paused = new MediaClock(1, 50, 1f, true, SERVER_STAMP);

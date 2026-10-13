@@ -9,6 +9,7 @@ import com.akashiic.web.client.sync.MediaClock;
 import com.akashiic.web.client.sync.MediaSampler;
 import com.akashiic.web.client.sync.SyncController;
 import com.akashiic.web.client.sync.SyncDecision;
+import com.akashiic.web.client.sync.SyncStats;
 import com.akashiic.web.common.ReasonCode;
 import com.akashiic.web.common.ScreenKey;
 import com.akashiic.web.common.ScreenState;
@@ -35,21 +36,51 @@ public final class ClientScreen {
 
     // Sync
     final SyncController sync = new SyncController();
+    /** The last minute of follower sync errors, for /awdoctor (ADR-012 G4 measured on this client). */
+    final SyncStats syncStats = new SyncStats(240);
     final MediaSampler sampler = new MediaSampler();
     MediaClock mediaClock;
     LocalMedia localMedia;
     SyncCommand lastSyncSent;
-    long lastSyncEvalMs;
+    long lastSyncEvalMs = NEVER;
     SyncDecision lastDecision = SyncDecision.WAITING;
     boolean wasController;
+    /**
+     * "Long ago" for the time stamps below: the monotonic clock's origin is arbitrary (System.nanoTime may even be
+     * negative), so 0 must not mean "never". Far enough from Long.MIN_VALUE that {@code now - NEVER} cannot overflow.
+     */
+    static final long NEVER = Long.MIN_VALUE / 4;
+
     /** Last C2SControl take sent for this screen (D-016 keepalive while the controller interacts). */
-    long lastTakeMs;
+    long lastTakeMs = NEVER;
+    long lastReleaseMs = NEVER;
+    /** The keyboard was closed: release the lock at this time unless the screen is used again (0 = not due). */
+    long leaveAtMs;
+    /** Until then our take of a free screen is pending and our input is applied optimistically (D-016). */
+    long takePendingUntilMs;
+    /** Input was applied while the server had not confirmed us as the controller. */
+    boolean optimistic;
+    /** Click count of the last press, reused by its release. */
+    int pressCount;
+    /** Page pixel of the last pointer move sent, so the crosshair only sends a move when it changes. */
+    int lastPointerX = -1;
+    int lastPointerY = -1;
 
     // Page
     PageState page = PageState.EMPTY;
     ReasonCode failure;
+    /** Detail argument of {@link #failure} for its reason text ("" when none). */
+    String failureDetail = "";
+    /** Renderer crashes of the current page (reset by a new epoch) and when the browser is recreated (0 = not due). */
+    int crashes;
+    long recreateAtMs;
     boolean reportedUrl;
     long lastUrlReportMs;
+    /** The page URL this controller reported last (C2SSetUrl), until the server's next URL arrives; null if none. */
+    String lastReportedUrl;
+    /** The last page URL considered for a report, and in which epoch: each page is reported once per epoch. */
+    String attemptedUrl;
+    int attemptedEpoch;
 
     /** prune() did not find the tile at its last pass, since {@link #missingSinceMs}. */
     boolean missing;
@@ -57,6 +88,8 @@ public final class ClientScreen {
 
     // View, recomputed every tick
     double distance = Double.POSITIVE_INFINITY;
+    /** From the eye to the origin block's centre, as vanilla measures the tile's render distance. */
+    double originDistance = Double.POSITIVE_INFINITY;
     boolean inView;
     double priority;
     boolean granted;
@@ -67,6 +100,8 @@ public final class ClientScreen {
     public FrameSlot heldSlot;
     public Rect carriedDamage = Rect.EMPTY;
     public int skippedFrames;
+    /** Consecutive frames dropped because their size is not the requested one. */
+    public int wrongSizeFrames;
 
     ClientScreen(ScreenState state) {
         this.key = state.key;
@@ -121,32 +156,43 @@ public final class ClientScreen {
     public void onFrameUploaded() {
         hasFrame = true;
         if (failure == ReasonCode.UPLOAD_FAILED || failure == ReasonCode.PAGE_CRASHED
-            || failure == ReasonCode.PAGE_UNRESPONSIVE) failure = null;
+            || failure == ReasonCode.PAGE_UNRESPONSIVE
+            || failure == ReasonCode.BAD_RESOLUTION) clearFailure();
     }
 
     /** Called by FrameUploader when GL refused the frame or the page is too large for this GPU. */
     public void onUploadFailure(ReasonCode reason) {
-        failure = reason;
+        onUploadFailure(reason, "");
     }
 
+    /** As {@link #onUploadFailure(ReasonCode)} with the detail shown in the reason text (e.g. the page size). */
+    public void onUploadFailure(ReasonCode reason, String detail) {
+        fail(reason, detail);
+    }
+
+    void fail(ReasonCode reason, String detail) {
+        failure = reason;
+        failureDetail = detail == null ? "" : detail;
+    }
+
+    void clearFailure() {
+        failure = null;
+        failureDetail = "";
+    }
+
+    public ReasonCode failure() {
+        return failure;
+    }
+
+    /**
+     * M4's deep copy (every field, so members added later, like friendNames and controllerName, are never dropped
+     * here), with null strings made empty: the GUIs draw them.
+     */
     static ScreenState copyOf(ScreenState s) {
-        ScreenState c = new ScreenState();
-        c.key = s.key;
-        c.widthBlocks = s.widthBlocks;
-        c.heightBlocks = s.heightBlocks;
-        c.resolutionW = s.resolutionW;
-        c.resolutionH = s.resolutionH;
-        c.rotation = s.rotation;
-        c.url = s.url == null ? "" : s.url;
-        c.epoch = s.epoch;
-        c.owner = s.owner;
-        c.ownerName = s.ownerName == null ? "" : s.ownerName;
-        if (s.friends != null) c.friends.addAll(s.friends);
-        c.friendRights = s.friendRights;
-        c.otherRights = s.otherRights;
-        c.locked = s.locked;
-        c.controller = s.controller;
-        c.mode = s.mode;
+        ScreenState c = s.copy();
+        if (c.url == null) c.url = "";
+        if (c.ownerName == null) c.ownerName = "";
+        if (c.controllerName == null) c.controllerName = "";
         return c;
     }
 }

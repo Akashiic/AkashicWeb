@@ -9,6 +9,7 @@ import org.lwjgl.input.Keyboard;
 
 import com.akashiic.web.client.screen.ClientScreen;
 import com.akashiic.web.client.screen.ClientScreens;
+import com.akashiic.web.client.screen.LocalRights;
 import com.akashiic.web.common.Rights;
 import com.akashiic.web.common.ScreenKey;
 import com.akashiic.web.common.ScreenMode;
@@ -192,13 +193,15 @@ public final class AddressBarGui extends GuiScreen {
     }
 
     private String controllerLine(ScreenState st) {
+        return controllerLine(screens, st);
+    }
+
+    /** "Controlled by: <name>", with the server's controllerName (D-016); "you" by the S2CHello UUID. */
+    static String controllerLine(ClientScreens screens, ScreenState st) {
         String who;
         if (st.controller == null) who = I18n.format(LangKeys.GUI_NOBODY);
-        else if (st.controller.equals(screens.player())) who = I18n.format(LangKeys.GUI_YOU);
-        else if (st.controller.equals(st.owner) && !st.ownerName.isEmpty()) who = ClientNotices.sanitize(st.ownerName);
-        // ScreenState carries no controller name (reported to M4); a UUID prefix still tells players apart.
-        else who = st.controller.toString()
-            .substring(0, 8);
+        else if (LocalRights.isController(st, screens.player())) who = I18n.format(LangKeys.GUI_YOU);
+        else who = LocalRights.controllerDisplayName(st);
         return I18n.format(LangKeys.GUI_CONTROLLER, who);
     }
 

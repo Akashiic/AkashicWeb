@@ -29,6 +29,11 @@ public final class SyncController {
     public static final double LIVE_SEEK_S = 3.0;
 
     public static final double LIVE_MARGIN_S = 0.5;
+    /**
+     * Two estimates of the controller's live lag (ours, from positions, and its own report) further apart than this
+     * mean the clients' live timelines are not comparable. INFERRED: live buffers differ by seconds, not tens of them.
+     */
+    public static final double LIVE_COMPARABLE_S = 20.0;
     public static final float MIN_RATE = 0.95f;
     public static final float MAX_RATE = 1.05f;
     /** rate = 1 + error / horizon: a 100 ms error is closed in about 2 s at 1.05. */
@@ -50,8 +55,8 @@ public final class SyncController {
      * @param serverNowMs  server time now (NaN while the clock is not synced)
      * @param local        latest sample from our own browser, or null
      * @param nowMs        client monotonic time
-     * @param knownMaxLagS largest live lag reported for clients in range (seconds), or NaN when unknown; only the
-     *                     controller's lag is known locally today
+     * @param knownMaxLagS largest live lag reported for clients in range (seconds), or NaN when unknown: the
+     *                     controller's own lag from S2CMediaClock.liveLagMs ({@link MediaClock#liveLagSeconds()})
      */
     public SyncDecision update(MediaClock server, double serverNowMs, LocalMedia local, long nowMs,
         double knownMaxLagS) {
@@ -70,6 +75,17 @@ public final class SyncController {
                 local.live);
         }
         double controllerNow = server.mediaTimeAt(serverNowMs);
+        if (server.live && !local.live) {
+            // The controller plays a live but our player reports no live edge yet (still loading, or it shows the
+            // stream as VOD): steering or seeking toward the controller's position could run past an edge we cannot
+            // see. Play at normal speed until our player knows its edge.
+            steering = false;
+            return new SyncDecision(
+                SyncDecision.Kind.LIVE_EDGE_UNKNOWN,
+                new SyncCommand(localNow, 1.0f, server.paused, false),
+                Double.NaN,
+                true);
+        }
         return local.live ? live(server, controllerNow, local, localNow, nowMs, knownMaxLagS)
             : vod(server, controllerNow, local, localNow, nowMs);
     }
@@ -88,7 +104,13 @@ public final class SyncController {
     private SyncDecision live(MediaClock server, double controllerNow, LocalMedia local, double localNow, long nowMs,
         double knownMaxLagS) {
         double edge = local.liveEdgeAt(nowMs);
-        double targetLag = liveTargetLag(edge - controllerNow, knownMaxLagS);
+        double controllerLag = edge - controllerNow; // the controller's lag measured on our own timeline
+        if (!comparableTimelines(controllerLag, knownMaxLagS)) {
+            // ADR-012 fallback: live currentTime is not comparable across clients (the two estimates of the
+            // controller's lag disagree by more than any buffer could), so steer on lags alone.
+            controllerLag = Double.NaN;
+        }
+        double targetLag = liveTargetLag(controllerLag, knownMaxLagS);
         double target = edge - targetLag;
         double error = target - localNow;
         if (server.paused) return paused(localNow, 0, true); // follow the pause; never seek on a live
@@ -99,9 +121,21 @@ public final class SyncController {
     }
 
     /**
-     * Live rule: every client aims at the same lag behind its own edge, the largest lag in range plus a margin, so no
-     * client has to run ahead of what it can buffer. Today the only in-range lag known locally is the controller's,
-     * measured against our own edge (assumes comparable currentTime across clients; checked at the sync spike).
+     * True when our live timeline and the controller's can be compared: without the controller's own report of its
+     * lag (S2CMediaClock.liveLagMs) we have to assume so; with it, the lag measured on our timeline must agree with the
+     * reported one within {@link #LIVE_COMPARABLE_S}.
+     */
+    static boolean comparableTimelines(double controllerLagOnOurTimelineS, double reportedLagS) {
+        if (Double.isNaN(controllerLagOnOurTimelineS)) return false;
+        if (Double.isNaN(reportedLagS)) return true;
+        return Math.abs(controllerLagOnOurTimelineS - reportedLagS) <= LIVE_COMPARABLE_S;
+    }
+
+    /**
+     * Live rule (ADR-012 item 5): every client aims at the same lag behind its own edge, the largest lag in range plus
+     * a margin, so no client has to run ahead of what it can buffer, and never forward past the edge. The in-range
+     * lags known locally are the controller's: as it reports it (S2CMediaClock.liveLagMs, passed as
+     * {@code knownMaxLagS}) and as measured against our own edge when the timelines are comparable.
      */
     static double liveTargetLag(double controllerLagS, double knownMaxLagS) {
         double maxLag = Double.isNaN(controllerLagS) ? 0 : Math.max(0, controllerLagS);

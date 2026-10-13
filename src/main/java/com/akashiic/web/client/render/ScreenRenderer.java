@@ -154,20 +154,15 @@ public final class ScreenRenderer extends TileEntitySpecialRenderer {
         double lineH = Math.max(0.06, Math.min(0.5, g.quadHeight / 7.0));
         double scale = lineH / 10.0; // 9 px glyphs + 1 px spacing per line
         int widthPx = (int) Math.max(20, g.quadWidth * 0.9 / scale);
+        int maxLines = Math.max(1, (int) (g.quadHeight * 0.9 / lineH));
+        List<String> lines = c.layout(fr, widthPx, maxLines, overFrame);
         if (overFrame) {
             double bandH = lineH * 1.6;
             // Between the page (z 0) and the text: in front of the frame, so no z-fighting with it.
             solidQuad(0, g.quadHeight - bandH, g.quadWidth, g.quadHeight, TEXT_LIFT / 2, BANNER_COLOR);
-            String line = fr.trimStringToWidth(c.main, widthPx);
-            drawLines(fr, Collections.singletonList(line), g, scale, g.quadHeight - bandH / 2, TEXT_COLOR);
+            drawLines(fr, lines, g, scale, g.quadHeight - bandH / 2, TEXT_COLOR);
             return;
         }
-        List<String> lines = new ArrayList<>();
-        lines.add(c.title);
-        if (!c.main.isEmpty()) lines.addAll(wrap(fr, c.main, widthPx));
-        if (c.detail != null && !c.detail.isEmpty()) lines.addAll(wrap(fr, c.detail, widthPx));
-        int maxLines = Math.max(1, (int) (g.quadHeight * 0.9 / lineH));
-        if (lines.size() > maxLines) lines = lines.subList(0, maxLines);
         drawLines(fr, lines, g, scale, g.quadHeight / 2, TEXT_COLOR);
     }
 
@@ -195,19 +190,45 @@ public final class ScreenRenderer extends TileEntitySpecialRenderer {
         }
     }
 
-    /** Translations are looked up once per placeholder change, not every frame. */
+    /**
+     * Translations are looked up once per placeholder change, and the wrapped lines once per width, not every frame
+     * (wrapping walks every glyph; review low finding on per-frame TESR cost).
+     */
     private static final class CachedText {
 
         final Placeholder placeholder;
         final String title;
         final String main;
         final String detail;
+        private int laidOutWidth = -1;
+        private int laidOutMaxLines = -1;
+        private boolean laidOutBanner;
+        private List<String> lines = Collections.emptyList();
 
         CachedText(Placeholder p) {
             this.placeholder = p;
             this.title = I18n.format(LangKeys.TITLE);
             this.main = LangKeys.TITLE.equals(p.key) ? "" : I18n.format(p.key, p.args);
-            this.detail = p.detailKey == null ? null : I18n.format(p.detailKey);
+            // Reason keys take exactly one argument (Placeholder): never format them bare ("Format error").
+            this.detail = p.detailKey == null ? null : I18n.format(p.detailKey, p.detailArgs);
+        }
+
+        List<String> layout(FontRenderer fr, int widthPx, int maxLines, boolean banner) {
+            if (widthPx == laidOutWidth && maxLines == laidOutMaxLines && banner == laidOutBanner) return lines;
+            List<String> out = new ArrayList<>();
+            if (banner) {
+                out.add(fr.trimStringToWidth(main, widthPx));
+            } else {
+                out.add(title);
+                if (!main.isEmpty()) out.addAll(wrap(fr, main, widthPx));
+                if (detail != null && !detail.isEmpty()) out.addAll(wrap(fr, detail, widthPx));
+                if (out.size() > maxLines) out = new ArrayList<>(out.subList(0, maxLines));
+            }
+            lines = Collections.unmodifiableList(out);
+            laidOutWidth = widthPx;
+            laidOutMaxLines = maxLines;
+            laidOutBanner = banner;
+            return lines;
         }
     }
 

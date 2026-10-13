@@ -2,7 +2,11 @@ package com.akashiic.web.client.screen;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * URL authority stays on the server (ADR-012): when the controller's own browser navigates by itself (a link, an SPA
@@ -29,7 +33,7 @@ public final class UrlConvergence {
      */
     public static boolean shouldReport(String serverUrl, String pageUrl, boolean isController, boolean loading,
         long msSinceNavigate, long nowMs, long lastReportMs, boolean reportedBefore) {
-        if (!isController || loading || pageUrl == null || !isWeb(pageUrl)) return false;
+        if (!isController || loading || !reportable(pageUrl)) return false;
         if (msSinceNavigate < NAVIGATE_SETTLE_MS) return false;
         if (sameDocument(serverUrl, pageUrl)) return false;
         return !reportedBefore || nowMs - lastReportMs >= MIN_REPORT_INTERVAL_MS;
@@ -74,6 +78,56 @@ public final class UrlConvergence {
         } catch (URISyntaxException e) {
             return s; // not a URI we understand: compare verbatim
         }
+    }
+
+    /**
+     * Query or fragment parameter names that carry a login: an OAuth code or token, a magic link, a password. A URL
+     * with one is never reported: the server would broadcast it to every follower (whose browser would load it and
+     * could be logged into the controller's account) and write it to the audit log (review low finding).
+     */
+    static final Set<String> CREDENTIAL_PARAMS = Collections.unmodifiableSet(
+        new HashSet<>(
+            Arrays.asList(
+                "code",
+                "token",
+                "access_token",
+                "id_token",
+                "refresh_token",
+                "auth",
+                "password",
+                "passwd",
+                "pwd",
+                "session",
+                "sessionid",
+                "session_id",
+                "oauth_token",
+                "oauth_verifier",
+                "ticket",
+                "otp",
+                "login_token",
+                "magic_link")));
+
+    /** A URL the controller may report: a web URL the server can store (≤ 2048), without credentials in it. */
+    static boolean reportable(String url) {
+        return url != null && isWeb(url) && url.length() <= MAX_REPORT_LENGTH && !carriesCredentials(url);
+    }
+
+    /** NetCodec cuts strings at 2048 characters; a cut URL would be a different page. */
+    static final int MAX_REPORT_LENGTH = 2048;
+
+    static boolean carriesCredentials(String url) {
+        int q = url.indexOf('?');
+        int h = url.indexOf('#');
+        if (q < 0 && h < 0) return false;
+        int start = q >= 0 ? q + 1 : h + 1;
+        for (String part : url.substring(start)
+            .split("[&#;?]")) {
+            int eq = part.indexOf('=');
+            String name = (eq >= 0 ? part.substring(0, eq) : part).trim()
+                .toLowerCase(Locale.ROOT);
+            if (CREDENTIAL_PARAMS.contains(name)) return true;
+        }
+        return false;
     }
 
     static boolean isWeb(String url) {

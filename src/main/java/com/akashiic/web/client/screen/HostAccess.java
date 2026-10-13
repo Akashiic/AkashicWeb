@@ -22,7 +22,17 @@ public interface HostAccess {
     /** Null when no EngineLocator is wired. */
     EngineState engine();
 
+    /** The player chose "Not now" on the install prompt this session. */
+    default boolean consentPostponed() {
+        return false;
+    }
+
     HostAccess SERVICES = new HostAccess() {
+
+        @Override
+        public boolean consentPostponed() {
+            return ClientServices.consentPostponed();
+        }
 
         @Override
         public boolean available() {

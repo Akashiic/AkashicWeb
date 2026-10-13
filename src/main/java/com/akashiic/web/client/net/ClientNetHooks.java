@@ -12,10 +12,14 @@ import com.akashiic.web.common.SitePolicy;
 import com.akashiic.web.common.net.ClientHooks;
 
 /**
- * M5's side of the network seam (docs/CONTRACTS.md): M4's packet handlers call this from the Netty thread and its tile
- * entity from the client thread; everything hops to the client thread through {@link ClientTaskQueue} before touching
- * screens. The one exception is the clock pong, which is stamped and fed to the thread-safe ServerClock right here on
- * the Netty thread, so the queue delay does not bias the clock offset (ADR-012 amendment: no Netty mixin).
+ * M5's side of the network seam (docs/CONTRACTS.md). In 1.7.10 (and on Crucible) M4's packet handlers run on the
+ * client thread: FMLProxyPacket has no priority override, so NetworkManager queues each packet until
+ * {@code processReceivedPackets} in the client tick, and the tile entity calls from the client thread too. Every
+ * call still goes through {@link ClientTaskQueue} before touching screens: it keeps packets in order with the host
+ * callbacks that hop the same way, and stays correct should a handler ever run on the Netty thread. The one
+ * exception is the clock pong, stamped and fed to the thread-safe ServerClock right here, so the queue adds no delay
+ * to the offset; the pong was already held until the tick (up to 50 ms, the handler-thread bias ADR-012's amendment
+ * budgets for, since there is no Netty mixin).
  */
 public final class ClientNetHooks implements ClientHooks {
 
@@ -57,9 +61,8 @@ public final class ClientNetHooks implements ClientHooks {
     @Override
     public void onMediaClock(ScreenKey key, int epoch, double mediaTime, float rate, boolean paused, long serverTimeMs,
         boolean live, int liveLagMs) {
-        // live and liveLagMs (D-016) are not used yet: the followers' live-edge rule will take them (M5 follow-up).
-        if (key != null)
-            clientThread.execute(() -> screens.onMediaClock(key, epoch, mediaTime, rate, paused, serverTimeMs));
+        if (key != null) clientThread
+            .execute(() -> screens.onMediaClock(key, epoch, mediaTime, rate, paused, serverTimeMs, live, liveLagMs));
     }
 
     @Override

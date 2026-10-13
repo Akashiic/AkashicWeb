@@ -19,7 +19,9 @@ public final class SyncDecision {
         /** Error corrected with playbackRate within 0.95..1.05. */
         STEERING,
         /** Error too large to steer: jump to the target. */
-        SEEK
+        SEEK,
+        /** The controller plays a live and our player knows no live edge yet: rate 1, never a seek. */
+        LIVE_EDGE_UNKNOWN
     }
 
     public static final SyncDecision WAITING = new SyncDecision(Kind.WAITING, null, Double.NaN, false);

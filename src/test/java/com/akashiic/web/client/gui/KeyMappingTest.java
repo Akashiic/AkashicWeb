@@ -12,6 +12,7 @@ class KeyMappingTest {
 
     @Test
     void copiedKeyCodesMatchLwjgl2() {
+        assertEquals(Keyboard.KEY_NONE, KeyMapping.KEY_NONE);
         assertEquals(Keyboard.KEY_ESCAPE, KeyMapping.KEY_ESCAPE);
         assertEquals(Keyboard.KEY_BACK, KeyMapping.KEY_BACK);
         assertEquals(Keyboard.KEY_TAB, KeyMapping.KEY_TAB);

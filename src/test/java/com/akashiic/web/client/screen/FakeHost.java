@@ -75,6 +75,7 @@ public final class FakeHost implements BrowserHost, HostAccess {
     @Override
     public void destroyScreen(int screenId) {
         calls.add("destroy " + screenId);
+        rings.remove(screenId); // like M2: a destroyed id has no frame ring any more
     }
 
     @Override

@@ -8,8 +8,9 @@ import com.akashiic.web.common.ReasonCode;
 /**
  * Decides what a screen shows when it cannot show a live page, in a fixed precedence: server decisions first (the
  * player cannot fix them), then the engine install, then the host process, then this screen's own state. A client
- * without the browser still joins and plays; it just sees these cards (AGENTS.md "Failure is never silent"). Pure;
- * tested in PlaceholderModelTest.
+ * without the browser still joins and plays; it just sees these cards (AGENTS.md "Failure is never silent"). Every
+ * reason is built with exactly one detail argument ({@link Placeholder}). Pure; tested in PlaceholderModelTest and
+ * PlaceholderTextTest.
  */
 public final class PlaceholderModel {
 
@@ -30,8 +31,12 @@ public final class PlaceholderModel {
         public boolean painting;
         /** This screen's own failure (upload, texture size, page crash), or null. */
         public ReasonCode failure;
+        /** The failure's detail argument (a host name, a size), "" when there is none. */
+        public String failureDetail = "";
 
         public boolean hasUrl;
+        /** The player chose "Not now" on the install prompt this session: the hint names /awinstall instead. */
+        public boolean consentPostponed;
     }
 
     private PlaceholderModel() {}
@@ -40,31 +45,31 @@ public final class PlaceholderModel {
     public static Placeholder resolve(Inputs in) {
         ServerSession s = in.session;
         if (s != null && s.helloReceived() && !s.protocolOk())
-            return Placeholder.card(LangKeys.TITLE, ReasonCode.PROTOCOL_MISMATCH.langKey());
-        if (s != null && s.killSwitch())
-            return Placeholder.card(LangKeys.TITLE, ReasonCode.DISABLED_BY_SERVER.langKey());
+            return Placeholder.reasonCard(ReasonCode.PROTOCOL_MISMATCH, "");
+        if (s != null && s.killSwitch()) return Placeholder.reasonCard(ReasonCode.DISABLED_BY_SERVER, "");
         if (s == null || !s.helloReceived()) return Placeholder.card(LangKeys.WAITING_SERVER);
 
-        Placeholder engine = engine(in.engine);
+        Placeholder engine = engine(in.engine, in.consentPostponed);
         if (engine != null) return engine;
 
-        if (!in.hostAvailable) return Placeholder.card(LangKeys.TITLE, ReasonCode.HOST_UNAVAILABLE.langKey());
+        if (!in.hostAvailable) return Placeholder.reasonCard(ReasonCode.HOST_UNAVAILABLE, "");
         if (in.hostStatus != null && in.hostStatus.kind != HostStatus.Kind.READY
             && in.hostStatus.kind != HostStatus.Kind.STARTING) {
-            return Placeholder.card(LangKeys.TITLE, in.hostStatus.reason.langKey());
+            return Placeholder.reasonCard(in.hostStatus.reason, "");
         }
 
+        // A screen without a page (freshly formed, or cleared by an admin) has no browser by design: no "get closer".
+        if (!in.hasUrl) return Placeholder.card(LangKeys.NO_URL);
         if (in.failure != null) {
-            return in.hasFrame ? new Placeholder(in.failure.langKey(), null, null, true)
-                : Placeholder.card(LangKeys.TITLE, in.failure.langKey());
+            return in.hasFrame ? Placeholder.reasonBanner(in.failure, in.failureDetail)
+                : Placeholder.reasonCard(in.failure, in.failureDetail);
         }
         if (!in.granted && !in.browserLive) {
             // Budget or range: keep the last frame with "aproxime-se" if we have one.
-            return in.hasFrame ? Placeholder.banner(ReasonCode.BROWSER_BUDGET.langKey())
-                : Placeholder.card(LangKeys.TITLE, ReasonCode.BROWSER_BUDGET.langKey());
+            return in.hasFrame ? Placeholder.reasonBanner(ReasonCode.BROWSER_BUDGET, "")
+                : Placeholder.reasonCard(ReasonCode.BROWSER_BUDGET, "");
         }
         if (!in.hasFrame) {
-            if (!in.hasUrl) return Placeholder.card(LangKeys.NO_URL);
             if (in.hostStatus == null || in.hostStatus.kind == HostStatus.Kind.STARTING)
                 return Placeholder.card(LangKeys.STARTING);
             return Placeholder.card(LangKeys.LOADING);
@@ -72,21 +77,23 @@ public final class PlaceholderModel {
         return null;
     }
 
-    private static Placeholder engine(EngineState e) {
-        if (e == null) return Placeholder.card(LangKeys.TITLE, ReasonCode.HOST_UNAVAILABLE.langKey());
+    private static Placeholder engine(EngineState e, boolean consentPostponed) {
+        if (e == null) return Placeholder.reasonCard(ReasonCode.HOST_UNAVAILABLE, "");
         switch (e.kind) {
             case READY:
                 return null;
             case ABSENT:
                 return Placeholder.card(LangKeys.ENGINE_ABSENT);
             case CONSENT_NEEDED:
-                return Placeholder.card(LangKeys.CONSENT_NEEDED, LangKeys.CONSENT_HINT);
+                return Placeholder.hint(
+                    LangKeys.CONSENT_NEEDED,
+                    consentPostponed ? LangKeys.CONSENT_POSTPONED : LangKeys.CONSENT_HINT);
             case DOWNLOADING:
                 return Placeholder.card(LangKeys.INSTALLING, Math.round(Math.max(0, Math.min(1, e.progress)) * 100));
             case FAILED:
             case UNSUPPORTED:
             default:
-                return Placeholder.card(LangKeys.ENGINE_FAILED, e.reason.langKey());
+                return Placeholder.reason(LangKeys.ENGINE_FAILED, e.reason, "");
         }
     }
 }

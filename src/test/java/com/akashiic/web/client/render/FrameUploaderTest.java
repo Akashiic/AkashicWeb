@@ -277,6 +277,64 @@ class FrameUploaderTest {
         assertTrue(textures.isEmpty(), "no texture allocated for a stale frame");
     }
 
+    /** Review medium finding: a page that keeps painting at another size used to show "Loading" forever. */
+    @Test
+    void framesThatNeverMatchTheRequestedSizeShowBadResolution() {
+        ClientScreen s = addScreen(0, 2, 2, 1280, 720);
+        FakeRing r = ring(s);
+        for (int i = 0; i < FrameUploader.WRONG_SIZE_LIMIT - 1; i++) {
+            r.publish(slot(1280, 360, new Rect(0, 0, 1280, 360)));
+            uploader.uploadFrame();
+        }
+        assertEquals(null, s.failure(), "a few stale frames after a resize are normal");
+        r.publish(slot(1280, 360, new Rect(0, 0, 1280, 360)));
+        uploader.uploadFrame();
+        assertEquals(ReasonCode.BAD_RESOLUTION, s.failure());
+        assertEquals("1280x360", screens.placeholder(s).detailArgs[0]);
+        r.publish(slot(1280, 720, new Rect(0, 0, 1280, 720)));
+        uploader.uploadFrame();
+        assertEquals(null, s.failure(), "a frame of the right size clears it");
+        assertEquals(0, s.wrongSizeFrames);
+    }
+
+    /**
+     * Review low finding (ADR-004 upload hygiene): a stray pixel-unpack buffer is cleared once per frame, always
+     * restored.
+     */
+    @Test
+    void theUnpackBufferScopeWrapsEachFramesUploadsEvenWhenGlThrows() {
+        List<String> scopeCalls = new ArrayList<>();
+        UploadScope recording = new UploadScope() {
+
+            @Override
+            public void begin() {
+                scopeCalls.add("begin");
+            }
+
+            @Override
+            public void end() {
+                scopeCalls.add("end");
+            }
+        };
+        uploader = new FrameUploader(screens, () -> now[0], () -> {
+            RecordingTexture t = new RecordingTexture();
+            textures.add(t);
+            return t;
+        }, () -> maxTexture, UploadBudget.DEFAULT_BYTES_PER_FRAME * 4, recording);
+        ClientScreen a = addScreen(0, 2, 2, 1280, 720);
+        ClientScreen b = addScreen(30, 2, 2, 1280, 720);
+        ring(a).publish(slot(1280, 720, new Rect(0, 0, 1280, 720)));
+        ring(b).publish(slot(1280, 720, new Rect(0, 0, 1280, 720)));
+        uploader.uploadFrame();
+        assertEquals("[begin, end]", scopeCalls.toString(), "once per frame, not per screen");
+        uploader.uploadFrame();
+        assertEquals(2, scopeCalls.size(), "nothing to upload: no GL state touched");
+        tex(a).failNextUpload = true;
+        ring(a).publish(slot(1280, 720, new Rect(0, 0, 4, 4)));
+        uploader.uploadFrame();
+        assertEquals("[begin, end, begin, end]", scopeCalls.toString(), "restored after a GL failure too");
+    }
+
     @Test
     void glFailureShowsAReasonAndRetriesInFull() {
         ClientScreen s = addScreen(0, 2, 2, 1280, 720);
