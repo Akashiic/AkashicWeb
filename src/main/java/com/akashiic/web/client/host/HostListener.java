@@ -1,8 +1,10 @@
 package com.akashiic.web.client.host;
 
 /**
- * Host events. Callbacks arrive on the reader thread: implementations must hop to the client thread before touching
- * Minecraft. Contract type.
+ * Host events. Callbacks arrive on the host reader thread, except {@link #onStatus} (supervisor thread) and the
+ * EVENTs generated locally: "blocked-url" for a URL refused before it left the JVM (the caller's thread, or the
+ * supervisor thread during a replay). Implementations must hop to the client thread before touching Minecraft. A
+ * listener that throws (even an Error) is logged and skipped; it never stops the others or the host. Contract type.
  */
 public interface HostListener {
 
