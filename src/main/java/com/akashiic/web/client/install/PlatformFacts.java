@@ -2,11 +2,13 @@ package com.akashiic.web.client.install;
 
 import java.io.File;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 
 /**
  * A snapshot of what the JVM tells us about the machine, taken once so {@link PlatformGate} is a pure function and
@@ -46,10 +48,7 @@ public final class PlatformFacts {
 
     public static PlatformFacts fromSystem() {
         Properties p = System.getProperties();
-        boolean android = false;
-        for (String f : ANDROID_FILES) {
-            android |= new File(f).exists();
-        }
+        boolean android = androidSystemFiles(p.getProperty("os.name"), f -> new File(f).exists());
         return new PlatformFacts(
             p.getProperty("os.name"),
             p.getProperty("os.arch"),
@@ -60,6 +59,20 @@ public final class PlatformFacts {
             System.getenv(),
             p.stringPropertyNames(),
             android);
+    }
+
+    /**
+     * True when Android's system files exist. Looked for only when os.name is Linux (Pojav-style launchers report
+     * Linux): on Windows "/system/build.prop" would resolve against the current drive, so a stray C:\system folder
+     * must not mark a desktop as Android (review finding 10).
+     */
+    static boolean androidSystemFiles(String osName, Predicate<String> exists) {
+        if (osName == null || !osName.toLowerCase(Locale.ROOT)
+            .startsWith("linux")) return false;
+        for (String f : ANDROID_FILES) {
+            if (exists.test(f)) return true;
+        }
+        return false;
     }
 
     /** Environment variable or null; empty values count as absent. */
