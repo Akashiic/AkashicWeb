@@ -8,6 +8,7 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.event.world.BlockEvent;
 import net.minecraftforge.event.world.ChunkEvent;
+import net.minecraftforge.event.world.ExplosionEvent;
 import net.minecraftforge.event.world.WorldEvent;
 
 import com.akashiic.web.common.ModContent;
@@ -86,6 +87,16 @@ public final class ServerEvents {
             }
             return;
         }
+    }
+
+    /**
+     * Explosions never break a protected screen ({@link ScreenProtection}). Detonate has the final block list, whatever
+     * the exploder (TNT, creepers, wither skulls that ignore resistance, modded blasts on vanilla's Explosion).
+     */
+    @SubscribeEvent
+    public void onExplosion(ExplosionEvent.Detonate event) {
+        if (event.world == null || event.world.isRemote) return;
+        ScreenProtection.spare(event.world, event.getAffectedBlocks());
     }
 
     @SubscribeEvent

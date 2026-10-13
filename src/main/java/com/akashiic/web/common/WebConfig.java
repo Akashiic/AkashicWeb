@@ -185,7 +185,8 @@ public final class WebConfig {
             "protectScreens",
             SCREENS,
             d.protectScreens,
-            "Only the owner and admins may break the blocks of a formed screen.");
+            "Only the owner and admins may break the blocks of a formed screen; explosions, withers and the ender"
+                + " dragon break none.");
         b.defaultResolutionW = c.getInt("defaultResolutionW", SCREENS, d.defaultResolutionW, 64, 4096, "");
         b.defaultResolutionH = c.getInt(
             "defaultResolutionH",
