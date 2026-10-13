@@ -71,6 +71,25 @@ class KeyboardRouterTest {
         assertEquals("CHAR:~", describe(down(Keyboard.KEY_APOSTROPHE, '~').inputs), "dead key + space");
     }
 
+    /**
+     * Review medium finding (LWJGL 2 WindowsKeyboard.handleChar): on ABNT2, dead key + Space arrives as KEY_SPACE
+     * carrying the accent, and a second character merged into a pending event arrives as key 0 with state UP.
+     */
+    @Test
+    void abnt2DeadKeyPlusSpaceTypesTheAccentAndMergedCharactersAreKept() {
+        assertEquals("KEY_DOWN:  CHAR:~", describe(down(Keyboard.KEY_SPACE, '~').inputs));
+        assertEquals("KEY_DOWN:  CHAR:^", describe(down(Keyboard.KEY_SPACE, '^').inputs));
+        assertEquals("KEY_DOWN:  CHAR:´", describe(down(Keyboard.KEY_SPACE, '´').inputs));
+        assertEquals("KEY_DOWN:  CHAR: ", describe(down(Keyboard.KEY_SPACE, ' ').inputs), "a plain space");
+        assertEquals("KEY_DOWN:  CHAR: ", describe(down(Keyboard.KEY_SPACE, '\0').inputs), "no character at all");
+        // "´" then "k" (no composition): the 'k' is queued as key 0, UP.
+        assertEquals("CHAR:´", describe(down(Keyboard.KEY_LBRACKET, '´').inputs));
+        assertEquals("CHAR:k", describe(r.route(Keyboard.KEY_NONE, 'k', false, false, false, false, false).inputs));
+        // A real key-up still types nothing.
+        assertEquals(Action.NONE, up(Keyboard.KEY_K, 'k').action);
+        assertEquals(Action.NONE, r.route(Keyboard.KEY_NONE, '\0', false, false, false, false, false).action);
+    }
+
     @Test
     void altGrTypesInsteadOfTriggeringShortcuts() {
         // AltGr+Q on ABNT2 is '/': Windows reports Ctrl and Alt down.

@@ -18,6 +18,7 @@ import java.util.Map;
 public final class KeyMapping {
 
     // LWJGL 2 org.lwjgl.input.Keyboard codes (asserted equal in KeyMappingTest; copied so this class stays pure).
+    public static final int KEY_NONE = 0;
     public static final int KEY_ESCAPE = 1;
     public static final int KEY_BACK = 14;
     public static final int KEY_TAB = 15;

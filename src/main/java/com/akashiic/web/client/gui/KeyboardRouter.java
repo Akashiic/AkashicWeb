@@ -68,8 +68,12 @@ public final class KeyboardRouter {
         if (named != null) {
             if (!down) return Result.send(ScreenInput.key(false, named, mods));
             String text = KeyMapping.textOf(named);
-            if (text != null && !shortcut)
-                return Result.send(ScreenInput.key(true, named, mods), ScreenInput.chars(text));
+            if (text != null && !shortcut) {
+                // ABNT2 dead key + Space types the accent itself (~ ^ ` ´ ¨): Windows hands LWJGL the Space key event
+                // carrying that character, and the page must get it, not a space (vanilla's text fields do the same).
+                String typed = KeyMapping.isTypable(ch) && !text.equals(String.valueOf(ch)) ? String.valueOf(ch) : text;
+                return Result.send(ScreenInput.key(true, named, mods), ScreenInput.chars(typed));
+            }
             return Result.send(ScreenInput.key(true, named, mods));
         }
         if (shortcut) {
@@ -77,7 +81,10 @@ public final class KeyboardRouter {
             String letter = KeyMapping.shortcutLetter(key);
             return letter == null ? Result.NONE : Result.send(ScreenInput.key(down, letter, mods));
         }
-        if (!down) return Result.NONE;
+        // LWJGL 2 on Windows merges a typed character into the pending key event; when that event already carries
+        // one, the next character is queued as key 0 with state UP (the "k" of a non-composing "´k", Alt+numpad
+        // codes). A key-0 event is text whatever its state; other key-ups carry no text.
+        if (!down && key != KeyMapping.KEY_NONE) return Result.NONE;
         return typed(ch);
     }
 
