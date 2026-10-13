@@ -7,12 +7,21 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -595,6 +604,275 @@ class HostSupervisorTest {
             assertFalse(f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_STALLED));
         } finally {
             h.shutdown();
+        }
+    }
+
+    // --- host exit codes (docs/PROTOCOL.md section 1) ----------------------------------------------------------
+
+    @Test
+    void exitCodesMapToFailures() {
+        assertEquals(HostFailure.BAD_ARGUMENT, HostFailure.forExitCode(64, false));
+        assertEquals(HostFailure.FORBIDDEN_SWITCH, HostFailure.forExitCode(65, false));
+        assertEquals(HostFailure.NO_TOKEN, HostFailure.forExitCode(66, false));
+        assertEquals(HostFailure.CONNECT_FAILED, HostFailure.forExitCode(67, false));
+        assertEquals(HostFailure.WELCOME_TIMEOUT, HostFailure.forExitCode(68, false));
+        assertEquals(HostFailure.WELCOME_REFUSED, HostFailure.forExitCode(68, true));
+        assertEquals(HostFailure.BYTES_REFUSED, HostFailure.forExitCode(69, true));
+        for (int code : new int[] { 0, 1, 3, 70, 137, 143, -1 }) {
+            assertNull(HostFailure.forExitCode(code, true), "exit " + code + " keeps the failure seen");
+        }
+        assertTrue(HostFailure.FORBIDDEN_SWITCH.disables(), "the same command line would be refused again");
+        assertTrue(HostFailure.BAD_ARGUMENT.disables());
+        assertFalse(HostFailure.CONNECT_FAILED.disables(), "relaunched with backoff");
+        assertFalse(HostFailure.NO_TOKEN.disables());
+        assertEquals(ReasonCode.HOST_LAUNCH_FAILED, HostFailure.BAD_ARGUMENT.reason());
+        assertEquals(ReasonCode.HOST_FORBIDDEN_SWITCH, HostFailure.FORBIDDEN_SWITCH.reason());
+        assertEquals(ReasonCode.HOST_CONNECT_FAILED, HostFailure.CONNECT_FAILED.reason());
+        assertEquals(ReasonCode.HOST_HANDSHAKE, HostFailure.NO_TOKEN.reason());
+        assertEquals(ReasonCode.HOST_HANDSHAKE, HostFailure.WELCOME_TIMEOUT.reason());
+        assertEquals(ReasonCode.HOST_PROTOCOL_ERROR, HostFailure.WELCOME_REFUSED.reason());
+        assertEquals(ReasonCode.HOST_PROTOCOL_ERROR, HostFailure.BYTES_REFUSED.reason());
+        assertNull(HostFailure.describeExit(3));
+        assertEquals(500L, HostLaunchConfig.DEFAULT_EXIT_CODE_WAIT_MILLIS, "a bounded wait on the supervisor thread");
+    }
+
+    /** The Java constants against the host's own table in host/src/args.js (skipped when host/ is not found). */
+    @Test
+    void exitCodesMatchTheHostsArgsJs() throws Exception {
+        File host = RealHostEndToEndTest.findHostDir();
+        assumeTrue(host != null, "host/ not found");
+        String js = new String(Files.readAllBytes(new File(host, "src/args.js").toPath()), StandardCharsets.UTF_8);
+        Matcher table = Pattern.compile("const EXIT = Object\\.freeze\\(\\{([^}]*)\\}\\)")
+            .matcher(js);
+        assertTrue(table.find(), "EXIT table in args.js");
+        Map<String, Integer> codes = new LinkedHashMap<>();
+        Matcher entry = Pattern.compile("([A-Z_]+):\\s*(\\d+)")
+            .matcher(table.group(1));
+        while (entry.find()) codes.put(entry.group(1), Integer.valueOf(entry.group(2)));
+        Map<String, Integer> java = new LinkedHashMap<>();
+        java.put("OK", HostFailure.EXIT_OK);
+        java.put("BAD_ARGS", HostFailure.EXIT_BAD_ARGS);
+        java.put("FORBIDDEN_SWITCH", HostFailure.EXIT_FORBIDDEN_SWITCH);
+        java.put("NO_TOKEN", HostFailure.EXIT_NO_TOKEN);
+        java.put("CONNECT_FAILED", HostFailure.EXIT_CONNECT_FAILED);
+        java.put("HANDSHAKE", HostFailure.EXIT_HANDSHAKE);
+        java.put("PROTOCOL", HostFailure.EXIT_PROTOCOL);
+        java.put("INTERNAL", HostFailure.EXIT_INTERNAL);
+        assertEquals(java, codes);
+    }
+
+    @Test
+    void aForbiddenSwitchExitDisablesWithoutRelaunch() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "exit:65");
+        BrowserHostImpl h = host(
+            f,
+            f.config()
+                .build());
+        try {
+            h.start();
+            await("DISABLED", 60_000, () -> h.status().kind == HostStatus.Kind.DISABLED);
+            assertEquals(ReasonCode.HOST_FORBIDDEN_SWITCH, h.status().reason);
+            assertEquals(
+                HostFailure.FORBIDDEN_SWITCH,
+                h.supervisor()
+                    .lastFailure());
+            String detail = h.supervisor()
+                .lastFailureDetail();
+            assertTrue(detail.contains("forbidden switch") && detail.contains("exit code 65"), detail);
+            Thread.sleep(300);
+            assertEquals(
+                1,
+                h.supervisor()
+                    .launches(),
+                "relaunching the same command line cannot help");
+            assertTrue(
+                f.clock.sleeps()
+                    .isEmpty());
+        } finally {
+            h.shutdown();
+        }
+    }
+
+    @Test
+    void aBadArgumentExitDisablesAsALaunchFailure() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "exit:64");
+        BrowserHostImpl h = host(
+            f,
+            f.config()
+                .build());
+        try {
+            h.start();
+            await("DISABLED", 60_000, () -> h.status().kind == HostStatus.Kind.DISABLED);
+            assertEquals(ReasonCode.HOST_LAUNCH_FAILED, h.status().reason);
+            assertEquals(
+                HostFailure.BAD_ARGUMENT,
+                h.supervisor()
+                    .lastFailure());
+            assertEquals(
+                1,
+                h.supervisor()
+                    .launches());
+        } finally {
+            h.shutdown();
+        }
+    }
+
+    @Test
+    void aConnectFailureExitIsRelaunchedWithBackoff() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "exit:67");
+        BrowserHostImpl h = host(
+            f,
+            f.config()
+                .build());
+        FailureLog failures = new FailureLog(h.supervisor());
+        h.addListener(failures);
+        try {
+            h.start();
+            await(
+                "DOWN(HOST_CONNECT_FAILED) and a relaunch",
+                60_000,
+                () -> f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_CONNECT_FAILED) && h.supervisor()
+                    .launches() >= 2);
+            assertEquals(HostFailure.CONNECT_FAILED, failures.seen.get(0));
+            assertEquals(
+                1000L,
+                f.clock.sleeps()
+                    .get(0)
+                    .longValue());
+            assertFalse(f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_EXITED), f.statuses.seen.toString());
+        } finally {
+            h.shutdown();
+        }
+    }
+
+    @Test
+    void noTokenAndOtherExitCodesBeforeConnecting() throws Exception {
+        assertEquals(HostFailure.NO_TOKEN, firstFailure(fixture("66", "exit:66"), ReasonCode.HOST_HANDSHAKE));
+        assertEquals(
+            HostFailure.EXITED_BEFORE_CONNECT,
+            firstFailure(fixture("70", "exit:70"), ReasonCode.HOST_EXITED),
+            "70 says no more than that the host ended");
+    }
+
+    /** The connection drops before HELLO: the supervisor waits briefly for the exit code instead of guessing. */
+    @Test
+    void aConnectionDroppedBeforeHelloIsJudgedByTheExitCode() throws Exception {
+        // 66 cannot happen after connecting in the real host; it only shows that the code is waited for and used.
+        assertEquals(
+            HostFailure.NO_TOKEN,
+            firstFailure(fixture("66", "close-before-hello:66"), ReasonCode.HOST_HANDSHAKE));
+        assertEquals(
+            HostFailure.BAD_HELLO,
+            firstFailure(fixture("70", "close-before-hello:70"), ReasonCode.HOST_HANDSHAKE));
+    }
+
+    /** 68 after our WELCOME: the host refused it; 69: it read bytes that are not protocol v1. */
+    @Test
+    void exitsAfterWelcomeAreProtocolErrors() throws Exception {
+        assertEquals(
+            HostFailure.WELCOME_REFUSED,
+            firstFailure(fixture("68", "exit-after-welcome:68"), ReasonCode.HOST_PROTOCOL_ERROR));
+        assertEquals(
+            HostFailure.BYTES_REFUSED,
+            firstFailure(fixture("69", "exit-after-welcome:69"), ReasonCode.HOST_PROTOCOL_ERROR));
+        assertEquals(
+            HostFailure.CONNECTION_LOST,
+            firstFailure(fixture("70", "exit-after-welcome:70"), ReasonCode.HOST_EXITED));
+    }
+
+    /** 68 while no WELCOME was written: the host gave up waiting for it, a handshake failure. */
+    @Test
+    void exit68BeforeOurWelcomeIsAHandshakeFailure() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "exit-after-hello:68");
+        AtomicReference<HostSupervisor> supervisor = new AtomicReference<>();
+        List<HostFailure> failures = new CopyOnWriteArrayList<>();
+        HostSupervisor.Callbacks noWelcome = new HostSupervisor.Callbacks() {
+
+            @Override
+            public void onConnected(HostConnection connection, HelloInfo hello) {}
+
+            @Override
+            public void onDisconnected(HostConnection connection) {}
+
+            @Override
+            public void onStatus(HostStatus status) {
+                f.statuses.onStatus(status);
+                if (status.kind == HostStatus.Kind.DOWN) failures.add(
+                    supervisor.get()
+                        .lastFailure());
+            }
+        };
+        HostSupervisor s = new HostSupervisor(
+            f.config()
+                .exitCodeWaitMillis(5000)
+                .build(),
+            f.clock,
+            ProcessControl.forThisPlatform(),
+            new NullInbound(),
+            noWelcome);
+        supervisor.set(s);
+        try {
+            s.start();
+            await("the first DOWN", 60_000, () -> !failures.isEmpty());
+            assertEquals(HostFailure.WELCOME_TIMEOUT, failures.get(0), f.statuses.seen.toString());
+            assertTrue(f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_HANDSHAKE), f.statuses.seen.toString());
+        } finally {
+            s.shutdown();
+        }
+    }
+
+    private FakeHostFixture fixture(String name, String mode) throws java.io.IOException {
+        File sub = new File(dir, name);
+        assertTrue(sub.mkdirs(), sub.toString());
+        return new FakeHostFixture(sub, mode);
+    }
+
+    /**
+     * Runs {@code f}'s mode until the first DOWN or DISABLED status and returns the failure the supervisor recorded
+     * for it, after checking that status carried {@code reason}. The exit-code wait is long here so a loaded test
+     * machine cannot turn the fake's delayed exit into a different answer; the game's default stays 500 ms.
+     */
+    private static HostFailure firstFailure(FakeHostFixture f, ReasonCode reason) throws Exception {
+        BrowserHostImpl h = new BrowserHostImpl(
+            f.config()
+                .exitCodeWaitMillis(5000)
+                .build(),
+            f.clock,
+            ProcessControl.forThisPlatform());
+        FailureLog failures = new FailureLog(h.supervisor());
+        h.addListener(f.statuses);
+        h.addListener(failures);
+        try {
+            h.start();
+            await("the first failure", 60_000, () -> !failures.seen.isEmpty());
+            assertEquals(
+                reason,
+                failures.statuses.get(0).reason,
+                failures.seen + " "
+                    + h.supervisor()
+                        .lastFailureDetail());
+            return failures.seen.get(0);
+        } finally {
+            h.shutdown();
+        }
+    }
+
+    /** The supervisor's lastFailure at each DOWN or DISABLED status (it is set before the status is published). */
+    static final class FailureLog implements HostListener {
+
+        final HostSupervisor supervisor;
+        final List<HostFailure> seen = new CopyOnWriteArrayList<>();
+        final List<HostStatus> statuses = new CopyOnWriteArrayList<>();
+
+        FailureLog(HostSupervisor supervisor) {
+            this.supervisor = supervisor;
+        }
+
+        @Override
+        public void onStatus(HostStatus status) {
+            if (status.kind != HostStatus.Kind.DOWN && status.kind != HostStatus.Kind.DISABLED) return;
+            statuses.add(status);
+            seen.add(supervisor.lastFailure());
         }
     }
 

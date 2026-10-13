@@ -27,8 +27,11 @@ import java.util.regex.Pattern;
  *
  * <p>
  * Args: {@code <modeFile> <recordFile> --akw-port=N --akw-parent-pid=P --akw-user-data=D --akw-log=L}. Modes:
- * {@code ok}, {@code exit-after-welcome}, {@code bad-token}, {@code bad-major}, {@code silent} (never connects),
- * {@code die} (exits at once), {@code env-token} (uses AKW_TOKEN, ignores stdin), {@code garbage} (bad magic after
+ * {@code ok}, {@code exit-after-welcome[:code]}, {@code bad-token}, {@code bad-major}, {@code silent} (never
+ * connects), {@code die} (exits at once with 3), {@code exit:<code>} (exits at once with that code, like a host that
+ * refuses its command line), {@code close-before-hello:<code>} (connects, closes without HELLO, exits with the code
+ * 100 ms later), {@code exit-after-hello:<code>} (sends HELLO, then exits with the code without reading anything),
+ * {@code env-token} (uses AKW_TOKEN, ignores stdin), {@code garbage} (bad magic after
  * HELLO), {@code hang-once} (the first launch stops reading after WELCOME, like a hung main thread that keeps its
  * socket open; later launches behave like {@code ok}), {@code slow-pong:<ms>} (answers every PING after a delay),
  * {@code oversize} (CREATE first gets a FRAME of a 4097x16 page, then the normal answer), {@code stubborn-hang-once}
@@ -60,6 +63,7 @@ public final class FakeHostMain {
         record("start mode=" + mode + " args=" + String.join(" ", akw));
         record("env " + envReport());
         if (mode.equals("die")) System.exit(3);
+        if (mode.startsWith("exit:")) System.exit(exitCode(mode));
         if (mode.equals("stubborn-hang-once") && !new File(args[0] + ".hung").exists()) {
             // Like a host whose main thread hangs: SIGTERM is not acted on, and it has a child of its own.
             ignoreSigterm();
@@ -77,6 +81,12 @@ public final class FakeHostMain {
         String token = mode.equals("env-token") ? System.getenv("AKW_TOKEN") : stdinToken;
         record("env-token-equal " + (stdinToken != null && stdinToken.equals(System.getenv("AKW_TOKEN"))));
 
+        if (mode.startsWith("close-before-hello:")) {
+            new Socket("127.0.0.1", port).close();
+            record("closed before HELLO");
+            Thread.sleep(100); // the supervisor must wait a moment for the exit code
+            System.exit(exitCode(mode));
+        }
         try (Socket s = new Socket("127.0.0.1", port)) {
             s.setTcpNoDelay(true);
             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));
@@ -97,6 +107,10 @@ public final class FakeHostMain {
                     + "}");
             if (mode.equals("garbage")) out.writeInt(0xDEADBEEF);
             out.flush();
+            if (mode.startsWith("exit-after-hello:")) {
+                record("exiting after HELLO");
+                System.exit(exitCode(mode));
+            }
             int seq = 0;
             while (true) {
                 HostProtocol.Message m = HostProtocol.read(in);
@@ -107,9 +121,9 @@ public final class FakeHostMain {
                 record("recv " + m.type + " " + m.screenId + " " + m.seq + " " + m.text());
                 switch (m.type) {
                     case HostProtocol.WELCOME: {
-                        if (mode.equals("exit-after-welcome")) {
+                        if (mode.startsWith("exit-after-welcome")) {
                             record("exiting");
-                            System.exit(0);
+                            System.exit(mode.indexOf(':') < 0 ? 0 : exitCode(mode));
                         }
                         File hung = new File(args[0] + ".hung");
                         if (mode.equals("hang-once") && hung.createNewFile()) {
@@ -178,6 +192,11 @@ public final class FakeHostMain {
                 }
             }
         }
+    }
+
+    /** The code after the last ':' of a mode such as {@code exit:65}. */
+    private static int exitCode(String mode) {
+        return Integer.parseInt(mode.substring(mode.lastIndexOf(':') + 1));
     }
 
     /** Installs a SIGTERM handler that does nothing (sun.misc.Signal, by reflection: Java 8 and 9+ alike). */

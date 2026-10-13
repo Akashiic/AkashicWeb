@@ -41,4 +41,7 @@
 - All five modules fixed after adversarial reviews and merged (`f8e1487`): the host's internal-address check on every request and a document-start preload (M1); thread-death handling, stall detection and a client-side URL check (M2); the TLS trust order with pinned roots, a consent record and per-file pins (M3); D-016 on the server, the controller lock, friend names without Mojang lookups, the Crucible permission nodes, a fail-closed config and screen protection (M4); the client wiring of the installer and host, D-016 on the client, the live rule and the consent flow (M5).
 - Evidence: 644 JUnit tests (Linux). **First browser on an in-world screen**: real pages, scrolling, keyboard navigation, H.264 video, and two players in sync (p50 11 ms / p95 32 ms on one machine). See `docs/evidence/2026-10-13-first-browser-in-game.md`. Not run: Windows, the Forbidden pack, YouTube playback (the container's IP is bot-walled).
 
+### Changed (2026-10-13, W3-0 integration follow-ups)
+- The host supervisor reads the host's exit code: 65 (forbidden switch) disables with `HOST_FORBIDDEN_SWITCH`, 64 (bad argument) disables with `HOST_LAUNCH_FAILED`, 67 is `HOST_CONNECT_FAILED`, 66 `HOST_HANDSHAKE`, 68/69 `HOST_PROTOCOL_ERROR` (68 before WELCOME: `HOST_HANDSHAKE`); it waits at most 500 ms on its own thread for the code of a host whose connection dropped. Evidence: BUILD / AUTOMATED (Linux), `HostSupervisorTest` with fake hosts.
+
 No release yet.

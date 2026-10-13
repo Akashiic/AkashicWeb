@@ -23,6 +23,8 @@ Grade: BUILD / AUTOMATED (Linux container, Electron 44.7.0): the Java side (`cli
 
 Host exit codes: 0 normal; 64 bad `--akw-*` argument or profile directory; 65 forbidden switch, or (packaged) any non-`--akw-*` argument or forbidden variable; 66 no token; 67 could not connect within 5 s; 68 no WELCOME within 10 s, protocol major mismatch or malformed WELCOME; 69 bytes that are not protocol v1; 70 uncaught exception or child crash loop. BYE reasons: `quit`, `parent-gone`, `protocol-error`, `protocol-mismatch`, `bad-welcome`, `welcome-timeout`, `internal-error`, `child-crash-loop-<type>`, `signal-<SIG>`.
 
+Java maps the exit codes (`HostFailure.forExitCode`): 64 `HOST_LAUNCH_FAILED` and 65 `HOST_FORBIDDEN_SWITCH` disable the host (the same command line would fail again); 66 `HOST_HANDSHAKE`; 67 `HOST_CONNECT_FAILED` (relaunch with backoff); 68 `HOST_PROTOCOL_ERROR` once Java's WELCOME was written, `HOST_HANDSHAKE` before; 69 `HOST_PROTOCOL_ERROR`; any other code keeps the failure Java saw (`HOST_EXITED` for a host that ended before connecting or dropped the connection). A host that ended before connecting is judged at once; when the connection drops before or after HELLO, the supervisor thread waits up to 500 ms for the exit code.
+
 Loopback TCP is the only frame transport (amendment to ADR-003: stdio and Java `RandomAccessFile` named pipes are rejected for frames).
 
 ### Framing

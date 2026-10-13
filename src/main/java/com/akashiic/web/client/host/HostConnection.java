@@ -115,6 +115,7 @@ public final class HostConnection {
     private volatile long lastRttMillis = -1;
     private volatile long messagesIn;
     private volatile long messagesOut;
+    private volatile boolean welcomeWritten;
 
     private Thread reader;
     private Thread writer;
@@ -296,6 +297,14 @@ public final class HostConnection {
         return messagesOut;
     }
 
+    /**
+     * True once WELCOME was written to the socket. The supervisor reads a host exit code 68 with it: after WELCOME the
+     * host refused it, before WELCOME the host gave up waiting for it.
+     */
+    public boolean welcomeSent() {
+        return welcomeWritten;
+    }
+
     // --- internals -----------------------------------------------------------------------------------------------
 
     private boolean enqueue(int type, int screenId, String json) {
@@ -333,6 +342,7 @@ public final class HostConnection {
                     }
                     HostProtocol.write(out, m.type, m.screenId, m.seq, m.payload);
                     messagesOut++;
+                    if (m.type == HostProtocol.WELCOME) welcomeWritten = true;
                     if (queue.isEmpty()) out.flush(); // batch bursts (input), flush when idle
                 }
             }
