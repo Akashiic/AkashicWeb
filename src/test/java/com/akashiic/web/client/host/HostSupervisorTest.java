@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import java.io.File;
 import java.util.Arrays;
@@ -519,6 +520,48 @@ class HostSupervisorTest {
             assertEquals(Collections.singletonList(1000L), f.clock.sleeps(), "the normal backoff path");
             ProcessControl pc = ProcessControl.forThisPlatform();
             await("the hung host was killed", 10_000, () -> pc.imageName(hungPid) == null);
+        } finally {
+            h.shutdown();
+        }
+    }
+
+    /**
+     * Review finding (low): killNow ended only the main process (SIGTERM, then SIGKILL of one pid). A host that does
+     * not act on SIGTERM (a hung main thread) and has children of its own (Chromium's GPU, renderer and utility
+     * processes) now has its whole tree ended: ProcessHandle descendants on Java 9+, the /proc tree on Java 8 Linux,
+     * taskkill /T on Windows.
+     */
+    @Test
+    void aHungHostThatIgnoresSigtermIsKilledWithItsChildren() throws Exception {
+        assumeFalse(
+            System.getProperty("os.name", "")
+                .toLowerCase(java.util.Locale.ROOT)
+                .startsWith("windows"),
+            "uses sleep and SIGTERM");
+        FakeHostFixture f = new FakeHostFixture(dir, "stubborn-hang-once");
+        BrowserHostImpl h = host(
+            f,
+            f.config()
+                .pingIntervalMillis(200)
+                .stallIntervals(3)
+                .build());
+        try {
+            h.start();
+            await("DOWN(HOST_STALLED)", 30_000, () -> f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_STALLED));
+            long hostPid = firstPid(f);
+            long childPid = -1;
+            for (String l : lines(f)) if (l.startsWith("child ")) childPid = Long.parseLong(l.substring(6));
+            assertTrue(childPid > 0, lines(f).toString());
+            long child = childPid;
+            await(
+                "the stubborn host and its child are both gone",
+                15_000,
+                () -> !FakeHostFixture.running(hostPid) && !FakeHostFixture.running(child));
+            await(
+                "relaunched and READY",
+                60_000,
+                () -> h.supervisor()
+                    .launches() == 2 && h.status().kind == HostStatus.Kind.READY);
         } finally {
             h.shutdown();
         }

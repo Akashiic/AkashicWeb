@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -273,6 +274,39 @@ class StaleHostSweeperTest {
         } finally {
             for (Process p : new Process[] { orphan, otherImage, liveGame, liveGamesHost }) p.destroyForcibly();
         }
+    }
+
+    /**
+     * Review finding (low): the Java 8 Unix kill ended one pid only. On Linux it now ends the descendants too, found
+     * through /proc before anything is killed (a Chromium host's zygote, GPU, renderer and utility children).
+     */
+    @Test
+    @Timeout(60)
+    void unixKillEndsTheDescendantsToo() throws Exception {
+        assumeTrue(new File("/proc/self/stat").isFile(), "needs /proc (Linux)");
+        // The shell starts a background sleep, then becomes the second sleep: a parent with one child.
+        Process parent = new ProcessBuilder("sh", "-c", "sleep 300 & exec sleep 301").start();
+        long pid = ProcessControl.reflectivePid(parent);
+        try {
+            assertTrue(pid > 0);
+            FakeHostFixture.await(
+                "the child",
+                10_000,
+                () -> UnixProcessControl.descendants(pid, new File("/proc"))
+                    .size() == 1);
+            long child = UnixProcessControl.descendants(pid, new File("/proc"))
+                .get(0);
+            assertTrue(FakeHostFixture.running(child));
+            assertTrue(new UnixProcessControl().kill(pid));
+            assertTrue(parent.waitFor(10, TimeUnit.SECONDS));
+            FakeHostFixture.await("the child is gone too", 10_000, () -> !FakeHostFixture.running(child));
+        } finally {
+            parent.destroyForcibly();
+        }
+        assertTrue(
+            UnixProcessControl.descendants(pid, new File(dir, "no-proc-here"))
+                .isEmpty(),
+            "no /proc: nothing but the process itself");
     }
 
     /** Both process-control backends that can run here agree on a real child. */

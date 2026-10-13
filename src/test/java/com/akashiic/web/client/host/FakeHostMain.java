@@ -31,7 +31,8 @@ import java.util.regex.Pattern;
  * {@code die} (exits at once), {@code env-token} (uses AKW_TOKEN, ignores stdin), {@code garbage} (bad magic after
  * HELLO), {@code hang-once} (the first launch stops reading after WELCOME, like a hung main thread that keeps its
  * socket open; later launches behave like {@code ok}), {@code slow-pong:<ms>} (answers every PING after a delay),
- * {@code oversize} (CREATE first gets a FRAME of a 4097x16 page, then the normal answer). In
+ * {@code oversize} (CREATE first gets a FRAME of a 4097x16 page, then the normal answer), {@code stubborn-hang-once}
+ * (like {@code hang-once}, but the first launch also ignores SIGTERM and starts a child process, "child PID"). In
  * every connected mode: CREATE answers with a full FRAME, a STATE and a PCM chunk; DESTROY with a late FRAME and a
  * STATE {@code {"late":true}}; PING with PONG; QUIT with BYE and exit; NAVIGATE {@code {"action":"stop"}} makes it exit
  * (a simulated crash).
@@ -59,6 +60,13 @@ public final class FakeHostMain {
         record("start mode=" + mode + " args=" + String.join(" ", akw));
         record("env " + envReport());
         if (mode.equals("die")) System.exit(3);
+        if (mode.equals("stubborn-hang-once") && !new File(args[0] + ".hung").exists()) {
+            // Like a host whose main thread hangs: SIGTERM is not acted on, and it has a child of its own.
+            ignoreSigterm();
+            Process child = new ProcessBuilder("sleep", "300").start();
+            record("child " + ProcessControl.reflectivePid(child));
+            mode = "hang-once";
+        }
 
         String stdinToken = readLine(System.in);
         record("stdin-token " + (stdinToken == null ? "none" : "len" + stdinToken.length()));
@@ -170,6 +178,18 @@ public final class FakeHostMain {
                 }
             }
         }
+    }
+
+    /** Installs a SIGTERM handler that does nothing (sun.misc.Signal, by reflection: Java 8 and 9+ alike). */
+    private static void ignoreSigterm() throws ReflectiveOperationException {
+        Class<?> signal = Class.forName("sun.misc.Signal");
+        Class<?> handler = Class.forName("sun.misc.SignalHandler");
+        Object term = signal.getConstructor(String.class)
+            .newInstance("TERM");
+        Object ignore = java.lang.reflect.Proxy
+            .newProxyInstance(handler.getClassLoader(), new Class<?>[] { handler }, (proxy, method, a) -> null);
+        signal.getMethod("handle", signal, handler)
+            .invoke(null, term, ignore);
     }
 
     /** Full frame where pixel (x, y) of screen s holds bytes {s, x, y, 0xFF}. */

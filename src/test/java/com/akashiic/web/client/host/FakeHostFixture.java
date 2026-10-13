@@ -104,6 +104,27 @@ final class FakeHostFixture {
         }
     }
 
+    /**
+     * True while process {@code pid} runs. With /proc a zombie counts as ended: it has exited, and a container whose
+     * PID 1 does not reap orphans would otherwise keep it "alive" forever. Without /proc, the platform's view.
+     */
+    static boolean running(long pid) {
+        File stat = new File("/proc/" + pid + "/stat");
+        if (new File("/proc/self/stat").isFile()) {
+            try {
+                String s = new String(Files.readAllBytes(stat.toPath()), StandardCharsets.UTF_8);
+                String state = s.substring(s.lastIndexOf(')') + 1)
+                    .trim()
+                    .split(" ")[0];
+                return !state.equals("Z") && !state.equals("X");
+            } catch (IOException | RuntimeException e) {
+                return false; // gone
+            }
+        }
+        return ProcessControl.forThisPlatform()
+            .imageName(pid) != null;
+    }
+
     static boolean anyLineStartsWith(List<String> lines, String prefix) {
         for (String l : lines) if (l.startsWith(prefix)) return true;
         return false;
