@@ -49,11 +49,15 @@ import com.akashiic.web.common.net.ServerBound;
  * The screens this client tracks and their browsers: the one place that decides when a browser exists, what it shows,
  * how loud it is and how it follows the server clock. Client thread only (packet and host callbacks hop here first).
  * <ul>
- * <li>No browser before S2CHello, with an incompatible protocol, under the kill switch, or while the engine is not
- * READY (ADR-011/012).</li>
- * <li>Browsers go to the best size x proximity screens within range, at most 2 or 4 per client (ADR-012 item 7).</li>
+ * <li>No browser before S2CHello and its site policy, with an incompatible protocol, under the kill switch, while
+ * the engine is not READY (ADR-011/012), or for a screen without a page.</li>
+ * <li>Browsers go to the best size x proximity screens within range and drawn by the renderer, at most 2 or 4 per
+ * client (ADR-012 item 7).</li>
  * <li>Each browser gets a LOD (ADR-004), an OS-mode volume with hard mute (ADR-007) and, on followers, playbackRate
- * steering from the server clock (ADR-012); the controller reports its media samples and its own navigations.</li>
+ * steering from the server clock with the live-edge rule (ADR-012); the controller reports its media samples and
+ * its own navigations, and does not reload the echo of its own report.</li>
+ * <li>D-016: the local player's input goes straight to its own browser while it drives the page (the controller by
+ * S2CHello.playerUuid, a pending take on a free screen, or a PRIVATE screen); the server only sees the lock.</li>
  * <li>World unload and disconnect tear everything down; the hard mute always goes out before the destroy.</li>
  * </ul>
  * Minecraft-free (the adapter passes a {@link PlayerView}), so the whole lifecycle is unit-tested with a fake host.

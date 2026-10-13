@@ -15,7 +15,10 @@ public final class PlayerView {
     public final double lookX;
     public final double lookY;
     public final double lookZ;
-    /** The local player's UUID as Minecraft knows it (see the M5 report about offline-mode proxies). */
+    /**
+     * The local player's UUID as Minecraft knows it. Only a fallback for servers that send no S2CHello.playerUuid: on
+     * offline-mode or proxied servers it differs from the server's ({@link ClientScreens#player()}).
+     */
     public final UUID player;
     /** A pause/options/main menu is open: hard mute (ADR-007). */
     public final boolean menuOpen;
