@@ -23,7 +23,7 @@ class SessionFactory {
   constructor(ctx) {
     this.ctx = ctx;
     this.generation = 0;
-    this.prepared = new WeakSet();
+    this.prepared = new WeakMap(); // session -> its SessionNetCache (verdicts, proxy decisions)
   }
 
   partitionFor(screenId, kind) {
@@ -32,23 +32,25 @@ class SessionFactory {
     return 'akw-' + screenId + '-' + this.generation;
   }
 
-  /** Returns {session, partition, ephemeral} for a new screen. */
+  /** Returns {session, partition, ephemeral, verdict(host, url)} for a new screen. */
   forScreen(screenId, kind) {
     const partition = this.partitionFor(screenId, kind);
     const ses = session.fromPartition(partition);
-    if (!this.prepared.has(ses)) {
-      this.prepare(ses);
-      this.prepared.add(ses);
+    let cache = this.prepared.get(ses);
+    if (!cache) {
+      cache = this.prepare(ses);
+      this.prepared.set(ses, cache);
     }
-    return { session: ses, partition, ephemeral: kind !== 'private' };
+    return { session: ses, partition, ephemeral: kind !== 'private', verdict: (host, url) => cache.verdictFor(host, url) };
   }
 
+  /** Installs handlers and policy on a new session; returns its request-policy cache. */
   prepare(ses) {
     const ctx = this.ctx;
     ses.setUserAgent(ctx.userAgent(), acceptLanguages(ctx.locale()));
     // The spellchecker downloads dictionaries from a Google CDN; a screen has no use for it.
     ses.setSpellCheckerEnabled(false);
-    attachRequestPolicy(ses, {
+    const cache = attachRequestPolicy(ses, {
       policy: ctx.policy,
       allowFile: ctx.allowFile,
       isExempt: wcId => ctx.registry.isCapturePage(wcId),
@@ -64,12 +66,15 @@ class SessionFactory {
       event.preventDefault();
       ctx.onDownload(wc ? wc.id : null, { url: item.getURL(), filename: item.getFilename() });
     });
+    return cache;
   }
 
   /** Clears an ephemeral session's data so the in-memory cache and cookies do not accumulate. */
   release(entry) {
     if (!entry || !entry.ephemeral) return Promise.resolve();
     const ses = entry.session;
+    const cache = this.prepared.get(ses);
+    if (cache) cache.clear();
     return Promise.all([
       ses.clearStorageData().catch(() => {}),
       ses.clearCache().catch(() => {}),

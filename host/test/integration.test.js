@@ -194,6 +194,10 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     game.send(P.T.INPUT, 1, { type: 'keyUp', keyCode: 'a', modifiers: ['control'] });
     game.send(P.T.INPUT, 1, { type: 'char', text: paste });
     await titleOf(game, 1, title => title.includes('|ta:' + JSON.stringify(paste) + '|'), 'pasted text in the textarea', 8000, since);
+    // Empty the textarea again so the page title (cut at 256 characters in STATE) keeps every field.
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: 'a', modifiers: ['control'] });
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: 'Backspace', modifiers: [] });
+    await titleOf(game, 1, title => title.includes('|ta:""|'), 'textarea emptied', 8000, game.mark());
   });
 
   await t.test('INPUT: wheel deltaY < 0 scrolls down and > 0 up, notches x 100', async () => {
@@ -269,19 +273,26 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     assert.ok(st.json.url.startsWith(pageUrl), 'still on the test page: ' + st.json.url);
   });
 
-  await t.test('response detector: a subresource NAME that resolves to loopback blanks the screen', async () => {
-    // Subresources are not DNS-checked by the host (that is Chromium's Local Network Access job on
-    // public pages). A file: page is not a public context, so here the request does reach the
-    // listener and measure 3 (the details.ip detector) must catch it: stop, blank, EVENT.
+  await t.test('fetch, img, WebSocket and beacon to a NAME resolving to loopback are cancelled before connecting', async () => {
+    // Electron 44 disables Chromium's Local Network Access checks, so denying the LNA permissions
+    // protects nothing (wave-1 review). The host resolves every request's name itself: none of these
+    // subresources may reach the loopback "router". (The details.ip detector, which only notices a
+    // request after it reached the address, is covered by policy.test.js.)
     const since = game.mark();
-    game.send(P.T.NAVIGATE, 1, { url: pageUrl + '#probe=' + internal.port + '&host=rebind.akw.test' });
-    const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'blocked-url' && m.json.detail.reason === 'internal-ip', 8000, 'internal-ip event', since);
-    assert.strictEqual(ev.json.detail.ip, '127.0.0.1');
-    await game.waitFor(m => m.type === P.T.STATE && m.screenId === 1 && m.json.url === 'about:blank', 8000, 'screen blanked', since);
-    results.detectorSinkHits = internal.hits;
-    assert.strictEqual(internal.hits, 1, 'exactly the one request the detector reports');
-    game.send(P.T.NAVIGATE, 1, { url: pageUrl });
-    await titleOf(game, 1, title => title.startsWith('v:'), 'test page reloaded', 8000, game.mark());
+    const hitsBefore = internal.hits;
+    game.send(P.T.NAVIGATE, 1, { url: pageUrl + '#probe=' + internal.port + '&host=rebind.akw.test&kinds=fetch,img,ws,beacon' });
+    await titleOf(game, 1, title => title.includes('|fetch:failed|') && title.includes('|img:failed|') && title.includes('|ws:failed|'), 'fetch, img and ws failed', 8000, since);
+    const vias = new Set();
+    await game.waitFor(m => {
+      if (m.type !== P.T.EVENT || m.screenId !== 1 || m.json.kind !== 'blocked-url' || m.json.detail.reason !== 'internal-dns') return false;
+      vias.add(m.json.detail.via);
+      return ['request-xhr', 'request-image', 'request-webSocket', 'request-ping'].every(v => vias.has(v));
+    }, 8000, 'internal-dns events for xhr, image, webSocket and ping', since);
+    await sleep(800);
+    results.lnaSinkHits = internal.hits - hitsBefore;
+    assert.strictEqual(internal.hits - hitsBefore, 0, 'nothing reached the loopback listener');
+    const st = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1).pop();
+    assert.ok(st.json.url.startsWith(pageUrl), 'still on the test page: ' + st.json.url);
   });
 
   await t.test('window.open stays in the same window; links to internal hosts are refused', async () => {
@@ -305,7 +316,7 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     assert.strictEqual(ev.json.detail.via, 'request-mainFrame');
     assert.strictEqual(ev.json.detail.reason, 'internal-dns');
     await sleep(300);
-    assert.strictEqual(internal.hits, results.detectorSinkHits, 'the blocked link reached nothing');
+    assert.strictEqual(internal.hits, 0, 'the blocked link reached nothing');
     since = game.mark();
     game.send(P.T.NAVIGATE, 1, { url: pageUrl.replace('page.html', 'page2.html') });
     await game.waitFor(m => m.type === P.T.STATE && m.screenId === 1 && m.json.url.endsWith('page2.html') && !m.json.loading, 8000, 'page2 again', since);
@@ -503,6 +514,40 @@ test('spatial capture produces 48 kHz stereo PCM (Linux only, optional feature)'
   const ptsA = Number(packets[0].payload.readBigInt64BE(0));
   const ptsB = Number(packets[packets.length - 1].payload.readBigInt64BE(0));
   assert.ok(ptsB > ptsA, 'pts increases');
+});
+
+test('behind a loopback proxy: pages load (detector skips the proxy address); DNS failure is dns-via-proxy', { skip: SKIP, timeout: 90000 }, async t => {
+  // A local filtering proxy, antivirus web shield or "game booster" answers on 127.0.0.1. Wave 1 took the
+  // proxy's address in details.ip for the site's and blanked every page as 'internal-ip'.
+  let proxyHits = 0;
+  const proxy = net.createServer(c => {
+    proxyHits++;
+    c.on('error', () => {});
+    c.once('data', () => c.end('HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 38\r\nConnection: close\r\n\r\n<title>public-page</title><p>hello</p>'));
+  });
+  await new Promise(r => proxy.listen(0, '127.0.0.1', r));
+  const game = new Game();
+  const port = await game.listen();
+  t.after(async () => {
+    await game.close();
+    proxy.close();
+  });
+  game.spawnHost(port, { extraArgs: ['--proxy-server=http://127.0.0.1:' + proxy.address().port,
+    '--host-resolver-rules=MAP public.akw.test 93.184.216.34, MAP nx.akw.test ~NOTFOUND'] });
+  await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
+  game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: [] }, locale: 'pt-BR' });
+  game.send(P.T.CREATE, 1, { width: 320, height: 180, fps: 10, url: 'http://public.akw.test/', session: 'shared', audio: 'os', volume: 0 });
+  await titleOf(game, 1, title => title === 'public-page', 'page through the proxy', 15000);
+  await sleep(1500);
+  const internalIp = game.messages.filter(m => m.type === P.T.EVENT && m.json.detail && m.json.detail.reason === 'internal-ip');
+  assert.deepStrictEqual(internalIp.map(m => m.json), [], 'not mistaken for an internal hit');
+  const last = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1).pop();
+  assert.strictEqual(last.json.url, 'http://public.akw.test/', 'not blanked');
+  assert.ok(proxyHits >= 1);
+  const since = game.mark();
+  game.send(P.T.NAVIGATE, 1, { url: 'http://nx.akw.test/' });
+  const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'blocked-url', 8000, 'dns-via-proxy', since);
+  assert.strictEqual(ev.json.detail.reason, 'dns-via-proxy');
 });
 
 test('lifecycle: parent PID gone, missing token, forbidden switch', { skip: SKIP, timeout: 90000 }, async t => {

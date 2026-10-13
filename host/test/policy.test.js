@@ -117,12 +117,18 @@ test('needsDns is set for names, not for IP literals', () => {
   assert.strictEqual(Pol.checkNavigation('https://[2001:4860:4860::8888]/', BLOCK, 'main').needsDns, false);
 });
 
-test('subresources: literal internal hosts refused for http/https/ws/wss; policy lists not applied', () => {
+test('subresources: literal internal hosts refused for http/https/ws/wss; names need DNS; policy lists not applied', () => {
   assert.strictEqual(Pol.checkRequest('http://127.0.0.1:8080/x', 'xhr', BLOCK).reason, 'internal');
   assert.strictEqual(Pol.checkRequest('ws://192.168.1.10/socket', 'webSocket', BLOCK).reason, 'internal');
   assert.strictEqual(Pol.checkRequest('https://[fe80::1]/a.png', 'image', BLOCK).reason, 'internal');
   assert.strictEqual(Pol.checkRequest('https://i.ytimg.com/vi/x.jpg', 'image', ALLOW).ok, true);
   assert.strictEqual(Pol.checkRequest('https://bad.example/a.js', 'script', BLOCK).ok, true);
+  // Every name is resolved by the request filter (Electron 44 has Chromium's LNA check off).
+  for (const [u, type] of [['https://i.ytimg.com/x.jpg', 'image'], ['wss://chat.example/ws', 'webSocket'], ['http://a.example/b', 'ping'], ['https://a.example/f', 'xhr']]) {
+    assert.strictEqual(Pol.checkRequest(u, type, BLOCK).needsDns, true, u);
+  }
+  assert.strictEqual(Pol.checkRequest('https://8.8.8.8/x', 'xhr', BLOCK).needsDns, false, 'public literal: nothing to resolve');
+  assert.strictEqual(Pol.checkRequest('blob:https://a.example/uuid', 'media', BLOCK).needsDns, false);
   assert.strictEqual(Pol.checkRequest('https://router/', 'subFrame', BLOCK).reason, 'internal');
   assert.strictEqual(Pol.checkRequest('https://youtube.com/', 'mainFrame', ALLOW).ok, true);
   assert.strictEqual(Pol.checkRequest('https://example.com/', 'mainFrame', ALLOW).reason, 'not-allowed');
@@ -144,12 +150,19 @@ test('permissions: everything denied, LNA explicitly, fullscreen allowed, captur
 });
 
 /** Minimal stand-in for an Electron Session, enough to drive the request wiring. */
-function fakeSession(resolve) {
+function fakeSession(resolve, proxyFor = () => 'DIRECT') {
   const ses = new EventEmitter();
   ses.handlers = {};
   ses.webRequest = {};
-  for (const n of ['onBeforeRequest', 'onBeforeRedirect', 'onResponseStarted', 'onCompleted']) ses.webRequest[n] = fn => { ses.handlers[n] = fn; };
-  ses.resolveHost = host => resolve(host);
+  ses.resolved = [];
+  for (const n of ['onBeforeRequest', 'onBeforeRedirect', 'onResponseStarted', 'onCompleted', 'onHeadersReceived', 'onBeforeSendHeaders']) {
+    ses.webRequest[n] = (a, b) => { ses.handlers[n] = typeof a === 'function' ? a : b; ses.filters = ses.filters || {}; ses.filters[n] = typeof a === 'function' ? null : a; };
+  }
+  ses.resolveHost = host => {
+    ses.resolved.push(host);
+    return resolve(host);
+  };
+  ses.resolveProxy = url => Promise.resolve(proxyFor(url));
   return ses;
 }
 
@@ -176,13 +189,95 @@ test('request wiring: literal block, DNS answer check (fail closed), capture pag
   assert.deepStrictEqual(await decide(ses, { url: 'https://nx.test/', resourceType: 'mainFrame', webContentsId: 1 }), { cancel: true });
   assert.deepStrictEqual(await decide(ses, { url: 'https://empty.test/', resourceType: 'mainFrame', webContentsId: 1 }), { cancel: true });
   assert.deepStrictEqual(await decide(ses, { url: 'https://slow.test/', resourceType: 'mainFrame', webContentsId: 1 }), { cancel: true });
-  // Subresources by name are left to Chromium's LNA check: no DNS round trip per image.
-  assert.deepStrictEqual(await decide(ses, { url: 'https://rebind.test/a.png', resourceType: 'image', webContentsId: 1 }), {});
   assert.deepStrictEqual(await decide(ses, { url: 'file:///x', resourceType: 'mainFrame', webContentsId: 99 }), {});
   assert.deepStrictEqual(blocked, ['internal', 'internal-dns', 'dns-failed', 'dns-failed', 'dns-failed']);
 });
 
-test('response detector: reports internal details.ip on redirect, response start and completion', () => {
+test('LNA replacement: SUBRESOURCES whose name resolves inside are cancelled before connecting (fetch, img, ws, beacon)', async () => {
+  // Wave 1 left these to Chromium's Local Network Access check, which Electron 44 has switched off,
+  // so a public page could reach the player's router by name. Each one must now be cancelled.
+  const blocked = [];
+  const ses = fakeSession(host => Promise.resolve(host.endsWith('.lan-by-name.test')
+    ? { endpoints: [{ address: '192.168.0.1', family: 'ipv4' }] } : { endpoints: [{ address: '93.184.216.34', family: 'ipv4' }] }));
+  Pol.attachRequestPolicy(ses, {
+    policy: () => BLOCK, allowFile: false, isExempt: () => false, onInternalIp: () => {},
+    onBlocked: (id, info) => blocked.push([info.resourceType, info.reason]),
+  });
+  for (const [url, type] of [
+    ['http://router.lan-by-name.test/a.png', 'image'],
+    ['http://router.lan-by-name.test/apply.cgi', 'xhr'],
+    ['ws://router.lan-by-name.test:8080/', 'webSocket'],
+    ['https://nas.lan-by-name.test/beacon', 'ping'],
+    ['https://nas.lan-by-name.test/x.js', 'script'],
+  ]) {
+    assert.deepStrictEqual(await decide(ses, { url, resourceType: type, webContentsId: 1 }), { cancel: true }, url);
+  }
+  assert.deepStrictEqual(await decide(ses, { url: 'https://cdn.public.test/a.png', resourceType: 'image', webContentsId: 1 }), {});
+  assert.deepStrictEqual(blocked, [['image', 'internal-dns'], ['xhr', 'internal-dns'], ['webSocket', 'internal-dns'], ['ping', 'internal-dns'], ['script', 'internal-dns']]);
+});
+
+test('verdict cache: one lookup per session and host for the TTL, shared while in flight, failures retried sooner', async () => {
+  let now = 1000;
+  let fail = false;
+  const ses = fakeSession(() => (fail ? Promise.reject(new Error('ERR_NAME_NOT_RESOLVED')) : Promise.resolve({ endpoints: [{ address: '93.184.216.34' }] })));
+  const cache = Pol.attachRequestPolicy(ses, {
+    policy: () => BLOCK, allowFile: false, isExempt: () => false, onInternalIp: () => {}, onBlocked: () => {}, now: () => now,
+  });
+  const many = await Promise.all([1, 2, 3, 4].map(i => decide(ses, { url: 'https://cdn.test/' + i + '.png', resourceType: 'image', webContentsId: 1 })));
+  assert.deepStrictEqual(many, [{}, {}, {}, {}]);
+  assert.strictEqual(ses.resolved.length, 1, 'concurrent requests share one lookup');
+  now += Pol.VERDICT_TTL_MS - 1;
+  await decide(ses, { url: 'https://cdn.test/5.png', resourceType: 'image', webContentsId: 1 });
+  assert.strictEqual(ses.resolved.length, 1, 'cached within the TTL');
+  now += 2;
+  fail = true;
+  assert.deepStrictEqual(await decide(ses, { url: 'https://cdn.test/6.png', resourceType: 'image', webContentsId: 1 }), { cancel: true }, 'fail closed');
+  assert.strictEqual(ses.resolved.length, 2, 'looked up again after the TTL');
+  fail = false;
+  now += Pol.FAILURE_TTL_MS + 1;
+  assert.deepStrictEqual(await decide(ses, { url: 'https://cdn.test/7.png', resourceType: 'image', webContentsId: 1 }), {});
+  assert.strictEqual(ses.resolved.length, 3, 'a failure is retried after the shorter failure TTL');
+  cache.clear();
+  await decide(ses, { url: 'https://cdn.test/8.png', resourceType: 'image', webContentsId: 1 });
+  assert.strictEqual(ses.resolved.length, 4, 'clear() forgets everything (session reuse)');
+});
+
+test('verdict cache is bounded', async () => {
+  const ses = fakeSession(() => Promise.resolve({ endpoints: [{ address: '93.184.216.34' }] }));
+  const cache = new Pol.SessionNetCache(ses);
+  for (let i = 0; i < Pol.MAX_CACHED_HOSTS + 50; i++) await cache.verdictFor('h' + i + '.test');
+  assert.strictEqual(cache.verdicts.size, Pol.MAX_CACHED_HOSTS);
+  assert.ok(!cache.verdicts.has('h0.test') && cache.verdicts.has('h' + (Pol.MAX_CACHED_HOSTS + 49) + '.test'), 'oldest evicted');
+});
+
+test('proxy: a name that fails to resolve behind a proxy is refused as dns-via-proxy, directly as dns-failed', async () => {
+  const reasons = [];
+  const mk = proxy => {
+    const ses = fakeSession(() => Promise.reject(new Error('ERR_NAME_NOT_RESOLVED')), () => proxy);
+    Pol.attachRequestPolicy(ses, { policy: () => BLOCK, allowFile: false, isExempt: () => false, onInternalIp: () => {}, onBlocked: (id, i) => reasons.push(i.reason) });
+    return ses;
+  };
+  assert.deepStrictEqual(await decide(mk('PROXY 127.0.0.1:3128'), { url: 'https://only-the-proxy-knows.test/', resourceType: 'mainFrame', webContentsId: 1 }), { cancel: true });
+  assert.deepStrictEqual(await decide(mk('DIRECT'), { url: 'https://nx.test/', resourceType: 'mainFrame', webContentsId: 1 }), { cancel: true });
+  assert.deepStrictEqual(reasons, ['dns-via-proxy', 'dns-failed']);
+  assert.strictEqual(Pol.isProxiedAnswer('PROXY 10.0.0.1:8080; DIRECT'), true);
+  assert.strictEqual(Pol.isProxiedAnswer('SOCKS5 127.0.0.1:1080'), true);
+  assert.strictEqual(Pol.isProxiedAnswer('DIRECT'), false);
+  assert.strictEqual(Pol.isProxiedAnswer(' direct '), false);
+  assert.strictEqual(Pol.isProxiedAnswer(undefined), false);
+});
+
+test('proxy: the response detector ignores details.ip of proxied requests (it is the proxy, often loopback)', async () => {
+  const seen = [];
+  const ses = fakeSession(() => Promise.resolve({ endpoints: [] }), url => (url.includes('via-proxy') ? 'PROXY 127.0.0.1:3128' : 'DIRECT'));
+  Pol.attachRequestPolicy(ses, { policy: () => BLOCK, allowFile: false, isExempt: () => false, onBlocked: () => {}, onInternalIp: (id, info) => seen.push(info.url) });
+  ses.handlers.onResponseStarted({ url: 'https://via-proxy.test/', ip: '127.0.0.1', webContentsId: 1 });
+  ses.handlers.onCompleted({ url: 'https://direct.test/', ip: '127.0.0.1', webContentsId: 1 });
+  await new Promise(r => setTimeout(r, 10));
+  assert.deepStrictEqual(seen, ['https://direct.test/']);
+});
+
+test('response detector: reports internal details.ip on redirect, response start and completion', async () => {
   const seen = [];
   const ses = fakeSession(() => Promise.reject(new Error('unused')));
   Pol.attachRequestPolicy(ses, {
@@ -194,6 +289,7 @@ test('response detector: reports internal details.ip on redirect, response start
   ses.handlers.onCompleted({ url: 'https://a/', webContentsId: 1 });
   ses.handlers.onCompleted({ url: 'https://a/', ip: '::1', webContentsId: 2 });
   ses.handlers.onCompleted({ url: 'https://a/', ip: '127.0.0.1', webContentsId: 99 });
+  await new Promise(r => setTimeout(r, 10)); // the proxy decision is asynchronous
   assert.deepStrictEqual(seen, [[1, '10.1.2.3'], [2, '::1']]);
 });
 

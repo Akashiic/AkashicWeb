@@ -172,6 +172,27 @@ test('window.open right after a mouseUp or keyDown on that screen loads in the s
   }
 });
 
+test('input on one document does not allow a popup from the next one (navigation clears it)', async () => {
+  let now = 10000;
+  const f = fakeContext({ now: () => now });
+  const sm = new ScreenManager(f.ctx);
+  try {
+    const s = sm.create(1, spec());
+    const wc = f.windows[0].webContents;
+    s.input({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
+    wc.emit('did-navigate', {}, 'https://next.example/', 200, 'OK');
+    wc.windowOpen('https://8.8.8.8/from-next-page');
+    s.input({ type: 'keyDown', keyCode: 'a', modifiers: [] });
+    s.navigate({ url: 'https://8.8.4.4/game-navigate' });
+    wc.windowOpen('https://8.8.8.8/after-game-navigate');
+    await flush();
+    assert.ok(!wc.loads.some(u => u.startsWith('https://8.8.8.8/')), wc.loads.join(' '));
+    assert.deepStrictEqual(f.events().filter(e => e.detail.reason === 'popup').length, 2);
+  } finally {
+    sm.destroyAll();
+  }
+});
+
 test('RESIZE beyond the cap keeps the current size and answers EVENT screen-limit', async () => {
   const f = fakeContext();
   const sm = new ScreenManager(f.ctx);

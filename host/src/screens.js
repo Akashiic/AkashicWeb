@@ -168,6 +168,8 @@ class Screen {
     wc.on('did-navigate', () => {
       this.media.reset();
       this.mapper.reset();
+      // Like Chromium's user activation, input on the old document does not carry over to a new one.
+      this.lastActivationAt = -Infinity;
       changed();
     });
     wc.on('did-navigate-in-page', (event, url, isMainFrame) => { if (isMainFrame) changed(); });
@@ -223,6 +225,7 @@ class Screen {
   load(url) {
     if (this.destroyed) return;
     const gen = ++this.navGen;
+    this.lastActivationAt = -Infinity; // a navigation the host starts is not a user gesture on the next page
     const v = checkNavigation(url, this.ctx.policy(), 'main', { allowFile: this.ctx.allowFile });
     if (!v.ok) {
       this.refuse(v, 'navigate');
@@ -232,7 +235,9 @@ class Screen {
       this._loadChecked(v.url);
       return;
     }
-    resolveVerdict(this.sessionEntry.session, v.host).then(r => {
+    const entry = this.sessionEntry;
+    const lookup = entry.verdict ? entry.verdict(v.host, v.url) : resolveVerdict(entry.session, v.host);
+    lookup.then(r => {
       if (this.destroyed || gen !== this.navGen) return; // a newer navigation was requested meanwhile
       if (r.ok) this._loadChecked(v.url);
       else this.refuse({ ok: false, reason: r.reason, host: v.host, url: v.url }, 'navigate');
