@@ -9,6 +9,7 @@ import com.akashiic.web.client.sync.MediaClock;
 import com.akashiic.web.client.sync.MediaSampler;
 import com.akashiic.web.client.sync.SyncController;
 import com.akashiic.web.client.sync.SyncDecision;
+import com.akashiic.web.client.sync.SyncStats;
 import com.akashiic.web.common.ReasonCode;
 import com.akashiic.web.common.ScreenKey;
 import com.akashiic.web.common.ScreenState;
@@ -35,6 +36,8 @@ public final class ClientScreen {
 
     // Sync
     final SyncController sync = new SyncController();
+    /** The last minute of follower sync errors, for /awdoctor (ADR-012 G4 measured on this client). */
+    final SyncStats syncStats = new SyncStats(240);
     final MediaSampler sampler = new MediaSampler();
     MediaClock mediaClock;
     LocalMedia localMedia;

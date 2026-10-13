@@ -365,6 +365,10 @@ class ClientScreensTest {
         SyncCommand c = host.syncs.get(0);
         assertTrue(c.rate > 1.0f && c.rate <= 1.05f, "speeds up: " + c.rate);
         assertFalse(c.seek);
+        assertTrue(
+            String.join("\n", screens.diagnostics(now[0]))
+                .contains("err p50=100ms"),
+            "the follower's error is in /awdoctor");
         screens.onMediaClock(s.key, 2, 99.0, 1f, false, (long) serverNow);
         now[0] += 300;
         screens.onHostMedia(id, media(19.9 + 0.35, Double.NaN));

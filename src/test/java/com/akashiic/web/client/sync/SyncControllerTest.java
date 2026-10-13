@@ -244,6 +244,25 @@ class SyncControllerTest {
         assertTrue(d.live);
     }
 
+    /** Review medium finding (ADR-012 item 6): the follower's error is at least measured on this client. */
+    @Test
+    void syncStatsKeepTheLastMinuteOfAbsoluteErrors() {
+        SyncStats s = new SyncStats(240);
+        assertTrue(Double.isNaN(s.quantile(0.95)));
+        assertEquals("err n=0", s.toString());
+        for (int i = 1; i <= 100; i++) s.add((i % 2 == 0 ? 1 : -1) * i / 1000.0); // 1..100 ms, both signs
+        s.add(Double.NaN);
+        assertEquals(100, s.count());
+        assertEquals(0.050, s.quantile(0.5), 1e-9);
+        assertEquals(0.095, s.quantile(0.95), 1e-9);
+        assertEquals("err p50=50ms p95=95ms n=100", s.toString());
+        for (int i = 0; i < 240; i++) s.add(2.0);
+        assertEquals(240, s.count(), "a sliding window");
+        assertEquals(2.0, s.quantile(0.5), 1e-9);
+        s.reset();
+        assertEquals(0, s.count());
+    }
+
     @Test
     void livePauseIsFollowedWithoutSeeking() {
         MediaClock paused = new MediaClock(1, 50, 1f, true, SERVER_STAMP);

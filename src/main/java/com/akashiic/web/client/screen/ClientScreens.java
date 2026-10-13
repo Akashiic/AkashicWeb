@@ -923,6 +923,9 @@ public final class ClientScreens {
         double controllerLiveLagS = mc == null ? Double.NaN : mc.liveLagSeconds();
         SyncDecision d = s.sync.update(mc, clock.serverNowMs(now), s.localMedia, now, controllerLiveLagS);
         s.lastDecision = d;
+        if (d.kind != SyncDecision.Kind.WAITING && d.kind != SyncDecision.Kind.AD_SUSPENDED) {
+            s.syncStats.add(d.errorSeconds);
+        }
         if (d.command != null && worthSending(d.command, s.lastSyncSent)) {
             host.sync(s.hostScreenId, d.command);
             s.lastSyncSent = d.command;
@@ -1045,6 +1048,7 @@ public final class ClientScreens {
     /** A new epoch: the clock, the reports and the crash history belong to the old page. */
     private static void newPage(ClientScreen s) {
         resetSync(s);
+        s.syncStats.reset();
         s.crashes = 0;
         s.recreateAtMs = 0;
     }
@@ -1118,7 +1122,7 @@ public final class ClientScreens {
             lines.add(
                 String.format(
                     java.util.Locale.ROOT,
-                    "%s %dx%d d=%.1f %s id=%d lod=%s vol=%s sync=%s %s",
+                    "%s %dx%d d=%.1f %s id=%d lod=%s vol=%s sync=%s %s %s",
                     s.key,
                     s.state().widthBlocks,
                     s.state().heightBlocks,
@@ -1128,6 +1132,7 @@ public final class ClientScreens {
                     s.lastLodSent,
                     s.audio.lastMuted() ? "muted" : String.format(java.util.Locale.ROOT, "%.2f", s.audio.lastVolume()),
                     s.lastDecision,
+                    s.syncStats,
                     s.failure == null ? "" : s.failure.name()));
         }
         for (String event : hostEvents) lines.add("host event: " + event);
