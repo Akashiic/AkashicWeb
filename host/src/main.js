@@ -179,7 +179,12 @@ function wire(socket, token) {
     },
   });
   state.link = link;
-  state.scheduler = new FrameScheduler({ blocked: () => link.blocked || link.closed, send: sendFrame });
+  state.scheduler = new FrameScheduler({
+    blocked: () => link.blocked || link.closed,
+    send: sendFrame,
+    // The scheduler already asked for a full frame next time; only the first few are logged.
+    onError: (screenId, err) => { if (++state.frameErrors <= 5) log.warn('frame of screen ' + screenId + ' dropped: ' + err.message); },
+  });
   const sessions = new SessionFactory({
     policy: () => state.policy,
     allowFile,
@@ -276,18 +281,14 @@ function wire(socket, token) {
   log.info('connected, HELLO sent');
 }
 
+/** Sends one frame; exceptions propagate to the scheduler, which requests a full frame next time. */
 function sendFrame(screenId, image, rect) {
   const link = state.link;
-  try {
-    const size = image.getSize();
-    const payloads = imagePayloads(image, size.width, size.height, rect);
-    let ok = true;
-    for (const parts of payloads) ok = link.send(P.T.FRAME, screenId, parts);
-    return ok;
-  } catch (err) {
-    if (++state.frameErrors <= 5) log.warn('frame dropped: ' + err.message);
-    return !link.blocked;
-  }
+  const size = image.getSize();
+  const payloads = imagePayloads(image, size.width, size.height, rect);
+  let ok = true;
+  for (const parts of payloads) ok = link.send(P.T.FRAME, screenId, parts);
+  return ok;
 }
 
 function logStats() {

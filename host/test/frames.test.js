@@ -216,6 +216,32 @@ test('scheduler: a size change or requestFull forces a full frame', () => {
   ]);
 });
 
+test('scheduler: a frame that fails to send makes the next frame of that screen full (its damage was lost)', () => {
+  const sent = [];
+  const errors = [];
+  let fail = false;
+  const s = new F.FrameScheduler({
+    blocked: () => false,
+    send: (id, image, rect) => {
+      if (fail) throw new Error('toBitmap failed');
+      sent.push({ id, rect });
+      return true;
+    },
+    onError: (id, err) => errors.push([id, err.message]),
+  });
+  s.offer(1, fakeImage(100, 50), null); // full first frame
+  s.offer(2, fakeImage(100, 50), null);
+  fail = true;
+  assert.doesNotThrow(() => s.offer(1, fakeImage(100, 50), { x: 10, y: 10, width: 5, height: 5 }));
+  fail = false;
+  s.offer(1, fakeImage(100, 50), { x: 30, y: 30, width: 2, height: 2 });
+  s.offer(2, fakeImage(100, 50), { x: 30, y: 30, width: 2, height: 2 });
+  assert.deepStrictEqual(errors, [[1, 'toBitmap failed']]);
+  assert.deepStrictEqual(sent.slice(2), [{ id: 1, rect: { x: 0, y: 0, w: 100, h: 50 } }, { id: 2, rect: { x: 30, y: 30, w: 2, h: 2 } }],
+    'screen 1 resent whole, screen 2 unaffected');
+  assert.strictEqual(s.stats.errors, 1);
+});
+
 test('scheduler: remove() forgets the screen; a recreated screen starts with a full frame', () => {
   const { s, io, sent } = scheduler();
   s.offer(7, fakeImage(10, 10), null);
