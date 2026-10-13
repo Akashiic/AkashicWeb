@@ -5,7 +5,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -182,7 +181,7 @@ public final class HostApp {
         MessageDigest md = Sha256.newDigest();
         long size = 0;
         InputStream in = openFromJar(src, f.path);
-        try (InputStream jar = in; OutputStream o = openForWrite(target, f.path)) {
+        try (InputStream jar = in; FileOutputStream o = openForWrite(target, f.path)) {
             byte[] buf = new byte[8192];
             int n;
             while ((n = readFromJar(jar, buf, f.path)) != -1) {
@@ -195,6 +194,8 @@ public final class HostApp {
                 md.update(buf, 0, n);
                 o.write(buf, 0, n);
             }
+            o.getFD()
+                .sync(); // on disk before the manifest and marker that vouch for it
         } catch (InstallException e) {
             throw e;
         } catch (IOException e) {
@@ -233,7 +234,7 @@ public final class HostApp {
         }
     }
 
-    private static OutputStream openForWrite(File target, String path) throws InstallException {
+    private static FileOutputStream openForWrite(File target, String path) throws InstallException {
         try {
             return new FileOutputStream(target);
         } catch (IOException e) {

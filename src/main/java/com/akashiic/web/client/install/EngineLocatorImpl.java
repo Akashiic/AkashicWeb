@@ -232,6 +232,7 @@ public final class EngineLocatorImpl implements EngineLocator {
 
     private void probe() {
         if (!prepare(true)) return;
+        tidy();
         // Every Windows start, also with an engine installed: evaluation mode can switch itself to enforce later.
         if (windows() && sacBlocks()) return;
         if (useInstalledEngine(false)) return;
@@ -246,6 +247,18 @@ public final class EngineLocatorImpl implements EngineLocator {
             return;
         }
         set(new EngineState(EngineState.Kind.CONSENT_NEEDED, 0f, ReasonCode.ENGINE_ABSENT), "consent needed");
+    }
+
+    /**
+     * At start-up, removes what interrupted installs left, when no other instance is installing right now (it would be
+     * using those files; it tidies up itself when it is done).
+     */
+    private void tidy() {
+        try (InstallLock lock = InstallLock.tryAcquire(paths.lockFile())) {
+            if (lock != null) newInstaller().cleanLeftovers();
+        } catch (InstallException e) {
+            LOG.info("Leftovers not cleaned now: {}", e.detail); // the install path reports a real folder problem
+        }
     }
 
     /**
@@ -353,7 +366,8 @@ public final class EngineLocatorImpl implements EngineLocator {
         try (InstallLock lock = InstallLock.acquire(paths.lockFile())) {
             if (cancelled(epoch)) return; // the cancel task that follows settles the state and the files
             EngineStore store = new EngineStore(paths.engineRoot());
-            store.cleanStaging();
+            EngineInstaller installer = newInstaller();
+            installer.cleanLeftovers();
             // Another game instance may have finished the same install while we waited for the lock.
             EngineStore.Inspection done = EngineStore.inspect(store.dirFor(target), known(), false);
             if (done.intact() && !replace) {
@@ -364,7 +378,6 @@ public final class EngineLocatorImpl implements EngineLocator {
             requireReplaceable(store.dirFor(target));
             if (windows() && sacBlocks()) return;
             File zip = importZip != null ? importZip : ImportScanner.find(paths.importDir(), target);
-            EngineInstaller installer = newInstaller();
             activeDownloader = installer.downloader();
             if (cancelled(epoch)) return;
             EngineInstaller.Installed r = installer.install(zip, this::progress);

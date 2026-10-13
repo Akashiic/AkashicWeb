@@ -291,13 +291,30 @@ final class EngineStore {
         }
     }
 
-    /** Deletes leftovers of interrupted installs. Call only while holding the install lock. */
+    /**
+     * Deletes leftovers of interrupted installs: staging and trash folders, and the temporary host app folders a crash
+     * during a host app swap leaves in an engine's {@code resources/}. Call only while holding the install lock (no
+     * install or swap is running then).
+     */
     void cleanStaging() {
         File[] children = root.listFiles();
         if (children == null) return;
         for (File c : children) {
             String n = c.getName();
-            if (n.startsWith(STAGING_PREFIX) || n.startsWith(TRASH_PREFIX)) FileOps.deleteTree(c);
+            if (n.startsWith(STAGING_PREFIX) || n.startsWith(TRASH_PREFIX)) {
+                FileOps.deleteTree(c);
+            } else if (!n.startsWith(".")) {
+                File[] res = new File(c, "resources").listFiles();
+                if (res == null) continue;
+                for (File r : res) {
+                    if (r.getName()
+                        .startsWith(APP_NEW_PREFIX)
+                        || r.getName()
+                            .startsWith(APP_OLD_PREFIX)) {
+                        FileOps.deleteTree(r);
+                    }
+                }
+            }
         }
     }
 

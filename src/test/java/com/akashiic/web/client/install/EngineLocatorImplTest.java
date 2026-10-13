@@ -853,4 +853,31 @@ class EngineLocatorImplTest {
                 .contains("manifest does not match marker"),
             l.detail());
     }
+
+    /** Review finding (low, 9c): leftovers of interrupted installs and of older pins are removed at the next start. */
+    @Test
+    void leftoversOfInterruptedInstallsAndOlderPinsAreRemoved() throws Exception {
+        installed().release();
+        File downloads = new File(base, "download");
+        String old = "electron-v44.6.0-linux-x64.zip";
+        for (String n : new String[] { old, old + ".part", old + ".state.json", old + ConsentRecord.SUFFIX,
+            old + ".consent.tmp-1f" }) {
+            Files.write(new File(downloads, n).toPath(), new byte[] { 1 });
+        }
+        File players = new File(downloads, "notas do jogador.txt");
+        Files.write(players.toPath(), new byte[] { 2 });
+        File staging = new File(base, "engine/" + EngineStore.STAGING_PREFIX + "dead");
+        assertTrue(new File(staging, "x").mkdirs());
+        File swap = new File(engineDir(), "resources/" + EngineStore.APP_NEW_PREFIX + "dead");
+        assertTrue(new File(swap, "src").mkdirs());
+
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertEquals(
+            java.util.Collections.singletonList(players.getName()),
+            java.util.Arrays.asList(downloads.list()),
+            "only the player's own file stays");
+        assertFalse(staging.exists());
+        assertFalse(swap.exists());
+    }
 }

@@ -3,7 +3,6 @@ package com.akashiic.web.client.install;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -18,15 +17,19 @@ final class FileOps {
 
     private FileOps() {}
 
-    /** Writes via a temp file in the same folder and an atomic rename, so readers never see half a file. */
+    /**
+     * Writes via a temp file in the same folder and an atomic rename, so readers never see half a file. The bytes are
+     * on disk before the rename: after a power loss the name holds either the old content or the whole new one.
+     */
     static void writeAtomic(File target, byte[] bytes) throws IOException {
         File dir = target.getAbsoluteFile()
             .getParentFile();
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("cannot create " + dir);
         File tmp = new File(dir, target.getName() + ".tmp-" + Long.toHexString(System.nanoTime()));
-        try (OutputStream out = new FileOutputStream(tmp)) {
+        try (FileOutputStream out = new FileOutputStream(tmp)) {
             out.write(bytes);
-            out.flush();
+            out.getFD()
+                .sync();
         }
         try {
             move(tmp, target);

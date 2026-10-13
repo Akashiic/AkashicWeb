@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Enumeration;
@@ -138,13 +137,13 @@ final class EngineExtractor {
         MessageDigest md = Sha256.newDigest();
         long size = 0;
         try (InputStream in = zf.getInputStream(e)) {
-            OutputStream os;
+            FileOutputStream os;
             try {
                 os = new FileOutputStream(out);
             } catch (IOException ex) {
                 throw writeFailure(target, out, ex);
             }
-            try (OutputStream o = os) {
+            try (FileOutputStream o = os) {
                 byte[] buf = new byte[Sha256.BUFFER];
                 int n;
                 while ((n = in.read(buf)) != -1) {
@@ -160,6 +159,10 @@ final class EngineExtractor {
                         throw writeFailure(target, out, ex);
                     }
                 }
+                // On disk before the marker is written (review finding 9b): the start-up check compares sizes only,
+                // and a power loss could otherwise leave zero-filled files of the right size behind a valid marker.
+                o.getFD()
+                    .sync();
             } catch (InstallException ex) {
                 throw ex;
             } catch (IOException ex) {

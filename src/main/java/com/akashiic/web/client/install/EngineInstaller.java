@@ -60,6 +60,34 @@ final class EngineInstaller {
         return store;
     }
 
+    /**
+     * Deletes what interrupted installs left (review finding 9c): staging, trash and temporary host app folders, and in
+     * {@code download/} the part files, resume and consent records and zips of other pins (an earlier mod version's).
+     * The player's own files there are never touched. Call only while holding the install lock.
+     */
+    void cleanLeftovers() {
+        store.cleanStaging();
+        File[] files = paths.downloadDir()
+            .listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            String n = f.getName();
+            if (f.isFile() && isEngineDownload(n) && !n.startsWith(target.assetName)) {
+                LOG.info("Removing a leftover download {}", n);
+                if (!f.delete()) LOG.warn("Could not delete {}", n);
+            }
+        }
+    }
+
+    /** Names the installer creates in download/: the zip, its part, resume, consent and temporary files. */
+    static boolean isEngineDownload(String name) {
+        if (!name.startsWith("electron-v")) return false;
+        return name.endsWith(".zip") || name.endsWith(".zip.part")
+            || name.endsWith(".zip.state.json")
+            || name.endsWith(".zip" + ConsentRecord.SUFFIX)
+            || name.contains(".zip.") && name.contains(".tmp-");
+    }
+
     /** The downloader this install uses, so a cancel from another thread can stop it. */
     Downloader downloader() {
         return downloader;
