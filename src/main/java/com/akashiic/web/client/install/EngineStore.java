@@ -33,6 +33,9 @@ final class EngineStore {
 
     static final String STAGING_PREFIX = ".staging-";
     static final String TRASH_PREFIX = ".trash-";
+    /** Temporary host app folders inside {@code resources/} while it is swapped. */
+    static final String APP_NEW_PREFIX = ".akw-app-new-";
+    static final String APP_OLD_PREFIX = ".akw-app-old-";
 
     /** The {@code .complete} marker's content. */
     static final class Marker {
@@ -228,7 +231,8 @@ final class EngineStore {
 
     /**
      * Keeps {@code current} and the newest other installed engine (the rollback target); retires the rest and any
-     * trash. Best effort: a folder in use by another game instance is left for a later start.
+     * trash. Best effort: a folder another game instance may be running its host from ({@link AppUseLock}) is left for
+     * a later start.
      */
     void prune(File current) {
         boolean keptPrevious = false;
@@ -238,9 +242,16 @@ final class EngineStore {
                 keptPrevious = true;
                 continue;
             }
-            LOG.info("Removing old engine {}", dir.getName());
-            removeMarker(dir);
-            FileOps.deleteTree(dir);
+            try {
+                boolean removed = AppUseLock.exclusively(dir, null, () -> {
+                    LOG.info("Removing old engine {}", dir.getName());
+                    removeMarker(dir);
+                });
+                if (removed) FileOps.deleteTree(dir);
+                else LOG.info("Old engine {} is in use by another game instance; kept for now", dir.getName());
+            } catch (InstallException e) {
+                LOG.warn("Old engine {} not removed: {}", dir.getName(), e.detail);
+            }
         }
         File[] children = root.listFiles();
         if (children == null) return;

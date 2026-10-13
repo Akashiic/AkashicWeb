@@ -387,7 +387,7 @@ class EngineLocatorImplTest {
 
     @Test
     void repairReinstallsDamageOnlyAFullRehashFinds() throws Exception {
-        installed();
+        installed().release();
         File ffmpeg = new File(engineDir(), "libffmpeg.so");
         byte[] bytes = Files.readAllBytes(ffmpeg.toPath());
         bytes[10] ^= 1; // same size: the start-up check cannot see it
@@ -501,7 +501,7 @@ class EngineLocatorImplTest {
 
     @Test
     void newHostAppInTheJarIsInstalledWithoutDownloadingTheEngine() throws Exception {
-        installed();
+        installed().release(); // the game with the old mod version exited
         int requests = server.requestCount();
         Map<String, String> v2 = new LinkedHashMap<>();
         v2.put("package.json", "{\"name\":\"akashicweb-host\",\"main\":\"src/main.js\",\"version\":\"2\"}\n");
@@ -524,7 +524,7 @@ class EngineLocatorImplTest {
 
     @Test
     void damagedEngineFailsAtStartupAndRequestInstallRepairsIt() throws Exception {
-        installed();
+        installed().release();
         Files.write(new File(engineDir(), "libffmpeg.so").toPath(), new byte[] { 1, 2, 3 });
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
         assertEquals(EngineState.Kind.FAILED, l.state().kind);
@@ -547,7 +547,7 @@ class EngineLocatorImplTest {
 
     @Test
     void damagedHostAppIsRepairedFromTheJarAtStartup() throws Exception {
-        installed();
+        installed().release();
         File main = new File(engineDir(), "resources/app/src/main.js");
         Files.write(main.toPath(), "evil()".getBytes(StandardCharsets.UTF_8));
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
@@ -626,7 +626,7 @@ class EngineLocatorImplTest {
 
     @Test
     void onlyTheCurrentAndOnePreviousEngineAreKept() throws Exception {
-        installed();
+        installed().release();
         File first = engineDir();
         List<File> dirs = new ArrayList<>();
         for (int i = 1; i <= 2; i++) {
@@ -650,6 +650,7 @@ class EngineLocatorImplTest {
             dirs.add(
                 l.hostExecutable()
                     .getParentFile());
+            l.release();
         }
         assertFalse(first.exists(), "the oldest engine was removed");
         assertTrue(
@@ -677,5 +678,108 @@ class EngineLocatorImplTest {
             one.userDataDir()
                 .equals(two.userDataDir()),
             "two instances never share a Chromium profile");
+    }
+
+    private static Map<String, String> hostAppV2() {
+        Map<String, String> v2 = new LinkedHashMap<>();
+        v2.put("package.json", "{\"name\":\"akashicweb-host\",\"main\":\"src/main.js\",\"version\":\"2\"}\n");
+        v2.put("src/main.js", "'use strict';\n// test host app v2\n");
+        return v2;
+    }
+
+    private String installedMainJs() throws Exception {
+        return new String(
+            Files.readAllBytes(new File(engineDir(), "resources/app/src/main.js").toPath()),
+            StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Review finding (medium, 2, probe 'skew'): a second game instance with another mod version must not rewrite the
+     * host app the first instance's host runs from. It reports ENGINE_IN_USE; once the first one exits, Repair updates.
+     */
+    @Test
+    void anotherModVersionNeverRewritesTheHostAppOfARunningInstance() throws Exception {
+        EngineLocatorImpl v1 = installed();
+        EngineLocatorImpl v2 = started(
+            builder(TestSupport.linuxDesktop(), target).hostApp(TestSupport.hostApp(hostAppV2())));
+        assertEquals(EngineState.Kind.FAILED, v2.state().kind);
+        assertEquals(ReasonCode.ENGINE_IN_USE, v2.state().reason, v2.detail());
+        assertTrue(installedMainJs().contains("v1"), "the running instance's app is untouched");
+        assertEquals(EngineState.Kind.READY, v1.state().kind);
+
+        v1.release(); // the first game exits
+        v2.repair();
+        assertEquals(EngineState.Kind.READY, v2.state().kind, v2.detail());
+        assertTrue(installedMainJs().contains("v2"));
+
+        // The first version starts again while v2 runs: now it is the one told to wait, and nothing swaps back.
+        EngineLocatorImpl again = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(ReasonCode.ENGINE_IN_USE, again.state().reason);
+        assertTrue(installedMainJs().contains("v2"));
+    }
+
+    /** Review finding (medium, 2): verify() no longer calls a folder intact when its app is another version's. */
+    @Test
+    void verifyNoticesAHostAppThatIsNotThisVersions() throws Exception {
+        EngineLocatorImpl v1 = installed();
+        v1.release();
+        EngineLocatorImpl v2 = started(
+            builder(TestSupport.linuxDesktop(), target).hostApp(TestSupport.hostApp(hostAppV2())));
+        assertEquals(EngineState.Kind.READY, v2.state().kind, v2.detail());
+        // v1 still thinks it is READY (it was released behind its back in this test) and its host fails to load.
+        v1.verifyAfterLoadFailure();
+        assertEquals(ReasonCode.ENGINE_IN_USE, v1.state().reason, "v2 runs from the folder: v1 must not swap it");
+        v2.release();
+        v1.verifyAfterLoadFailure();
+        assertEquals(EngineState.Kind.READY, v1.state().kind, v1.detail());
+        assertTrue(installedMainJs().contains("v1"));
+    }
+
+    /** Review finding (medium, 2): the lock holds across processes (a second JVM), as two game instances are. */
+    @Test
+    void aHostAppHeldByAnotherProcessIsNotRewritten() throws Exception {
+        installed().release();
+        Process holder = AppLockHolder.start(AppUseLock.fileFor(engineDir()));
+        try {
+            EngineLocatorImpl v2 = started(
+                builder(TestSupport.linuxDesktop(), target).hostApp(TestSupport.hostApp(hostAppV2())));
+            assertEquals(ReasonCode.ENGINE_IN_USE, v2.state().reason, v2.detail());
+            assertTrue(installedMainJs().contains("v1"));
+            holder.destroy();
+            assertTrue(holder.waitFor(10, TimeUnit.SECONDS));
+            v2.repair();
+            assertEquals(EngineState.Kind.READY, v2.state().kind, v2.detail());
+            assertTrue(installedMainJs().contains("v2"));
+        } finally {
+            holder.destroy();
+        }
+    }
+
+    @Test
+    void anOldEngineStillInUseIsNotPruned() throws Exception {
+        EngineLocatorImpl first = installed(); // keeps running from the oldest engine
+        File oldest = engineDir();
+        for (int i = 1; i <= 2; i++) {
+            byte[] z = TestSupport.zip(TestSupport.linuxLikeEntries(200 + i));
+            server.body = z;
+            server.etag = "\"p" + i + "\"";
+            EngineTarget t = new EngineTarget(
+                "linux-x64",
+                "44.9." + i,
+                "electron-v44.9." + i + "-linux-x64.zip",
+                server.canonicalUrl("electron-v44.9." + i + ".zip"),
+                z.length,
+                Sha256.of(z),
+                "electron",
+                "AkashicWebHost",
+                false,
+                target.unixExecutables);
+            EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), t));
+            l.requestInstall();
+            assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+            l.release();
+        }
+        assertTrue(new File(oldest, LocalManifest.MARKER).isFile(), "the engine a running instance uses stays whole");
+        assertEquals(EngineState.Kind.READY, first.state().kind);
     }
 }

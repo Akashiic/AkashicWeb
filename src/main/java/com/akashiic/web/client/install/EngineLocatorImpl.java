@@ -62,6 +62,8 @@ public final class EngineLocatorImpl implements EngineLocator {
     private volatile float lastProgress = -1f;
     /** The download in progress, so {@link #cancelInstall()} can stop it from another thread. */
     private volatile Downloader activeDownloader;
+    /** This instance's shared hold on the READY engine folder ({@link AppUseLock}); null when not READY. */
+    private volatile AppUseLock.Hold appHold;
 
     private EngineLocatorImpl(Builder cfg) {
         this.cfg = cfg;
@@ -89,6 +91,16 @@ public final class EngineLocatorImpl implements EngineLocator {
     @Override
     public EngineState state() {
         return state;
+    }
+
+    /**
+     * Lets go of the engine folder so another game instance may update its host app. The game never needs this: the OS
+     * drops the hold when the JVM exits. For tests, and for a client that tears its browser support down for good.
+     */
+    public void release() {
+        AppUseLock.Hold h = appHold;
+        appHold = null;
+        if (h != null) h.close();
     }
 
     @Override
@@ -295,7 +307,7 @@ public final class EngineLocatorImpl implements EngineLocator {
                 return true;
             }
             try (InstallLock lock = InstallLock.acquire(paths.lockFile())) {
-                newInstaller().refreshHostApp(dir, in.marker);
+                newInstaller().refreshHostApp(dir, in.marker, appHold);
                 EngineStore.Inspection again = EngineStore.inspect(dir, full);
                 if (!again.intact()) {
                     String why = again.problem != null ? again.problem.detail : "marker missing";
@@ -346,6 +358,7 @@ public final class EngineLocatorImpl implements EngineLocator {
                 ready(done.dir, done.marker, "installed by another instance");
                 return;
             }
+            requireReplaceable(store.dirFor(target));
             if (windows() && sacBlocks()) return;
             File zip = importZip != null ? importZip : ImportScanner.find(paths.importDir(), target);
             EngineInstaller installer = newInstaller();
@@ -361,6 +374,23 @@ public final class EngineLocatorImpl implements EngineLocator {
             fail(EngineState.Kind.FAILED, e.failure, e.detail);
         } finally {
             activeDownloader = null;
+        }
+    }
+
+    /**
+     * The folder an install is about to replace must not be in use: let go of our own hold on it (Windows cannot rename
+     * a folder with an open file, our lock file included), then make sure nobody else holds it. A share taken between
+     * this check and the rename is not excluded, but an instance shares only a folder with a marker, and the rename
+     * removes the marker first.
+     */
+    private void requireReplaceable(File dir) throws InstallException {
+        if (!dir.exists()) return;
+        AppUseLock.Hold h = appHold;
+        if (h != null && h.engineDir.equals(dir)) release();
+        if (!AppUseLock.exclusively(dir, null, () -> {})) {
+            throw new InstallException(
+                InstallFailure.ENGINE_IN_USE,
+                "another game instance is using the browser engine being replaced: close it, then press Repair");
         }
     }
 
@@ -391,15 +421,25 @@ public final class EngineLocatorImpl implements EngineLocator {
         if (dir == null || paths == null) return;
         if (windows() && sacBlocks()) return;
         EngineStore.Inspection full = EngineStore.inspect(dir, true);
-        if (full.intact()) {
+        boolean appCurrent;
+        try {
+            appCurrent = HostApp.isCurrent(cfg.hostApp, new File(dir, EngineManifest.APP_DIR));
+        } catch (InstallException e) {
+            fail(EngineState.Kind.FAILED, e.failure, e.detail);
+            return;
+        }
+        if (full.intact() && appCurrent) {
             LOG.info("Engine {} re-hashed after a load failure: intact", dir.getName());
             return;
         }
-        LOG.warn("Engine {} re-hashed after a load failure: {}", dir.getName(), full.problem);
+        LOG.warn(
+            "Engine {} re-hashed after a load failure: {}",
+            dir.getName(),
+            full.problem != null ? full.problem : "host app is not this mod version's");
         try (InstallLock lock = InstallLock.acquire(paths.lockFile())) {
             EngineInstaller installer = newInstaller();
-            if (full.installed() && full.problem.hostAppOnly) {
-                installer.refreshHostApp(dir, full.marker);
+            if (full.installed() && (full.problem == null || full.problem.hostAppOnly)) {
+                installer.refreshHostApp(dir, full.marker, appHold);
                 EngineStore.Inspection again = EngineStore.inspect(dir, true);
                 if (again.intact()) {
                     ready(dir, again.marker, "host app repaired after a load failure");
@@ -412,7 +452,7 @@ public final class EngineLocatorImpl implements EngineLocator {
                 if (other.equals(dir) || !samePlatform(other)) continue;
                 EngineStore.Inspection prev = EngineStore.inspect(other, true);
                 if (!prev.intact() && !(prev.installed() && prev.problem.hostAppOnly)) continue;
-                installer.refreshHostApp(other, prev.marker);
+                installer.refreshHostApp(other, prev.marker, appHold);
                 EngineStore.Inspection ok = EngineStore.inspect(other, true);
                 if (ok.intact()) {
                     ready(other, ok.marker, "rolled back to " + ok.marker.engineId + " after a load failure");
@@ -469,12 +509,27 @@ public final class EngineLocatorImpl implements EngineLocator {
     }
 
     private void ready(File dir, EngineStore.Marker marker, String why) {
+        try {
+            holdApp(dir);
+        } catch (InstallException e) {
+            fail(EngineState.Kind.FAILED, e.failure, e.detail);
+            return;
+        }
         engineDir = dir;
         engineMarker = marker;
         set(new EngineState(EngineState.Kind.READY, 1f, ReasonCode.OK), why + ": " + dir.getName());
     }
 
+    /** Shares the folder this instance may now run the host from, letting go of a previous one. */
+    private void holdApp(File dir) throws InstallException {
+        AppUseLock.Hold h = appHold;
+        if (h != null && h.engineDir.equals(dir)) return;
+        appHold = AppUseLock.share(dir);
+        if (h != null) h.close();
+    }
+
     private void fail(EngineState.Kind kind, InstallFailure failure, String why) {
+        release(); // nothing will run from the engine folder now; never block another instance's update
         set(new EngineState(kind, 0f, failure.reason), why);
     }
 

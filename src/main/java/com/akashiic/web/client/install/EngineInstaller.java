@@ -124,16 +124,31 @@ final class EngineInstaller {
     /**
      * Makes {@code resources/app} match the jar. Returns false when it already did. The new app is written to a
      * sibling folder first and swapped in with two renames, so the engine never holds a half-copied app; the manifest
-     * and marker are rewritten after the swap.
+     * and marker are rewritten after the swap. All of it happens under {@link AppUseLock}'s exclusive lock:
+     * {@code mine} is the caller's own hold on this engine, or null.
+     *
+     * @throws InstallException ENGINE_IN_USE when another game instance may be running the host from this folder
      */
-    boolean refreshHostApp(File engineDir, EngineStore.Marker marker) throws InstallException {
+    boolean refreshHostApp(File engineDir, EngineStore.Marker marker, AppUseLock.Hold mine) throws InstallException {
         File appDir = new File(engineDir, EngineManifest.APP_DIR);
         LocalManifest old = LocalManifest.read(engineDir);
         if (HostApp.isCurrent(hostApp, appDir) && old.hostAppCheck(engineDir) == null) return false;
+        boolean done = AppUseLock.exclusively(engineDir, mine, () -> swapHostApp(engineDir, appDir, old, marker));
+        if (!done) {
+            throw new InstallException(
+                InstallFailure.ENGINE_IN_USE,
+                "another game instance is using this browser engine with a different host app (another AkashicWeb "
+                    + "version?): close it, then press Repair");
+        }
+        return true;
+    }
+
+    private void swapHostApp(File engineDir, File appDir, LocalManifest old, EngineStore.Marker marker)
+        throws InstallException {
         String tag = Long.toHexString(System.nanoTime());
         File resources = appDir.getParentFile();
-        File fresh = new File(resources, ".akw-app-new-" + tag);
-        File retired = new File(resources, ".akw-app-old-" + tag);
+        File fresh = new File(resources, EngineStore.APP_NEW_PREFIX + tag);
+        File retired = new File(resources, EngineStore.APP_OLD_PREFIX + tag);
         try {
             List<LocalManifest.Entry> appEntries = HostApp.install(hostApp, fresh);
             try {
@@ -148,7 +163,6 @@ final class EngineInstaller {
             writeManifest(manifest, engineDir);
             store.writeMarker(engineDir, manifest, marker.hostExecutable, clock.getAsLong());
             LOG.info("Host app in {} updated from the mod jar", engineDir.getName());
-            return true;
         } finally {
             FileOps.deleteTree(fresh);
             FileOps.deleteTree(retired);
