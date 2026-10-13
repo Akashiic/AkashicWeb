@@ -29,9 +29,15 @@ final class EngineInstaller {
 
     EngineInstaller(InstallPaths paths, EngineTarget target, Downloader downloader, HostApp.Source hostApp,
         ToLongFunction<File> usableSpace, LongSupplier clock) {
+        this(paths, target, downloader, hostApp, usableSpace, clock, new EngineStore(paths.engineRoot()));
+    }
+
+    /** With a given store (tests: a store whose renames misbehave like a scanner's). */
+    EngineInstaller(InstallPaths paths, EngineTarget target, Downloader downloader, HostApp.Source hostApp,
+        ToLongFunction<File> usableSpace, LongSupplier clock, EngineStore store) {
         this.paths = paths;
         this.target = target;
-        this.store = new EngineStore(paths.engineRoot());
+        this.store = store;
         this.downloader = downloader;
         this.hostApp = hostApp;
         this.usableSpace = usableSpace;

@@ -38,4 +38,21 @@ class SafePathTest {
         InstallException e = assertThrows(InstallException.class, () -> SafePath.resolveInside(root, "../x"));
         assertEquals(InstallFailure.HASH_MISMATCH, e.failure);
     }
+
+    /**
+     * Review finding (medium, 5, mutant M7): a name can be well-formed and still lead outside the root through a
+     * linked folder inside it. The canonical-path check is the second, independent line of defence.
+     */
+    @Test
+    void aLinkedFolderInsideTheRootCannotLeadOutside(@TempDir File tmp) throws Exception {
+        File root = new File(tmp, "staging");
+        File outside = new File(tmp, "outside");
+        assertTrue(root.mkdirs() && outside.mkdirs());
+        java.nio.file.Files.createSymbolicLink(new File(root, "resources").toPath(), outside.toPath());
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> SafePath.resolveInside(root, "resources/evil.dll"));
+        assertEquals(InstallFailure.HASH_MISMATCH, e.failure);
+        assertTrue(e.detail.contains("escapes"), e.detail);
+    }
 }

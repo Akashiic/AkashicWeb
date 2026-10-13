@@ -831,4 +831,26 @@ class EngineLocatorImplTest {
         assertEquals(EngineState.Kind.FAILED, b.state().kind, b.detail());
         assertTrue(new File(dirA, LocalManifest.MARKER).isFile(), "the unpinned engine was left alone, not used");
     }
+
+    /**
+     * Review finding (medium, 5, mutant M5): the marker binds the manifest's content (its canonical rendering). A
+     * manifest whose content changed after the install, here the zip it claims to come from, is not trusted.
+     */
+    @Test
+    void aManifestThatNoLongerMatchesItsMarkerIsNotTrusted() throws Exception {
+        installed().release();
+        File manifest = new File(engineDir(), LocalManifest.FILE);
+        String text = new String(Files.readAllBytes(manifest.toPath()), StandardCharsets.UTF_8);
+        Files.write(
+            manifest.toPath(),
+            text.replace("# zip-sha256 " + target.sha256, "# zip-sha256 " + Sha256.ofUtf8("another zip"))
+                .getBytes(StandardCharsets.UTF_8));
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.FAILED, l.state().kind);
+        assertEquals(ReasonCode.HASH_MISMATCH, l.state().reason);
+        assertTrue(
+            l.detail()
+                .contains("manifest does not match marker"),
+            l.detail());
+    }
 }
