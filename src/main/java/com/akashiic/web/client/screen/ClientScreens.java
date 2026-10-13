@@ -32,6 +32,7 @@ import com.akashiic.web.client.sync.LocalMedia;
 import com.akashiic.web.client.sync.MediaClock;
 import com.akashiic.web.client.sync.ServerClock;
 import com.akashiic.web.client.sync.SyncDecision;
+import com.akashiic.web.common.HitMath;
 import com.akashiic.web.common.ReasonCode;
 import com.akashiic.web.common.Rights;
 import com.akashiic.web.common.ScreenKey;
@@ -73,11 +74,18 @@ public final class ClientScreens {
         public final ClientScreen screen;
         public final double u;
         public final double v;
+        /** Blocks from the eye to the hit along the ray; NaN for a hit from vanilla's crosshair. */
+        public final double distance;
 
         Hit(ClientScreen screen, double u, double v) {
+            this(screen, u, v, Double.NaN);
+        }
+
+        Hit(ClientScreen screen, double u, double v, double distance) {
             this.screen = screen;
             this.u = u;
             this.v = v;
+            this.distance = distance;
         }
     }
 
@@ -511,6 +519,22 @@ public final class ClientScreens {
             if (uv != null) return new Hit(s, uv[0], uv[1]);
         }
         return null;
+    }
+
+    /**
+     * The in-world pointer: the nearest screen picture the eye ray (eye + t * look, absolute coordinates) hits within
+     * {@code reach} blocks in this dimension, from the front, or null. Unlike vanilla's crosshair (4.5 blocks) it
+     * reaches the top of a tall screen; the caller checks that no block stands in between. The same math as the
+     * server's checks (common.HitMath).
+     */
+    public Hit aim(int dimension, double ex, double ey, double ez, double dx, double dy, double dz, double reach) {
+        Hit best = null;
+        for (ClientScreen s : screens.values()) {
+            if (s.key.dim != dimension || s.geometry() == null) continue;
+            double[] r = HitMath.rayHit(s.state(), ex, ey, ez, dx, dy, dz, reach);
+            if (r != null && (best == null || r[2] < best.distance)) best = new Hit(s, r[0], r[1], r[2]);
+        }
+        return best;
     }
 
     /**

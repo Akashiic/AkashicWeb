@@ -96,7 +96,11 @@ public class ClientProxy extends CommonProxy {
             .bus()
             .register(new ClientEvents(screens, uploader, keyboardKey, addressKey));
         MinecraftForge.EVENT_BUS.register(new WorldEvents(screens, renderer));
-        MinecraftForge.EVENT_BUS.register(new ScreenInteraction(screens));
+        ScreenInteraction pointer = new ScreenInteraction(screens);
+        MinecraftForge.EVENT_BUS.register(pointer);
+        FMLCommonHandler.instance()
+            .bus()
+            .register(pointer.frameListener());
         ClientCommandHandler.instance.registerCommand(new DoctorCommand(this::diagnostics));
         if (wiring != null) {
             FMLCommonHandler.instance()
