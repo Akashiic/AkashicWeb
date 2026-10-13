@@ -68,6 +68,13 @@ A revisão adversarial achou problemas sérios, e eles estão sendo corrigidos a
 - **Por quê:** antes ia ao servidor e voltava. Isso somava uma ida e volta de rede em cada tecla e fazia o texto digitado, até senhas, passar pelo servidor.
 - **O que o servidor continua decidindo:** quem controla a tela, qual é o endereço e o relógio do vídeo, para todos verem a mesma coisa.
 
+## Diretriz do Gabriel em 13/10 (D-017)
+
+- **Tecnologia:** moderna e de ponta.
+- **Interface:** todas as telas em **ModularUI2**, que já está no pack.
+- **Interação:** reproduzir a **dinâmica do Web Displays**, com teclado e mouse interagindo com a tela dentro do mundo.
+- **Próximo passo:** a onda 3 pesquisa e desenha isso antes de codar. Depois viram as decisões de arquitetura ADR-017 (interface e stack) e ADR-018 (modelo de interação).
+
 ## Decisões que faltam (ver [`DECISIONS.md`](DECISIONS.md))
 
 1. **Sites:** lista de permitidos ou de bloqueados nas telas públicas? E quem são os admins?
