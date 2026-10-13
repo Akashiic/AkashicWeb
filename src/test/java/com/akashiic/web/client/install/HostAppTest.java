@@ -51,6 +51,28 @@ class HostAppTest {
         }
     }
 
+    /**
+     * Review finding (low, 7, probe 'longpath'): the engine manifest stores {@code resources/app/<path>} and rejects
+     * lines over the length limit, so a host path that fits alone but not with the prefix installed as READY and then
+     * failed every start (and every repair). The jar's manifest is now checked against the installed path.
+     */
+    @Test
+    void aHostPathTooLongOnceInstalledIsRejectedUpFront() throws Exception {
+        int room = SafePath.MAX_RELATIVE_LENGTH - (EngineManifest.APP_DIR + "/").length();
+        StringBuilder fits = new StringBuilder("src/");
+        while (fits.length() < room - 3) fits.append('a');
+        fits.append(".js");
+        assertEquals(room, fits.length());
+        HostApp.parse(utf8(HASH + "  package.json\n" + HASH + "  " + fits + "\n"));
+        String tooLong = fits.toString()
+            .replace(".js", "a.js");
+        assertTrue(SafePath.isSafeRelative(tooLong), "fine on its own");
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> HostApp.parse(utf8(HASH + "  package.json\n" + HASH + "  " + tooLong + "\n")));
+        assertEquals(InstallFailure.HASH_MISMATCH, e.failure);
+    }
+
     @Test
     void installsEveryFileAndTheManifest() throws Exception {
         File app = new File(tmp, "resources/app");

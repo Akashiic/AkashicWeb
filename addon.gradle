@@ -36,6 +36,17 @@ def packageHostApp = tasks.register("packageHostApp") {
             if (!(rel ==~ /[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)*(\/[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)*)*/)) {
                 throw new GradleException("host app path not allowed in the jar: " + rel)
             }
+            // Same limits as SafePath, applied to the path as installed (the engine manifest stores that form).
+            def installed = "resources/app/" + rel
+            if (installed.length() > 120) {
+                throw new GradleException("host app path too long once installed (" + installed.length() + " > 120): " + rel)
+            }
+            if (rel.split("/").any { seg ->
+                def stem = (seg.contains(".") ? seg.substring(0, seg.indexOf(".")) : seg).toLowerCase(Locale.ROOT)
+                stem ==~ /con|prn|aux|nul|com[1-9]|lpt[1-9]/
+            }) {
+                throw new GradleException("host app path is a Windows device name (CON, NUL, AUX...): " + rel)
+            }
             def src = new File(hostDir, rel)
             def dst = new File(out, rel)
             dst.parentFile.mkdirs()

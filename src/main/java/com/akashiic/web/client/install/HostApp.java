@@ -85,7 +85,9 @@ public final class HostApp {
                 throw new InstallException(InstallFailure.HASH_MISMATCH, "mod jar: host app manifest line malformed");
             }
             String path = line.substring(66);
-            if (!SafePath.isSafeRelative(path) || path.equals(MANIFEST) || !seen.add(path)) {
+            // Checked as installed (resources/app/<path>): the engine manifest applies the same rules to that form.
+            if (!SafePath.isSafeRelative(EngineManifest.APP_DIR + "/" + path) || path.equals(MANIFEST)
+                || !seen.add(path)) {
                 throw new InstallException(
                     InstallFailure.HASH_MISMATCH,
                     "mod jar: host app manifest path rejected: " + SafePath.printable(path));
