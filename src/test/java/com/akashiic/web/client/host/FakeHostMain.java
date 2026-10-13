@@ -29,8 +29,10 @@ import java.util.regex.Pattern;
  * Args: {@code <modeFile> <recordFile> --akw-port=N --akw-parent-pid=P --akw-user-data=D --akw-log=L}. Modes:
  * {@code ok}, {@code exit-after-welcome}, {@code bad-token}, {@code bad-major}, {@code silent} (never connects),
  * {@code die} (exits at once), {@code env-token} (uses AKW_TOKEN, ignores stdin), {@code garbage} (bad magic after
- * HELLO). In every connected mode: CREATE answers with a full FRAME, a STATE and a PCM chunk; PING with PONG; QUIT
- * with BYE and exit; NAVIGATE {@code {"action":"stop"}} makes it exit (a simulated crash).
+ * HELLO), {@code hang-once} (the first launch stops reading after WELCOME, like a hung main thread that keeps its
+ * socket open; later launches behave like {@code ok}), {@code slow-pong:<ms>} (answers every PING after a delay). In
+ * every connected mode: CREATE answers with a full FRAME, a STATE and a PCM chunk; PING with PONG; QUIT with BYE and
+ * exit; NAVIGATE {@code {"action":"stop"}} makes it exit (a simulated crash).
  */
 public final class FakeHostMain {
 
@@ -94,12 +96,19 @@ public final class FakeHostMain {
                 }
                 record("recv " + m.type + " " + m.screenId + " " + m.seq + " " + m.text());
                 switch (m.type) {
-                    case HostProtocol.WELCOME:
+                    case HostProtocol.WELCOME: {
                         if (mode.equals("exit-after-welcome")) {
                             record("exiting");
                             System.exit(0);
                         }
+                        File hung = new File(args[0] + ".hung");
+                        if (mode.equals("hang-once") && hung.createNewFile()) {
+                            record("hanging");
+                            Thread.sleep(120_000); // never reads again; the socket stays open
+                            return;
+                        }
                         break;
+                    }
                     case HostProtocol.CREATE: {
                         int w = field(m.text(), "width");
                         int h = field(m.text(), "height");
@@ -124,6 +133,9 @@ public final class FakeHostMain {
                     case HostProtocol.PING: {
                         Matcher n = NONCE.matcher(m.text());
                         String nonce = n.find() ? n.group(1) : "0";
+                        if (mode.startsWith("slow-pong:")) {
+                            Thread.sleep(Long.parseLong(mode.substring("slow-pong:".length())));
+                        }
                         HostProtocol
                             .writeJson(out, HostProtocol.PONG, 0, seq++, "{\"nonce\":" + nonce + ",\"hostTimeMs\":1}");
                         out.flush();

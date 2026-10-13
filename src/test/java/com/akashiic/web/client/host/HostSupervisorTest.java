@@ -464,6 +464,90 @@ class HostSupervisorTest {
         }
     }
 
+    /**
+     * Review finding (medium): a host whose main thread hangs while keeping its socket open was never acted on (one
+     * log line, a stale round trip, READY with frozen frames forever). A PING unanswered for stallIntervals whole
+     * ping intervals now closes the connection as HOST_STALLED, and the normal DOWN, backoff and crash-loop path
+     * replaces the host.
+     */
+    @Test
+    void aHostThatStopsAnsweringIsReplacedWithHostStalled() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "hang-once");
+        BrowserHostImpl h = host(
+            f,
+            f.config()
+                .pingIntervalMillis(200)
+                .stallIntervals(8)
+                .build());
+        try {
+            h.start();
+            await("first READY", 60_000, () -> h.status().kind == HostStatus.Kind.READY);
+            long readyAt = System.nanoTime();
+            await(
+                "/web doctor shows the overdue PONG",
+                30_000,
+                () -> h.diagnostics()
+                    .stream()
+                    .anyMatch(d -> d.contains("PONG overdue for")));
+            await("DOWN(HOST_STALLED)", 30_000, () -> f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_STALLED));
+            long tookMillis = (System.nanoTime() - readyAt) / 1_000_000L;
+            assertTrue(tookMillis >= 8 * 200, "not before 8 unanswered intervals: " + tookMillis + " ms");
+            assertTrue(lines(f).contains("hanging"), lines(f).toString());
+            long hungPid = firstPid(f);
+            await(
+                "relaunched and READY",
+                60_000,
+                () -> h.supervisor()
+                    .launches() == 2 && h.status().kind == HostStatus.Kind.READY);
+            assertEquals(
+                HostFailure.STALLED,
+                h.supervisor()
+                    .lastFailure());
+            assertTrue(
+                h.supervisor()
+                    .lastFailureDetail()
+                    .startsWith("no PONG for "),
+                h.supervisor()
+                    .lastFailureDetail());
+            assertEquals(Collections.singletonList(1000L), f.clock.sleeps(), "the normal backoff path");
+            ProcessControl pc = ProcessControl.forThisPlatform();
+            await("the hung host was killed", 10_000, () -> pc.imageName(hungPid) == null);
+        } finally {
+            h.shutdown();
+        }
+    }
+
+    /** The other side of the stall rule: a host that answers late, but within the limit, is left alone. */
+    @Test
+    void slowPongsWithinTheStallLimitKeepTheHost() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "slow-pong:300");
+        BrowserHostImpl h = host(
+            f,
+            f.config()
+                .pingIntervalMillis(200)
+                .stallIntervals(6)
+                .build());
+        try {
+            h.start();
+            await("READY", 60_000, () -> h.status().kind == HostStatus.Kind.READY);
+            await(
+                "a measured round trip",
+                30_000,
+                () -> h.diagnostics()
+                    .stream()
+                    .anyMatch(d -> d.matches("ping round trip: \\d+ ms.*")));
+            Thread.sleep(3000); // 15 ping intervals, every PONG 1.5 intervals late
+            assertEquals(HostStatus.Kind.READY, h.status().kind);
+            assertEquals(
+                1,
+                h.supervisor()
+                    .launches());
+            assertFalse(f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_STALLED));
+        } finally {
+            h.shutdown();
+        }
+    }
+
     /** Inbound that ignores everything (frames discarded). */
     static class NullInbound implements HostConnection.Inbound {
 
@@ -516,6 +600,15 @@ class HostSupervisorTest {
             f.statuses.onStatus(status);
             if (hostile) throw new NoClassDefFoundError("simulated status listener failure");
         }
+    }
+
+    /** PID of the first fake host launched in this test (its record lines start with "pid=N"). */
+    private static long firstPid(FakeHostFixture f) throws java.io.IOException {
+        String key = f.records()
+            .keySet()
+            .iterator()
+            .next();
+        return Long.parseLong(key.substring("pid=".length()));
     }
 
     private static List<String> lines(FakeHostFixture f) {

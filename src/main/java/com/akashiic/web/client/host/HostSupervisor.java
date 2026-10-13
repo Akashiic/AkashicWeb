@@ -46,8 +46,6 @@ public final class HostSupervisor {
     static final long EXIT_GRACE_MILLIS = 2000;
     /** QUIT flush budget at shutdown. */
     static final long QUIT_FLUSH_MILLIS = 300;
-    /** Liveness ping while connected; feeds /web doctor (round trip, unanswered pings). */
-    static final long PING_INTERVAL_MILLIS = 10_000;
 
     private static final long ACCEPT_POLL_MILLIS = 100;
     private static final Logger LOG = LogManager.getLogger("AkashicWeb/Host");
@@ -225,7 +223,14 @@ public final class HostSupervisor {
                 + CrashLoopGuard.DEFAULT_LIMIT);
         HostFailure f = lastFailure;
         out.add("last failure: " + (f == null ? "none" : f + " -> " + f.reason() + " (" + lastFailureDetail + ")"));
-        out.add("ping round trip: " + (lastRttMillis < 0 ? "n/a" : lastRttMillis + " ms"));
+        HostConnection c;
+        synchronized (monitor) {
+            c = connection;
+        }
+        long overdue = c == null ? -1 : c.pongOverdueMillis();
+        out.add(
+            "ping round trip: " + (lastRttMillis < 0 ? "n/a" : lastRttMillis + " ms")
+                + (overdue > config.pingIntervalMillis ? ", PONG overdue for " + overdue + " ms" : ""));
         out.add(
             "logs: " + config.hostLogFile()
                 .getAbsolutePath()
@@ -499,22 +504,41 @@ public final class HostSupervisor {
         }
     }
 
+    /**
+     * Pings the host every {@link HostLaunchConfig#pingIntervalMillis} until the connection closes. A PING still
+     * unanswered after {@link HostLaunchConfig#stallIntervals} whole intervals (40 s by default: long enough for GC
+     * pauses and heavy page loads) means a hung host that keeps its socket open, so the connection is closed as
+     * {@link HostFailure#STALLED} and the normal DOWN, backoff and crash-loop path replaces the host (AGENTS.md:
+     * failure is never silent). Intervals are counted, not wall time, so a PC that slept with the game open does not
+     * get its host killed on wake-up.
+     */
     private void waitWhileConnected(HostConnection conn) {
-        boolean warnedUnresponsive = false;
+        long interval = config.pingIntervalMillis;
+        int unanswered = 0;
         while (true) {
             try {
-                if (conn.awaitClosed(PING_INTERVAL_MILLIS)) return;
+                if (conn.awaitClosed(interval)) return;
             } catch (InterruptedException e) {
                 if (isStopping()) return; // shutdown() closes the connection itself
                 continue;
             }
             lastRttMillis = conn.lastRttMillis();
-            if (conn.pongOverdue(3 * PING_INTERVAL_MILLIS) && !warnedUnresponsive) {
-                // Diagnostics only: a GC pause or a busy page can delay a PONG, so we never kill on this alone.
-                LOG.warn("AkashicWeb: the browser host has not answered a ping for 30 s");
-                warnedUnresponsive = true;
+            if (!conn.pingOutstanding()) {
+                unanswered = 0;
+                conn.sendPing();
+                continue;
             }
-            if (!conn.pongOverdue(PING_INTERVAL_MILLIS)) conn.sendPing();
+            unanswered++;
+            if (unanswered >= config.stallIntervals) {
+                LOG.warn(
+                    "AkashicWeb: the browser host has not answered a ping for {} ms; replacing it",
+                    conn.pongOverdueMillis());
+                conn.close(
+                    HostFailure.STALLED,
+                    "no PONG for " + conn.pongOverdueMillis() + " ms (" + unanswered + " ping intervals)");
+                return;
+            }
+            if (unanswered == 2) LOG.warn("AkashicWeb: the browser host is slow to answer pings");
         }
     }
 
