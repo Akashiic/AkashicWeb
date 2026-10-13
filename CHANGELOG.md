@@ -37,4 +37,8 @@
 ### Tested (2026-10-13)
 - Crucible boot with the mod and a first Linux dev-client run against it: the screen forms and draws, the address bar opens, `/web info` is right; three bugs found (placeholder text format, owner rights compared by client UUID, Crucible permission node naming). See `docs/evidence/2026-10-13-crucible-boot-and-dev-client.md`.
 
+### Changed (2026-10-13, wave 2)
+- All five modules fixed after adversarial reviews and merged (`f8e1487`): the host's internal-address check on every request and a document-start preload (M1); thread-death handling, stall detection and a client-side URL check (M2); the TLS trust order with pinned roots, a consent record and per-file pins (M3); D-016 on the server, the controller lock, friend names without Mojang lookups, the Crucible permission nodes, a fail-closed config and screen protection (M4); the client wiring of the installer and host, D-016 on the client, the live rule and the consent flow (M5).
+- Evidence: 644 JUnit tests (Linux). **First browser on an in-world screen**: real pages, scrolling, keyboard navigation, H.264 video, and two players in sync (p50 11 ms / p95 32 ms on one machine). See `docs/evidence/2026-10-13-first-browser-in-game.md`. Not run: Windows, the Forbidden pack, YouTube playback (the container's IP is bot-walled).
+
 No release yet.

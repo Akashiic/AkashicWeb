@@ -10,19 +10,15 @@ Os jogadores constroem telas, clicam, rolam, digitam e navegam. O telão do spaw
 
 ## Estado
 
-**Implementação, onda 2 (correções das revisões).** Os cinco módulos existem e foram integrados em 13/10:
-- **app do navegador:** Electron 44.7.0;
-- **conexão Java com o navegador**;
-- **instalador do motor:** download com SHA-256 conferido;
-- **bloco da tela, permissões, rede e comandos** do servidor;
-- **cliente:** renderização compatível com Angelica, teclado ABNT2 e sincronia de vídeo.
+**O navegador já funciona dentro do Minecraft, por enquanto só num cliente de desenvolvimento no Linux.** Testei em 13/10 com o servidor Crucible e dois jogadores:
+- o mod instalou o motor sozinho;
+- páginas reais apareceram na tela do mundo;
+- a rolagem pelo mouse e a navegação pelo teclado funcionaram;
+- um vídeo H.264 tocou;
+- quando um jogador troca a URL, a tela do outro acompanha;
+- o vídeo fica sincronizado entre os dois: erro mediano de 11 ms, com os dois na mesma máquina.
 
-O build passa com 440 testes JUnit, e o app do navegador passa 123 testes de unidade e 29 de integração com o Electron real, tudo só num container Linux. Nada foi testado no Windows, dentro do Minecraft ou no servidor Crucible.
-
-A revisão adversarial achou problemas sérios, e eles estão sendo corrigidos agora:
-- o Electron desliga a proteção de rede local do Chromium, então o próprio app vai bloquear endereços internos em toda requisição;
-- o volume por distância só valia depois que a página terminava de carregar;
-- uma thread morta podia congelar a tela sem mostrar motivo.
+O YouTube abre, mas não reproduz neste ambiente porque o Google bloqueia o IP do servidor de testes. Ainda falta testar no Windows, no seu pack e com os seus jogadores. A onda 3 (ModularUI2 e a dinâmica do Web Displays) está em design.
 
 ## O que a pesquisa mostrou
 

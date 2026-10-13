@@ -1,6 +1,6 @@
 # Project state
 
-Last update: 2026-10-13 (UTC). Phase: **implementation, wave 2 (review fixes).** All five modules exist and build; nothing is released, tested in game or on Windows, or live-approved.
+Last update: 2026-10-13 (UTC). Phase: **wave 2 done; wave 3 (ModularUI2 + Web Displays dynamics, D-017) in design.** The browser works on an in-world screen with two players in sync in Linux dev clients; nothing is released, tested on Windows or in the Forbidden pack, or live-approved.
 
 ## Evidence grades used in this repository
 
@@ -24,9 +24,10 @@ The research files use VERIFIED (≈ STATIC or AUTOMATED, with a source) and INF
 | Probe and harness sources from the research | Kept in [`/spikes`](../spikes) | AUTOMATED (Linux container only) |
 | Mod code, wave 1 (merged 2026-10-13, commit `d9a69c4`): host app `host/` (M1), host connection `client.host` (M2), engine installer `client.install` (M3), screen block, rights, network and commands in `common`/`server` (M4), client screens, rendering, input and sync in `client.*` (M5) | `./gradlew build` green: 440 JUnit tests, 2 env-gated skips; all 321 classes in the jar are major 52; no natives in the jar; no client/LWJGL/process/socket references from `common`/`server` (Linux container, Java 21 toolchain) | BUILD / AUTOMATED |
 | AkashicWebHost app on the real Electron 44.7.0 | 123 unit tests + 29 integration tests pass under Xvfb (Linux container, Node 22); not run on Windows | AUTOMATED (Linux only) |
+| Wave 2 (all five modules fixed after adversarial reviews; merged `f8e1487`) | `./gradlew build` green: 644 JUnit tests, 3 env-gated skips; host 215/215 with Electron 44.7.0; Java↔real-host end-to-end test passes | BUILD / AUTOMATED (Linux) |
+| **Browser on an in-world screen, two players** ([evidence](evidence/2026-10-13-first-browser-in-game.md)) | Engine installed by the mod, host started, real pages rendered on the screen, wheel scroll and keyboard navigation, H.264 video played, follower URL and media sync IN_SYNC (p50 11 ms / p95 32 ms, same machine) | LIVE-OBSERVED (Linux dev clients) |
 | Crucible boot with the mod (owner's `server.jar`, Java 21, UniMixins, lwjgl3ify, GTNHLib; no owner plugins) | Mod loads on the dedicated server; commands register through Crucible's command group (node naming bug found) ([evidence](evidence/2026-10-13-crucible-boot-and-dev-client.md)) | AUTOMATED (Linux) |
 | First in-game run: Linux dev client (Java 8, LWJGL 2.9.4, Mesa) joined that server, formed a 4x3 screen, placeholder drawn, address bar opened, `/web info` correct | Two client bugs found (placeholder text format, owner rights by UUID); no browser yet (not wired at `b9e844c`) | LIVE-OBSERVED (Linux dev client, not Windows/Forbidden) |
-| Wave-1 reviews | M1 and M2 reviewed (M1: 2 high, 8 medium; M2: 1 high, 5 medium), fixes in progress; M3, M4, M5 reviews running in wave 2 (the wave-1 runs hit the usage limit) | — |
 | IPC and module contracts ([`PROTOCOL.md`](PROTOCOL.md), [`CONTRACTS.md`](CONTRACTS.md)) | Written; contract types compile; protocol changes from D-016 and the reviews are being folded in | AUTHORED / BUILD |
 | Native builds (libjcef/jcef.dll) | None kept; the Linux build in the research container was a throwaway | — |
 | Releases | None | — |
@@ -63,4 +64,4 @@ Seven specialists, an architect and an adversarial reviewer produced ADR-001..AD
 
 ## Now
 
-Wave 2: reviews of M3, M4 and M5 and fixes for all five modules: the host's internal-address check on every request, document-start volume and guards, fail-closed policy, thread-death handling in the host connection, OS trust store for old JREs, D-016 in the protocol, client wiring of the installer and host plus the consent screen. Then: integration, an end-to-end test with the real Electron host from Java, the Windows test kit for the owner (G1-E), the Crucible boot test, and the first in-game run (G3). Dates are not the driver (D-014).
+Wave 3 (D-017): research and design of the ModularUI2 GUI set and the Web Displays keyboard/mouse dynamics (judged design panel, adversarial review), then implementation. UX findings from the first in-game run feed it (controller on URL set, refusal notice wording, media viewer sizing). Then: Windows test kit for the owner (G1-E) and the first run in the real Forbidden pack. Dates are not the driver (D-014).
