@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.function.Consumer;
 
 import org.apache.logging.log4j.LogManager;
@@ -36,10 +37,17 @@ import com.akashiic.web.common.SitePolicy;
  * Listener callbacks arrive on the reader thread (onStatus on the supervisor thread, and the "blocked-url" EVENT for a
  * URL refused here synchronously on the caller's thread); each listener is isolated so one that throws, even an Error,
  * cannot break the others, the connection or the supervisor. Implementations hop to the client thread in every case.
+ * STATE, MEDIA, EVENT and PCM of a screen the game never created or already destroyed are dropped (counted in
+ * {@link #diagnostics()}); host-level EVENTs on screen 0 (e.g. {@code policy-error}) always reach the listeners.
  */
 public final class BrowserHostImpl implements BrowserHost {
 
     private static final Logger LOG = LogManager.getLogger("AkashicWeb/Host");
+    // Indexes into droppedForUnknownScreens.
+    private static final int DROPPED_STATE = 0;
+    private static final int DROPPED_MEDIA = 1;
+    private static final int DROPPED_EVENT = 2;
+    private static final int DROPPED_PCM = 3;
 
     private final HostLaunchConfig config;
     private final HostSupervisor supervisor;
@@ -49,6 +57,8 @@ public final class BrowserHostImpl implements BrowserHost {
     private final AtomicInteger lastScreenId = new AtomicInteger();
     /** Test seam: see {@link ClientUrlCheck#ClientUrlCheck(SitePolicy, boolean)}. False for the game. */
     private final boolean allowFileUrls;
+    /** STATE, MEDIA, EVENT and PCM messages dropped because their screen is unknown or destroyed, by kind. */
+    private final AtomicLongArray droppedForUnknownScreens = new AtomicLongArray(4);
 
     private final Object lock = new Object();
     // Guarded by lock.
@@ -86,6 +96,13 @@ public final class BrowserHostImpl implements BrowserHost {
     /** The supervisor, for /web doctor details and tests. */
     HostSupervisor supervisor() {
         return supervisor;
+    }
+
+    /** STATE, MEDIA, EVENT and PCM messages dropped so far because their screen was unknown or destroyed. */
+    long droppedForUnknownScreens() {
+        long n = 0;
+        for (int i = 0; i < droppedForUnknownScreens.length(); i++) n += droppedForUnknownScreens.get(i);
+        return n;
     }
 
     @Override
@@ -250,6 +267,14 @@ public final class BrowserHostImpl implements BrowserHost {
     public List<String> diagnostics() {
         List<String> out = new ArrayList<>(supervisor.diagnostics());
         out.add("host log dir: " + config.logDir.getAbsolutePath());
+        out.add(
+            "dropped for unknown screens: state " + droppedForUnknownScreens.get(DROPPED_STATE)
+                + ", media "
+                + droppedForUnknownScreens.get(DROPPED_MEDIA)
+                + ", event "
+                + droppedForUnknownScreens.get(DROPPED_EVENT)
+                + ", pcm "
+                + droppedForUnknownScreens.get(DROPPED_PCM));
         for (ScreenRecord r : screens.values()) {
             long[] c = r.frames.ring()
                 .counters();
@@ -376,23 +401,38 @@ public final class BrowserHostImpl implements BrowserHost {
 
         @Override
         public void onPcm(int screenId, PcmChunk c) {
-            if (!screens.containsKey(screenId)) return;
+            if (!known(screenId, DROPPED_PCM)) return;
             deliver("pcm", l -> l.onPcm(screenId, c.ptsMicros, c.sampleRate, c.channels, c.interleaved, c.frames));
         }
 
         @Override
         public void onState(int screenId, String json) {
+            if (!known(screenId, DROPPED_STATE)) return;
             deliver("state", l -> l.onState(screenId, json));
         }
 
         @Override
         public void onMedia(int screenId, String json) {
+            if (!known(screenId, DROPPED_MEDIA)) return;
             deliver("media", l -> l.onMedia(screenId, json));
         }
 
+        /** Screen 0 is the host itself (e.g. {@code policy-error}): those EVENTs always reach the listeners. */
         @Override
         public void onEvent(int screenId, String json) {
+            if (screenId != 0 && !known(screenId, DROPPED_EVENT)) return;
             deliver("event", l -> l.onEvent(screenId, json));
+        }
+
+        /**
+         * True for a screen the game created and has not destroyed. Anything else (a message still on its way after
+         * DESTROY, or an id we never made) is counted for /web doctor and dropped, so listeners only hear of their
+         * own screens.
+         */
+        private boolean known(int screenId, int kind) {
+            if (screens.containsKey(screenId)) return true;
+            droppedForUnknownScreens.incrementAndGet(kind);
+            return false;
         }
 
         /**

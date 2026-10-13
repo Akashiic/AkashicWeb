@@ -31,6 +31,8 @@ import java.util.regex.Pattern;
  * connects), {@code die} (exits at once with 3), {@code exit:<code>} (exits at once with that code, like a host that
  * refuses its command line), {@code close-before-hello:<code>} (connects, closes without HELLO, exits with the code
  * 100 ms later), {@code exit-after-hello:<code>} (sends HELLO, then exits with the code without reading anything),
+ * {@code strays} (after WELCOME: STATE, MEDIA, EVENT and PCM of screen 77, a STATE of screen 0, then an EVENT
+ * {@code policy-error} on screen 0),
  * {@code env-token} (uses AKW_TOKEN, ignores stdin), {@code garbage} (bad magic after
  * HELLO), {@code hang-once} (the first launch stops reading after WELCOME, like a hung main thread that keeps its
  * socket open; later launches behave like {@code ok}), {@code slow-pong:<ms>} (answers every PING after a delay),
@@ -124,6 +126,27 @@ public final class FakeHostMain {
                         if (mode.startsWith("exit-after-welcome")) {
                             record("exiting");
                             System.exit(mode.indexOf(':') < 0 ? 0 : exitCode(mode));
+                        }
+                        if (mode.equals("strays")) {
+                            // Messages for a screen the game never created, a STATE on screen 0, then a host-level
+                            // EVENT on screen 0, which must be the only one to reach the game's listeners.
+                            HostProtocol.writeJson(out, HostProtocol.STATE, 77, seq++, "{\"url\":\"stray\"}");
+                            HostProtocol.writeJson(out, HostProtocol.MEDIA, 77, seq++, "{\"t\":1}");
+                            HostProtocol.writeJson(
+                                out,
+                                HostProtocol.EVENT,
+                                77,
+                                seq++,
+                                "{\"kind\":\"load-error\",\"detail\":{}}");
+                            HostProtocol.write(out, HostProtocol.PCM, 77, seq++, pcm());
+                            HostProtocol.writeJson(out, HostProtocol.STATE, 0, seq++, "{\"url\":\"stray\"}");
+                            HostProtocol.writeJson(
+                                out,
+                                HostProtocol.EVENT,
+                                0,
+                                seq++,
+                                "{\"kind\":\"policy-error\",\"detail\":{\"error\":\"x\",\"applied\":\"deny-all\"}}");
+                            out.flush();
                         }
                         File hung = new File(args[0] + ".hung");
                         if (mode.equals("hang-once") && hung.createNewFile()) {
