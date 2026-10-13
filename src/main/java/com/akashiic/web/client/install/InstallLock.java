@@ -33,7 +33,9 @@ final class InstallLock implements AutoCloseable {
     }
 
     private static InstallLock open(File lockFile, boolean wait) throws InstallException {
-        FileOps.ensureDir(lockFile.getAbsoluteFile().getParentFile());
+        FileOps.ensureDir(
+            lockFile.getAbsoluteFile()
+                .getParentFile());
         RandomAccessFile raf = null;
         try {
             raf = new RandomAccessFile(lockFile, "rw");

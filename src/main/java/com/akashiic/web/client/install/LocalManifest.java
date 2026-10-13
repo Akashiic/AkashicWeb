@@ -75,10 +75,19 @@ public final class LocalManifest {
 
     public String render() {
         StringBuilder sb = new StringBuilder(HEADER).append('\n');
-        sb.append("# engine ").append(engineId).append('\n');
-        sb.append("# zip-sha256 ").append(zipSha256).append('\n');
+        sb.append("# engine ")
+            .append(engineId)
+            .append('\n');
+        sb.append("# zip-sha256 ")
+            .append(zipSha256)
+            .append('\n');
         for (Entry e : entries) {
-            sb.append(e.sha256).append(' ').append(e.size).append(' ').append(e.path).append('\n');
+            sb.append(e.sha256)
+                .append(' ')
+                .append(e.size)
+                .append(' ')
+                .append(e.path)
+                .append('\n');
         }
         return sb.toString();
     }
@@ -113,7 +122,8 @@ public final class LocalManifest {
                 zip = line.substring("# zip-sha256 ".length());
             } else if (!line.isEmpty() && !line.startsWith("#")) {
                 String[] p = line.split(" ", 3);
-                if (p.length != 3 || !p[0].matches("[0-9a-f]{64}") || !p[1].matches("\\d{1,12}")
+                if (p.length != 3 || !p[0].matches("[0-9a-f]{64}")
+                    || !p[1].matches("\\d{1,12}")
                     || !SafePath.isSafeRelative(p[2])) {
                     throw new InstallException(InstallFailure.HASH_MISMATCH, "engine manifest line malformed");
                 }
@@ -201,7 +211,8 @@ public final class LocalManifest {
             String rel = prefix + c.getName();
             if (c.isDirectory()) {
                 // Our own temporary folders (host app refresh); nothing loads code from them.
-                if (!c.getName().startsWith(".akw-")) scanUnexpected(c, rel + "/", listed, out);
+                if (!c.getName()
+                    .startsWith(".akw-")) scanUnexpected(c, rel + "/", listed, out);
             } else if (!listed.contains(rel) && !ignorable(rel)) {
                 out.add(rel);
             }
@@ -210,7 +221,8 @@ public final class LocalManifest {
 
     static boolean ignorable(String rel) {
         if (rel.equals(FILE) || rel.equals(MARKER)) return true;
-        String name = rel.substring(rel.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
+        String name = rel.substring(rel.lastIndexOf('/') + 1)
+            .toLowerCase(Locale.ROOT);
         return name.startsWith(".akw-") || name.contains(".tmp-") || name.endsWith(".log") || name.endsWith(".dmp");
     }
 

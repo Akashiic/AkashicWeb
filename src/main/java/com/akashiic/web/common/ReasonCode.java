@@ -61,7 +61,44 @@ public enum ReasonCode {
     /** Part of the screen is in an unloaded chunk. */
     CHUNK_NOT_LOADED,
     /** Blocks of an existing screen were removed, so the screen was dissolved. */
-    SCREEN_DISSOLVED;
+    SCREEN_DISSOLVED,
+    // integration of wave 1 (codes proposed in the M1, M2, M3 and M5 reports)
+    /** No browser host is available on this client (not wired, or its factory failed). */
+    HOST_UNAVAILABLE,
+    /** The host executable could not be started (missing file, antivirus block). */
+    HOST_LAUNCH_FAILED,
+    /** The host stopped answering while keeping its connection open. */
+    HOST_STALLED,
+    /** The host sent something that breaks the protocol. */
+    HOST_PROTOCOL_ERROR,
+    /** The host refused a command-line switch that weakens its security. */
+    HOST_FORBIDDEN_SWITCH,
+    /** The host could not connect back to the game. */
+    HOST_CONNECT_FAILED,
+    /** The page's host name could not be resolved, so it could not be checked and was not loaded. */
+    URL_DNS_FAILED,
+    /** The page failed to load. */
+    PAGE_LOAD_FAILED,
+    /** The page's renderer process crashed. */
+    PAGE_CRASHED,
+    /** The page stopped responding. */
+    PAGE_UNRESPONSIVE,
+    /** Spatial audio capture failed; the screen falls back to silence or OS audio. */
+    CAPTURE_FAILED,
+    /** The page tried to download a file; downloads are never allowed. */
+    DOWNLOAD_BLOCKED,
+    /** The page asked for a permission (camera, location...); permissions are never granted. */
+    PERMISSION_DENIED,
+    /** The page tried to open a pop-up without a recent click or key press. */
+    POPUP_BLOCKED,
+    /** A frame could not be uploaded to the GPU. */
+    UPLOAD_FAILED,
+    /** The page size is larger than this GPU's maximum texture size. */
+    TEXTURE_TOO_LARGE,
+    /** The engine install folder is not writable. */
+    INSTALL_DIR_NOT_WRITABLE,
+    /** An old engine folder is still in use by another process. */
+    ENGINE_IN_USE;
 
     public String langKey() {
         return "akashicweb.reason." + name().toLowerCase(java.util.Locale.ROOT);

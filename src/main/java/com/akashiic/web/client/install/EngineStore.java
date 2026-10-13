@@ -132,7 +132,8 @@ final class EngineStore {
         StringWriter w = new StringWriter();
         try {
             p.store(w, "AkashicWeb engine install marker");
-            byte[] bytes = w.toString().getBytes(StandardCharsets.ISO_8859_1);
+            byte[] bytes = w.toString()
+                .getBytes(StandardCharsets.ISO_8859_1);
             FileOps.writeAtomic(new File(dir, LocalManifest.MARKER), bytes);
         } catch (IOException e) {
             throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot write the install marker: " + e, e);
@@ -174,7 +175,8 @@ final class EngineStore {
         } catch (InstallException e) {
             return new Inspection(dir, marker, null, problem(InstallFailure.HASH_MISMATCH, e.detail));
         }
-        if (!manifest.digest().equals(marker.manifestSha256) || !manifest.engineId.equals(marker.engineId)) {
+        if (!manifest.digest()
+            .equals(marker.manifestSha256) || !manifest.engineId.equals(marker.engineId)) {
             LocalManifest.Problem drift = problem(InstallFailure.HASH_MISMATCH, "manifest does not match marker");
             return new Inspection(dir, marker, manifest, drift);
         }
@@ -194,7 +196,8 @@ final class EngineStore {
         if (children == null) return out;
         final Map<File, Long> installedAt = new HashMap<>();
         for (File c : children) {
-            if (!c.isDirectory() || c.getName().startsWith(".")) continue;
+            if (!c.isDirectory() || c.getName()
+                .startsWith(".")) continue;
             Marker m = readMarker(c);
             if (m == null) continue;
             out.add(c);
@@ -223,7 +226,8 @@ final class EngineStore {
         File[] children = root.listFiles();
         if (children == null) return;
         for (File c : children) {
-            if (c.getName().startsWith(TRASH_PREFIX)) FileOps.deleteTree(c);
+            if (c.getName()
+                .startsWith(TRASH_PREFIX)) FileOps.deleteTree(c);
         }
     }
 
@@ -253,7 +257,8 @@ final class EngineStore {
                 try {
                     Thread.sleep(100L << Math.min(i, 4));
                 } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+                    Thread.currentThread()
+                        .interrupt();
                     throw new IOException("interrupted", ie);
                 }
             }

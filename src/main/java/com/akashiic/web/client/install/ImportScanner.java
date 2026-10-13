@@ -25,17 +25,24 @@ final class ImportScanner {
     /** The first matching zip, or null. Hashes only files of the exact pinned size, the asset's own name first. */
     static File find(List<File> dirs, EngineTarget t) {
         for (File dir : dirs) {
-            File[] files = dir.listFiles(f -> f.isFile() && f.getName().toLowerCase(Locale.ROOT).endsWith(".zip"));
+            File[] files = dir.listFiles(
+                f -> f.isFile() && f.getName()
+                    .toLowerCase(Locale.ROOT)
+                    .endsWith(".zip"));
             if (files == null) continue;
             List<File> candidates = new ArrayList<>(Arrays.asList(files));
             candidates.sort((a, b) -> {
-                boolean an = a.getName().equals(t.assetName);
-                boolean bn = b.getName().equals(t.assetName);
-                return an == bn ? a.getName().compareTo(b.getName()) : an ? -1 : 1;
+                boolean an = a.getName()
+                    .equals(t.assetName);
+                boolean bn = b.getName()
+                    .equals(t.assetName);
+                return an == bn ? a.getName()
+                    .compareTo(b.getName()) : an ? -1 : 1;
             });
             for (File f : candidates) {
                 if (f.length() != t.size) {
-                    if (f.getName().equals(t.assetName)) {
+                    if (f.getName()
+                        .equals(t.assetName)) {
                         LOG.warn("Import {}: size {} is not the pinned {} (incomplete copy?)", f, f.length(), t.size);
                     }
                     continue;

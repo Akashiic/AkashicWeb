@@ -78,7 +78,9 @@ public final class HostApp {
             String line = raw.endsWith("\r") ? raw.substring(0, raw.length() - 1) : raw;
             if (line.isEmpty() || line.startsWith("#")) continue;
             // sha256sum format: hash, a space, ' ' (text) or '*' (binary), then the path.
-            if (line.length() < 67 || !line.substring(0, 64).matches("[0-9a-f]{64}") || line.charAt(64) != ' '
+            if (line.length() < 67 || !line.substring(0, 64)
+                .matches("[0-9a-f]{64}")
+                || line.charAt(64) != ' '
                 || (line.charAt(65) != ' ' && line.charAt(65) != '*')) {
                 throw new InstallException(InstallFailure.HASH_MISMATCH, "host app manifest line malformed");
             }

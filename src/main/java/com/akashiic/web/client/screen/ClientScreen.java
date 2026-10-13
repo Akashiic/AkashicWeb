@@ -9,6 +9,7 @@ import com.akashiic.web.client.sync.MediaClock;
 import com.akashiic.web.client.sync.MediaSampler;
 import com.akashiic.web.client.sync.SyncController;
 import com.akashiic.web.client.sync.SyncDecision;
+import com.akashiic.web.common.ReasonCode;
 import com.akashiic.web.common.ScreenKey;
 import com.akashiic.web.common.ScreenState;
 
@@ -44,7 +45,7 @@ public final class ClientScreen {
 
     // Page
     PageState page = PageState.EMPTY;
-    ClientReason failure;
+    ReasonCode failure;
     boolean reportedUrl;
     long lastUrlReportMs;
 
@@ -117,12 +118,12 @@ public final class ClientScreen {
     /** Called by FrameUploader after a successful upload: a fresh frame clears a page-level failure banner. */
     public void onFrameUploaded() {
         hasFrame = true;
-        if (failure == ClientReason.UPLOAD_FAILED || failure == ClientReason.PAGE_CRASHED
-            || failure == ClientReason.PAGE_UNRESPONSIVE) failure = null;
+        if (failure == ReasonCode.UPLOAD_FAILED || failure == ReasonCode.PAGE_CRASHED
+            || failure == ReasonCode.PAGE_UNRESPONSIVE) failure = null;
     }
 
     /** Called by FrameUploader when GL refused the frame or the page is too large for this GPU. */
-    public void onUploadFailure(ClientReason reason) {
+    public void onUploadFailure(ReasonCode reason) {
         failure = reason;
     }
 

@@ -10,7 +10,8 @@ import com.akashiic.web.client.install.EngineLocator;
  * Where M5 gets the other client modules' services without depending on their classes: M2's BrowserHost (through a
  * factory, so the host process starts lazily when the first screen is granted a browser, not at game start) and M3's
  * EngineLocator and consent GUI. The integrator wires them in {@code ClientProxy.wireServices()}; until then every
- * getter returns null and screens show {@link ClientReason#HOST_UNAVAILABLE}. Client thread for {@link #host()};
+ * getter returns null and screens show {@link com.akashiic.web.common.ReasonCode#HOST_UNAVAILABLE}. Client thread for
+ * {@link #host()};
  * setters from any thread during init.
  */
 public final class ClientServices {

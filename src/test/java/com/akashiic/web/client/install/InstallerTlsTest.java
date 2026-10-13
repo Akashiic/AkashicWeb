@@ -31,8 +31,16 @@ class InstallerTlsTest {
     void bundledRootsLoadAndMatchTheirPins() throws Exception {
         List<X509Certificate> roots = InstallerTls.loadBundledRoots();
         assertEquals(2, roots.size());
-        assertTrue(roots.get(0).getSubjectX500Principal().getName().contains("ISRG Root X1"));
-        assertTrue(roots.get(1).getSubjectX500Principal().getName().contains("ISRG Root X2"));
+        assertTrue(
+            roots.get(0)
+                .getSubjectX500Principal()
+                .getName()
+                .contains("ISRG Root X1"));
+        assertTrue(
+            roots.get(1)
+                .getSubjectX500Principal()
+                .getName()
+                .contains("ISRG Root X2"));
     }
 
     @Test

@@ -149,7 +149,7 @@ class ClientScreensTest {
         host.available = false;
         tick();
         assertTrue(host.created.isEmpty());
-        assertEquals(ClientReason.HOST_UNAVAILABLE.langKey(), screens.placeholder(first()).detailKey);
+        assertEquals(ReasonCode.HOST_UNAVAILABLE.langKey(), screens.placeholder(first()).detailKey);
     }
 
     @Test
@@ -428,7 +428,7 @@ class ClientScreensTest {
         screens.onHostEvent(id, "blocked-url");
         assertEquals(Collections.singletonList(ReasonCode.URL_BLOCKED.langKey()), notices);
         screens.onHostEvent(id, "renderer-gone");
-        assertEquals(ClientReason.PAGE_CRASHED.langKey(), screens.placeholder(first()).detailKey);
+        assertEquals(ReasonCode.PAGE_CRASHED.langKey(), screens.placeholder(first()).detailKey);
     }
 
     @Test

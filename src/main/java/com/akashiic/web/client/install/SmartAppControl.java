@@ -56,7 +56,8 @@ public final class SmartAppControl {
             return State.UNKNOWN;
         }
         // reg.exe exits 1 when the key or value is absent; its message is localized, so only the code is trusted.
-        if (exitCode == 1 && !(output != null && output.toLowerCase(Locale.ROOT).contains("reg_dword"))) {
+        if (exitCode == 1 && !(output != null && output.toLowerCase(Locale.ROOT)
+            .contains("reg_dword"))) {
             return State.OFF;
         }
         return State.UNKNOWN;

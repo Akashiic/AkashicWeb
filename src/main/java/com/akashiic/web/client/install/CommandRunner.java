@@ -39,7 +39,8 @@ public interface CommandRunner {
             ProcessBuilder pb = new ProcessBuilder(command).redirectErrorStream(true);
             if (workDir != null) pb.directory(workDir);
             Process p = pb.start();
-            p.getOutputStream().close();
+            p.getOutputStream()
+                .close();
             final ByteArrayOutputStream out = new ByteArrayOutputStream();
             final InputStream in = p.getInputStream();
             // Read on a helper thread so a command that never closes its stdout cannot block past the timeout.
@@ -66,7 +67,8 @@ public interface CommandRunner {
                 reader.join(1000);
             } catch (InterruptedException e) {
                 p.destroy();
-                Thread.currentThread().interrupt();
+                Thread.currentThread()
+                    .interrupt();
                 throw new IOException("interrupted: " + command.get(0), e);
             }
             synchronized (out) {

@@ -95,11 +95,18 @@ final class TestSupport {
         final Map<String, byte[]> all = new HashMap<>();
         StringBuilder manifest = new StringBuilder();
         for (Map.Entry<String, String> e : new TreeMap<>(files).entrySet()) {
-            byte[] b = e.getValue().getBytes(StandardCharsets.UTF_8);
+            byte[] b = e.getValue()
+                .getBytes(StandardCharsets.UTF_8);
             all.put(e.getKey(), b);
-            manifest.append(Sha256.of(b)).append("  ").append(e.getKey()).append('\n');
+            manifest.append(Sha256.of(b))
+                .append("  ")
+                .append(e.getKey())
+                .append('\n');
         }
-        all.put(HostApp.MANIFEST, manifest.toString().getBytes(StandardCharsets.UTF_8));
+        all.put(
+            HostApp.MANIFEST,
+            manifest.toString()
+                .getBytes(StandardCharsets.UTF_8));
         return rel -> all.containsKey(rel) ? new ByteArrayInputStream(all.get(rel)) : null;
     }
 
@@ -112,8 +119,16 @@ final class TestSupport {
     }
 
     static PlatformFacts facts(String os, String arch, String dataModel, Map<String, String> env) {
-        return new PlatformFacts(os, arch, dataModel, "Oracle Corporation", "Java HotSpot(TM) 64-Bit Server VM",
-            "Java(TM) SE Runtime Environment", env, Collections.<String>emptySet(), false);
+        return new PlatformFacts(
+            os,
+            arch,
+            dataModel,
+            "Oracle Corporation",
+            "Java HotSpot(TM) 64-Bit Server VM",
+            "Java(TM) SE Runtime Environment",
+            env,
+            Collections.<String>emptySet(),
+            false);
     }
 
     static PlatformFacts linuxDesktop() {
@@ -138,8 +153,14 @@ final class TestSupport {
     /** Relative paths of every regular file under {@code root}, with '/'. */
     static List<String> listFiles(File root) throws IOException {
         List<String> out = new ArrayList<>();
-        Files.walk(root.toPath()).filter(Files::isRegularFile).forEach(
-            p -> out.add(root.toPath().relativize(p).toString().replace(File.separatorChar, '/')));
+        Files.walk(root.toPath())
+            .filter(Files::isRegularFile)
+            .forEach(
+                p -> out.add(
+                    root.toPath()
+                        .relativize(p)
+                        .toString()
+                        .replace(File.separatorChar, '/')));
         Collections.sort(out);
         return out;
     }

@@ -93,7 +93,10 @@ public final class EngineLocatorImpl implements EngineLocator {
         File gameDir = cfg.gameDir.getAbsoluteFile();
         File root = p != null ? p.profilesDir() : new File(new File(gameDir, "akashicweb"), "profiles");
         // One profile per Minecraft instance: two instances must never share a Chromium profile (it is locked).
-        return new File(root, Sha256.ofUtf8(canonical(gameDir)).substring(0, 12));
+        return new File(
+            root,
+            Sha256.ofUtf8(canonical(gameDir))
+                .substring(0, 12));
     }
 
     @Override
@@ -108,10 +111,16 @@ public final class EngineLocatorImpl implements EngineLocator {
     public String detail() {
         StringBuilder sb = new StringBuilder(detail);
         InstallPaths p = paths;
-        if (p != null) sb.append(" [").append(p.how).append(": ").append(p.base).append(']');
+        if (p != null) sb.append(" [")
+            .append(p.how)
+            .append(": ")
+            .append(p.base)
+            .append(']');
         PlatformGate.Decision d = decision;
         if (d != null && d.kind == PlatformGate.Kind.WINDOWS_X64 && sac != SmartAppControl.State.UNKNOWN) {
-            sb.append(" [SAC ").append(sac).append(']');
+            sb.append(" [SAC ")
+                .append(sac)
+                .append(']');
         }
         return sb.toString();
     }
@@ -261,7 +270,8 @@ public final class EngineLocatorImpl implements EngineLocator {
                 }
             }
             EngineStore.removeMarker(dir); // never use this folder again; a reinstall replaces it
-            for (File other : installer.store().installedEngines()) {
+            for (File other : installer.store()
+                .installedEngines()) {
                 if (other.equals(dir) || !samePlatform(other)) continue;
                 EngineStore.Inspection prev = EngineStore.inspect(other, true);
                 if (!prev.intact() && !(prev.installed() && prev.problem.hostAppOnly)) continue;

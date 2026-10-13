@@ -183,7 +183,8 @@ public final class InstallPaths {
     }
 
     private static String normalize(String path) {
-        String p = path.replace('\\', '/').toLowerCase(Locale.ROOT);
+        String p = path.replace('\\', '/')
+            .toLowerCase(Locale.ROOT);
         while (p.endsWith("/") && p.length() > 1) p = p.substring(0, p.length() - 1);
         return p;
     }

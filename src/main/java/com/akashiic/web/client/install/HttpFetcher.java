@@ -58,13 +58,14 @@ final class HttpFetcher {
     }
 
     static String userAgent(String modVersion) {
-        String v = modVersion == null || modVersion.trim().isEmpty() ? "dev" : modVersion.trim();
+        String v = modVersion == null || modVersion.trim()
+            .isEmpty() ? "dev" : modVersion.trim();
         return "AkashicWeb/" + v + " (+" + PROJECT_URL + ")";
     }
 
     /**
-     * @param rangeFrom first byte wanted, or 0 for the whole entity
-     * @param ifRange   validator for If-Range, or null
+     * @param rangeFrom   first byte wanted, or 0 for the whole entity
+     * @param ifRange     validator for If-Range, or null
      * @param fallbackTls use the installer's bundled-roots context for HTTPS hops
      */
     Response open(String canonicalUrl, long rangeFrom, String ifRange, boolean fallbackTls) throws IOException {
@@ -133,7 +134,8 @@ final class HttpFetcher {
     }
 
     private void checkScheme(URL url) throws InstallException {
-        String p = url.getProtocol().toLowerCase(Locale.ROOT);
+        String p = url.getProtocol()
+            .toLowerCase(Locale.ROOT);
         if ("https".equals(p) || ("http".equals(p) && allowPlainHttp)) return;
         throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "refusing " + p + " URL for " + url.getHost());
     }

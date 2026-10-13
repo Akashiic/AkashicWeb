@@ -55,7 +55,8 @@ class EngineLocatorImplTest {
     }
 
     private EngineLocatorImpl.Builder builder(PlatformFacts facts, EngineTarget t) {
-        return EngineLocatorImpl.builder().facts(facts)
+        return EngineLocatorImpl.builder()
+            .facts(facts)
             .gameDir(new File(tmp, "instance"))
             .modVersion("test")
             .hostApp(TestSupport.defaultHostApp())
@@ -144,7 +145,10 @@ class EngineLocatorImplTest {
         l.requestInstall(); // a retry re-checks SAC and is blocked again
         assertEquals(ReasonCode.SAC_BLOCKED, l.state().reason);
         assertEquals(0, server.requestCount());
-        assertTrue(l.detail().contains("SAC ENFORCE"), l.detail());
+        assertTrue(
+            l.detail()
+                .contains("SAC ENFORCE"),
+            l.detail());
     }
 
     @Test
@@ -158,8 +162,15 @@ class EngineLocatorImplTest {
         assertEquals(EngineState.Kind.CONSENT_NEEDED, l.state().kind);
         l.requestInstall();
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
-        assertEquals("AkashicWebHost.exe", l.hostExecutable().getName());
-        assertArrayEquals(entries.get("electron.exe"), Files.readAllBytes(l.hostExecutable().toPath()));
+        assertEquals(
+            "AkashicWebHost.exe",
+            l.hostExecutable()
+                .getName());
+        assertArrayEquals(
+            entries.get("electron.exe"),
+            Files.readAllBytes(
+                l.hostExecutable()
+                    .toPath()));
     }
 
     @Test
@@ -171,7 +182,10 @@ class EngineLocatorImplTest {
         Files.write(new File(importDir, "other.zip").toPath(), new byte[] { 1, 2, 3 });
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
-        assertTrue(l.detail().contains("import"), l.detail());
+        assertTrue(
+            l.detail()
+                .contains("import"),
+            l.detail());
         assertEquals(0, server.requestCount());
         assertTrue(imported.isFile());
     }
@@ -228,14 +242,18 @@ class EngineLocatorImplTest {
         new DownloadState(target.url, "\"v1\"", target.size).write(state);
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
-        assertEquals("bytes=" + (zip.length / 2) + "-", server.entityRequests().get(0).range);
+        assertEquals(
+            "bytes=" + (zip.length / 2) + "-",
+            server.entityRequests()
+                .get(0).range);
     }
 
     @Test
     void progressIsReportedWhileDownloadingOnTheInstallerThread() throws Exception {
         server.gateAt = zip.length / 2;
         // The production executor: a daemon "AkashicWeb-Engine-Installer" thread.
-        EngineLocatorImpl l = builder(TestSupport.linuxDesktop(), target).executor(null).build();
+        EngineLocatorImpl l = builder(TestSupport.linuxDesktop(), target).executor(null)
+            .build();
         l.start();
         l.requestInstall();
         assertTrue(server.reached.await(20, TimeUnit.SECONDS), "download never reached the middle");
@@ -269,9 +287,13 @@ class EngineLocatorImplTest {
         File app = new File(engineDir(), "resources/app");
         assertTrue(new File(app, "src/capture/preload.js").isFile());
         assertFalse(new File(app, "src/protocol.js").exists(), "files dropped from the jar are dropped from the app");
-        assertTrue(new String(Files.readAllBytes(new File(app, "src/main.js").toPath()), StandardCharsets.UTF_8)
-            .contains("v2"));
-        assertTrue(EngineStore.inspect(engineDir(), true).intact(), "manifest and marker were rewritten");
+        assertTrue(
+            new String(Files.readAllBytes(new File(app, "src/main.js").toPath()), StandardCharsets.UTF_8)
+                .contains("v2"));
+        assertTrue(
+            EngineStore.inspect(engineDir(), true)
+                .intact(),
+            "manifest and marker were rewritten");
     }
 
     @Test
@@ -283,7 +305,9 @@ class EngineLocatorImplTest {
         assertEquals(ReasonCode.HASH_MISMATCH, l.state().reason);
         l.requestInstall();
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
-        assertTrue(EngineStore.inspect(engineDir(), true).intact());
+        assertTrue(
+            EngineStore.inspect(engineDir(), true)
+                .intact());
     }
 
     @Test
@@ -302,7 +326,9 @@ class EngineLocatorImplTest {
         Files.write(main.toPath(), "evil()".getBytes(StandardCharsets.UTF_8));
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
-        assertTrue(EngineStore.inspect(engineDir(), true).intact());
+        assertTrue(
+            EngineStore.inspect(engineDir(), true)
+                .intact());
     }
 
     @Test
@@ -320,13 +346,22 @@ class EngineLocatorImplTest {
         byte[] zipB = TestSupport.zip(TestSupport.linuxLikeEntries(70));
         server.body = zipB;
         server.etag = "\"b\"";
-        EngineTarget targetB = new EngineTarget("linux-x64", "44.8.0", "electron-v44.8.0-linux-x64.zip",
-            server.canonicalUrl("electron-v44.8.0-linux-x64.zip"), zipB.length, Sha256.of(zipB), "electron",
-            "AkashicWebHost", false, target.unixExecutables);
+        EngineTarget targetB = new EngineTarget(
+            "linux-x64",
+            "44.8.0",
+            "electron-v44.8.0-linux-x64.zip",
+            server.canonicalUrl("electron-v44.8.0-linux-x64.zip"),
+            zipB.length,
+            Sha256.of(zipB),
+            "electron",
+            "AkashicWebHost",
+            false,
+            target.unixExecutables);
         EngineLocatorImpl b = started(builder(TestSupport.linuxDesktop(), targetB));
         b.requestInstall();
         assertEquals(EngineState.Kind.READY, b.state().kind, b.detail());
-        File dirB = b.hostExecutable().getParentFile();
+        File dirB = b.hostExecutable()
+            .getParentFile();
         assertTrue(dirA.isDirectory(), "the previous engine is kept for rollback");
 
         // B's binary is corrupted in place (same size): the startup check cannot see it, the full re-hash does.
@@ -336,8 +371,14 @@ class EngineLocatorImplTest {
         Files.write(exeB.toPath(), bytes);
         b.verifyAfterLoadFailure();
         assertEquals(EngineState.Kind.READY, b.state().kind, b.detail());
-        assertEquals(dirA, b.hostExecutable().getParentFile());
-        assertTrue(b.detail().contains("rolled back"), b.detail());
+        assertEquals(
+            dirA,
+            b.hostExecutable()
+                .getParentFile());
+        assertTrue(
+            b.detail()
+                .contains("rolled back"),
+            b.detail());
         assertEquals("electron-44.7.0-linux-x64", b.engineId());
         assertNull(EngineStore.readMarker(dirB), "the damaged engine is never used again");
         assertNotNull(a);
@@ -366,25 +407,49 @@ class EngineLocatorImplTest {
             byte[] z = TestSupport.zip(TestSupport.linuxLikeEntries(100 + i));
             server.body = z;
             server.etag = "\"e" + i + "\"";
-            EngineTarget t = new EngineTarget("linux-x64", "44.8." + i, "electron-v44.8." + i + "-linux-x64.zip",
-                server.canonicalUrl("electron-v44.8." + i + ".zip"), z.length, Sha256.of(z), "electron",
-                "AkashicWebHost", false, target.unixExecutables);
+            EngineTarget t = new EngineTarget(
+                "linux-x64",
+                "44.8." + i,
+                "electron-v44.8." + i + "-linux-x64.zip",
+                server.canonicalUrl("electron-v44.8." + i + ".zip"),
+                z.length,
+                Sha256.of(z),
+                "electron",
+                "AkashicWebHost",
+                false,
+                target.unixExecutables);
             EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), t));
             l.requestInstall();
             assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
-            dirs.add(l.hostExecutable().getParentFile());
+            dirs.add(
+                l.hostExecutable()
+                    .getParentFile());
         }
         assertFalse(first.exists(), "the oldest engine was removed");
-        assertTrue(dirs.get(0).isDirectory());
-        assertTrue(dirs.get(1).isDirectory());
+        assertTrue(
+            dirs.get(0)
+                .isDirectory());
+        assertTrue(
+            dirs.get(1)
+                .isDirectory());
     }
 
     @Test
     void userDataDirIsPerInstance() {
         EngineLocatorImpl one = started(builder(TestSupport.linuxDesktop(), target));
         EngineLocatorImpl two = started(builder(TestSupport.linuxDesktop(), target).gameDir(new File(tmp, "other")));
-        assertEquals(one.userDataDir().getParentFile(), two.userDataDir().getParentFile());
-        assertEquals(new File(base, "profiles"), one.userDataDir().getParentFile());
-        assertFalse(one.userDataDir().equals(two.userDataDir()), "two instances never share a Chromium profile");
+        assertEquals(
+            one.userDataDir()
+                .getParentFile(),
+            two.userDataDir()
+                .getParentFile());
+        assertEquals(
+            new File(base, "profiles"),
+            one.userDataDir()
+                .getParentFile());
+        assertFalse(
+            one.userDataDir()
+                .equals(two.userDataDir()),
+            "two instances never share a Chromium profile");
     }
 }

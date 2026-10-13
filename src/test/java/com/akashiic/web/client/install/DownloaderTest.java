@@ -137,14 +137,17 @@ class DownloaderTest {
     void etagChangeRestartsFromZero() throws Exception {
         EngineTarget t = target(server.canonicalUrl("e.zip"));
         Downloader first = downloader(3);
-        assertThrows(InstallException.class, () -> first.download(t, dir, (done, total) -> {
-            if (done > 500_000) first.cancel();
-        }));
+        assertThrows(
+            InstallException.class,
+            () -> first.download(t, dir, (done, total) -> { if (done > 500_000) first.cancel(); }));
         long kept = part(t).length();
         server.etag = "\"v2\""; // the asset host re-uploaded the file
         File zip = downloader(3).download(t, dir, ProgressListener.NONE);
         assertArrayEquals(body, Files.readAllBytes(zip.toPath()));
-        TestServer.Request last = server.entityRequests().get(server.entityRequests().size() - 1);
+        TestServer.Request last = server.entityRequests()
+            .get(
+                server.entityRequests()
+                    .size() - 1);
         assertEquals("bytes=" + kept + "-", last.range);
         assertEquals("\"v1\"", last.ifRange, "the stale validator was sent; the server answered 200 with everything");
         assertTrue(server.bytesServed.get() >= kept + SIZE, "the whole file came again");
@@ -167,9 +170,9 @@ class DownloaderTest {
     void corruptResumeGetsOneCleanRetry() throws Exception {
         EngineTarget t = target(server.canonicalUrl("e.zip"));
         Downloader first = downloader(3);
-        assertThrows(InstallException.class, () -> first.download(t, dir, (done, total) -> {
-            if (done > 200_000) first.cancel();
-        }));
+        assertThrows(
+            InstallException.class,
+            () -> first.download(t, dir, (done, total) -> { if (done > 200_000) first.cancel(); }));
         // A crash left garbage in the kept prefix (e.g. zero-filled tail after power loss).
         byte[] kept = Files.readAllBytes(part(t).toPath());
         Arrays.fill(kept, 100, 200, (byte) 0x55);
@@ -197,7 +200,10 @@ class DownloaderTest {
             InstallException.class,
             () -> downloader(5).download(t, dir, ProgressListener.NONE));
         assertEquals(InstallFailure.DOWNLOAD_FAILED, e.failure);
-        assertTrue(e.getMessage().contains("404"), e.getMessage());
+        assertTrue(
+            e.getMessage()
+                .contains("404"),
+            e.getMessage());
         assertEquals(1, server.entityHits.get());
         assertTrue(sleeps.isEmpty());
     }
@@ -242,7 +248,10 @@ class DownloaderTest {
         Files.write(part(t).toPath(), Arrays.copyOf(body, 1234));
         File zip = downloader(3).download(t, dir, ProgressListener.NONE);
         assertArrayEquals(body, Files.readAllBytes(zip.toPath()));
-        assertNull(server.entityRequests().get(0).range, "no ETag on record: never splice, download from 0");
+        assertNull(
+            server.entityRequests()
+                .get(0).range,
+            "no ETag on record: never splice, download from 0");
     }
 
     @Test
@@ -252,7 +261,9 @@ class DownloaderTest {
         Files.write(part(t).toPath(), new byte[5000]);
         File zip = downloader(3).download(t, dir, ProgressListener.NONE);
         assertArrayEquals(body, Files.readAllBytes(zip.toPath()));
-        assertNull(server.entityRequests().get(0).range);
+        assertNull(
+            server.entityRequests()
+                .get(0).range);
     }
 
     @Test

@@ -26,7 +26,8 @@ class LocalManifestTest {
 
     private void put(String rel, byte[] bytes) throws Exception {
         File f = new File(dir, rel);
-        f.getParentFile().mkdirs();
+        f.getParentFile()
+            .mkdirs();
         Files.write(f.toPath(), bytes);
     }
 
@@ -54,7 +55,10 @@ class LocalManifestTest {
         assertNull(read.quickCheck(dir, "AkashicWebHost.exe"));
         assertNull(read.fullCheck(dir, "AkashicWebHost.exe"));
         assertNull(read.hostAppCheck(dir));
-        assertEquals(3, read.vendorEntries().size());
+        assertEquals(
+            3,
+            read.vendorEntries()
+                .size());
     }
 
     @Test

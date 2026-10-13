@@ -29,7 +29,7 @@ public final class PlaceholderModel {
         public boolean hasFrame;
         public boolean painting;
         /** This screen's own failure (upload, texture size, page crash), or null. */
-        public ClientReason failure;
+        public ReasonCode failure;
 
         public boolean hasUrl;
     }
@@ -48,7 +48,7 @@ public final class PlaceholderModel {
         Placeholder engine = engine(in.engine);
         if (engine != null) return engine;
 
-        if (!in.hostAvailable) return Placeholder.card(LangKeys.TITLE, ClientReason.HOST_UNAVAILABLE.langKey());
+        if (!in.hostAvailable) return Placeholder.card(LangKeys.TITLE, ReasonCode.HOST_UNAVAILABLE.langKey());
         if (in.hostStatus != null && in.hostStatus.kind != HostStatus.Kind.READY
             && in.hostStatus.kind != HostStatus.Kind.STARTING) {
             return Placeholder.card(LangKeys.TITLE, in.hostStatus.reason.langKey());
@@ -73,7 +73,7 @@ public final class PlaceholderModel {
     }
 
     private static Placeholder engine(EngineState e) {
-        if (e == null) return Placeholder.card(LangKeys.TITLE, ClientReason.HOST_UNAVAILABLE.langKey());
+        if (e == null) return Placeholder.card(LangKeys.TITLE, ReasonCode.HOST_UNAVAILABLE.langKey());
         switch (e.kind) {
             case READY:
                 return null;

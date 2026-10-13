@@ -39,8 +39,8 @@ public final class PlatformFacts {
         TreeMap<String, String> e = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         if (env != null) e.putAll(env);
         this.env = Collections.unmodifiableMap(e);
-        this.propertyNames = Collections.unmodifiableSet(
-            propertyNames == null ? new TreeSet<String>() : new TreeSet<>(propertyNames));
+        this.propertyNames = Collections
+            .unmodifiableSet(propertyNames == null ? new TreeSet<String>() : new TreeSet<>(propertyNames));
         this.androidSystemFiles = androidSystemFiles;
     }
 
@@ -65,7 +65,8 @@ public final class PlatformFacts {
     /** Environment variable or null; empty values count as absent. */
     public String env(String name) {
         String v = env.get(name);
-        return v == null || v.trim().isEmpty() ? null : v;
+        return v == null || v.trim()
+            .isEmpty() ? null : v;
     }
 
     private static String nz(String s) {

@@ -8,6 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+import com.akashiic.web.common.HitMath;
+import com.akashiic.web.common.ScreenKey;
+import com.akashiic.web.common.ScreenState;
+
 class ScreenGeometryTest {
 
     private static final double EPS = 1e-9;
@@ -25,6 +29,35 @@ class ScreenGeometryTest {
         assertArrayEquals(new double[] { B, B, 1 + lift }, g.corner(3), EPS);
         assertEquals(3 - 2 * B, g.quadWidth, EPS);
         assertEquals(2 - 2 * B, g.quadHeight, EPS);
+    }
+
+    /**
+     * Integration check (wave 1): the client's drawing/click geometry must match the server's HitMath, which validates
+     * C2SPointer, on every face and rotation. Before integration the client used Web Displays' mirrored BOTTOM layout.
+     */
+    @Test
+    void agreesWithTheServerHitMathOnEveryFaceAndRotation() {
+        java.util.Random rnd = new java.util.Random(42);
+        for (int side = 0; side < 6; side++) {
+            for (int rot = 0; rot < 360; rot += 90) {
+                ScreenState s = new ScreenState();
+                s.key = new ScreenKey(0, 10, 64, -7, side);
+                s.widthBlocks = 4;
+                s.heightBlocks = 3;
+                s.rotation = rot;
+                s.resolutionW = 1280;
+                s.resolutionH = 720;
+                ScreenGeometry g = ScreenGeometry.of(s);
+                for (int i = 0; i < 200; i++) {
+                    double u = 0.01 + 0.98 * rnd.nextDouble(), v = 0.01 + 0.98 * rnd.nextDouble();
+                    double[] w = HitMath.worldPoint(s, u, v);
+                    double[] uv = g.pageUv(w[0] - 10, w[1] - 64, w[2] + 7);
+                    assertNotNull(uv, "side " + side + " rot " + rot);
+                    assertEquals(u, uv[0], 1e-9, "u side " + side + " rot " + rot);
+                    assertEquals(v, uv[1], 1e-9, "v side " + side + " rot " + rot);
+                }
+            }
+        }
     }
 
     @Test
@@ -111,15 +144,15 @@ class ScreenGeometryTest {
 
     @Test
     void bottomFaceReadsCorrectlyFromBelow() {
-        // Web Displays extends a bottom screen toward -z; a viewer below with the picture's up as up sees +x on the
-        // right and the page's top toward +z.
+        // BlockSide (M4) extends a bottom screen toward -x (right) and -z (up); a viewer below with the picture's up as
+        // up sees -x on the right and the page's top toward -z. Blocks: x in {0, -1}, z in {0, -1, -2}.
         ScreenGeometry g = ScreenGeometry.of(0, 2, 3, 0);
         double[] tl = g.corner(0);
         double[] br = g.corner(2);
-        assertEquals(B, tl[0], EPS);
-        assertEquals(1 - B, tl[2], EPS, "top edge at the +z end of the multiblock");
-        assertEquals(2 - B, br[0], EPS);
-        assertEquals(-2 + B, br[2], EPS);
+        assertEquals(1 - B, tl[0], EPS, "left edge at the +x end of the multiblock");
+        assertEquals(-2 + B, tl[2], EPS, "top edge at the -z end of the multiblock");
+        assertEquals(-1 + B, br[0], EPS);
+        assertEquals(1 - B, br[2], EPS);
         assertEquals(-ScreenGeometry.SURFACE_OFFSET, tl[1], EPS, "below the block's bottom face");
     }
 

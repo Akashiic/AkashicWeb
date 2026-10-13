@@ -34,20 +34,26 @@ class InstallPathsTest {
         assertEquals("C:\\Users\\gabriel\\AppData\\Local\\AkashicWeb", p.base.getPath());
         assertEquals(p.base, p.userBase);
         assertEquals("LOCALAPPDATA", p.how);
-        assertEquals(1, p.importDirs().size());
+        assertEquals(
+            1,
+            p.importDirs()
+                .size());
     }
 
     @Test
     void nonAsciiProfileUsesTheShortPathWhenWindowsHasOne() throws Exception {
         List<File> asked = new ArrayList<>();
-        InstallPaths p = InstallPaths.resolve(windows(env("LOCALAPPDATA", JOAO, "PROGRAMDATA", "C:\\ProgramData"))
-            .shortPath(f -> {
+        InstallPaths p = InstallPaths
+            .resolve(windows(env("LOCALAPPDATA", JOAO, "PROGRAMDATA", "C:\\ProgramData")).shortPath(f -> {
                 asked.add(f);
                 return "C:\\Users\\JOOCON~1\\AppData\\Local";
             }));
         assertEquals("C:\\Users\\JOOCON~1\\AppData\\Local\\AkashicWeb", p.base.getPath());
         assertEquals(p.base, p.userBase);
-        assertEquals(JOAO, asked.get(0).getPath());
+        assertEquals(
+            JOAO,
+            asked.get(0)
+                .getPath());
         assertTrue(InstallPaths.isAscii(p.base.getPath()));
     }
 
@@ -57,13 +63,17 @@ class InstallPathsTest {
         assertEquals("C:\\ProgramData\\AkashicWeb", p.base.getPath());
         assertEquals(JOAO + "\\AkashicWeb", p.userBase.getPath(), "cookies must not land in machine-wide ProgramData");
         assertEquals("PROGRAMDATA", p.how);
-        assertEquals(2, p.importDirs().size(), "the pt-BR guide's LOCALAPPDATA import folder is still scanned");
+        assertEquals(
+            2,
+            p.importDirs()
+                .size(),
+            "the pt-BR guide's LOCALAPPDATA import folder is still scanned");
     }
 
     @Test
     void shortPathThatIsStillNonAsciiIsIgnored() throws Exception {
-        InstallPaths p = InstallPaths.resolve(
-            windows(env("LOCALAPPDATA", JOAO, "PROGRAMDATA", "C:\\ProgramData")).shortPath(f -> JOAO));
+        InstallPaths p = InstallPaths
+            .resolve(windows(env("LOCALAPPDATA", JOAO, "PROGRAMDATA", "C:\\ProgramData")).shortPath(f -> JOAO));
         assertEquals("C:\\ProgramData\\AkashicWeb", p.base.getPath());
     }
 
@@ -77,8 +87,9 @@ class InstallPathsTest {
     @Test
     void unwritableLocalAppDataFallsBackToProgramData() throws Exception {
         InstallPaths p = InstallPaths.resolve(
-            windows(env("LOCALAPPDATA", "C:\\Users\\a\\AppData\\Local", "PROGRAMDATA", "C:\\ProgramData"))
-                .usable(f -> f.getPath().startsWith("C:\\ProgramData")));
+            windows(env("LOCALAPPDATA", "C:\\Users\\a\\AppData\\Local", "PROGRAMDATA", "C:\\ProgramData")).usable(
+                f -> f.getPath()
+                    .startsWith("C:\\ProgramData")));
         assertEquals("C:\\ProgramData\\AkashicWeb", p.base.getPath());
     }
 
@@ -115,8 +126,8 @@ class InstallPathsTest {
 
     @Test
     void oneDriveRedirectedLocalAppDataFallsBackToProgramData() throws Exception {
-        InstallPaths p = InstallPaths.resolve(
-            windows(env("LOCALAPPDATA", "C:\\Users\\x\\OneDrive\\Local", "PROGRAMDATA", "C:\\ProgramData")));
+        InstallPaths p = InstallPaths
+            .resolve(windows(env("LOCALAPPDATA", "C:\\Users\\x\\OneDrive\\Local", "PROGRAMDATA", "C:\\ProgramData")));
         assertEquals("C:\\ProgramData\\AkashicWeb", p.base.getPath());
     }
 
@@ -132,13 +143,25 @@ class InstallPathsTest {
 
     @Test
     void linuxUsesXdgDataHomeThenLocalShare() throws Exception {
-        InstallPaths.Inputs xdg = new InstallPaths.Inputs(false, facts("Linux", "amd64", "64",
-            env("XDG_DATA_HOME", "/data/xdg")), "/home/p", new File("/home/p/.minecraft")).usable(f -> true);
-        assertEquals("/data/xdg/AkashicWeb", InstallPaths.resolve(xdg).base.getPath().replace('\\', '/'));
-        InstallPaths.Inputs relative = new InstallPaths.Inputs(false, facts("Linux", "amd64", "64",
-            env("XDG_DATA_HOME", "rel/xdg")), "/home/p", new File("/home/p/.minecraft")).usable(f -> true);
+        InstallPaths.Inputs xdg = new InstallPaths.Inputs(
+            false,
+            facts("Linux", "amd64", "64", env("XDG_DATA_HOME", "/data/xdg")),
+            "/home/p",
+            new File("/home/p/.minecraft")).usable(f -> true);
+        assertEquals(
+            "/data/xdg/AkashicWeb",
+            InstallPaths.resolve(xdg).base.getPath()
+                .replace('\\', '/'));
+        InstallPaths.Inputs relative = new InstallPaths.Inputs(
+            false,
+            facts("Linux", "amd64", "64", env("XDG_DATA_HOME", "rel/xdg")),
+            "/home/p",
+            new File("/home/p/.minecraft")).usable(f -> true);
         InstallPaths p = InstallPaths.resolve(relative);
-        assertEquals("/home/p/.local/share/AkashicWeb", p.base.getPath().replace('\\', '/'));
+        assertEquals(
+            "/home/p/.local/share/AkashicWeb",
+            p.base.getPath()
+                .replace('\\', '/'));
         assertEquals("~/.local/share", p.how);
     }
 
@@ -182,6 +205,9 @@ class InstallPathsTest {
         assertEquals("C:\\Users\\JOOCON~1\\AppData\\Local", out);
         assertEquals(new File(JOAO), dirs.get(0));
         for (String token : commands.get(0)) assertFalse(token.contains("Jo\u00e3o"), token);
-        assertTrue(commands.get(0).get(0).endsWith("cmd.exe"));
+        assertTrue(
+            commands.get(0)
+                .get(0)
+                .endsWith("cmd.exe"));
     }
 }

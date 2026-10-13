@@ -21,12 +21,12 @@ import org.junit.jupiter.api.Test;
 
 import com.akashiic.web.client.host.FrameRing;
 import com.akashiic.web.client.host.FrameSlot;
-import com.akashiic.web.client.screen.ClientReason;
 import com.akashiic.web.client.screen.ClientScreen;
 import com.akashiic.web.client.screen.ClientScreens;
 import com.akashiic.web.client.screen.FakeHost;
 import com.akashiic.web.client.screen.PlayerView;
 import com.akashiic.web.client.screen.RecordingServer;
+import com.akashiic.web.common.ReasonCode;
 import com.akashiic.web.common.ScreenKey;
 import com.akashiic.web.common.ScreenState;
 import com.akashiic.web.common.SitePolicy;
@@ -292,7 +292,7 @@ class FrameUploaderTest {
             1,
             uploader.stats()
                 .failures());
-        assertEquals(ClientReason.UPLOAD_FAILED.langKey(), screens.placeholder(s).key);
+        assertEquals(ReasonCode.UPLOAD_FAILED.langKey(), screens.placeholder(s).key);
         r.publish(slot(1280, 720, new Rect(0, 0, 4, 4)));
         uploader.uploadFrame();
         assertEquals("upload 0,0 1280x720", tex(s).ops.get(tex(s).ops.size() - 1), "full retry after a failure");
@@ -309,7 +309,7 @@ class FrameUploaderTest {
         uploader.uploadFrame();
         assertEquals(1, (int) r.released.get(big));
         assertTrue(textures.isEmpty());
-        assertEquals(ClientReason.TEXTURE_TOO_LARGE.langKey(), screens.placeholder(s).detailKey);
+        assertEquals(ReasonCode.TEXTURE_TOO_LARGE.langKey(), screens.placeholder(s).detailKey);
     }
 
     @Test

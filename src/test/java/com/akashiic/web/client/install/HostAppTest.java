@@ -124,7 +124,8 @@ class HostAppTest {
         File app = new File(tmp, "resources/app");
         HostApp.install(jar, app);
         assertTrue(new File(app, "package.json").isFile());
-        assertEquals(new String(manifest, StandardCharsets.UTF_8),
+        assertEquals(
+            new String(manifest, StandardCharsets.UTF_8),
             new String(Files.readAllBytes(new File(app, HostApp.MANIFEST).toPath()), StandardCharsets.UTF_8));
     }
 }

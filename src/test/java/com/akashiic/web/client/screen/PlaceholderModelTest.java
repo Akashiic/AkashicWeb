@@ -68,14 +68,14 @@ class PlaceholderModelTest {
         in.engine = new EngineState(EngineState.Kind.UNSUPPORTED, 0, ReasonCode.UNSUPPORTED_ARCH);
         assertEquals(ReasonCode.UNSUPPORTED_ARCH.langKey(), PlaceholderModel.resolve(in).detailKey);
         in.engine = null;
-        assertEquals(ClientReason.HOST_UNAVAILABLE.langKey(), PlaceholderModel.resolve(in).detailKey);
+        assertEquals(ReasonCode.HOST_UNAVAILABLE.langKey(), PlaceholderModel.resolve(in).detailKey);
     }
 
     @Test
     void hostStates() {
         PlaceholderModel.Inputs in = live();
         in.hostAvailable = false;
-        assertEquals(ClientReason.HOST_UNAVAILABLE.langKey(), PlaceholderModel.resolve(in).detailKey);
+        assertEquals(ReasonCode.HOST_UNAVAILABLE.langKey(), PlaceholderModel.resolve(in).detailKey);
         in.hostAvailable = true;
         in.hostStatus = HostStatus.down(ReasonCode.HOST_CRASH_LOOP);
         assertEquals(ReasonCode.HOST_CRASH_LOOP.langKey(), PlaceholderModel.resolve(in).detailKey);
@@ -105,12 +105,12 @@ class PlaceholderModelTest {
     @Test
     void pageFailuresShowTheirReason() {
         PlaceholderModel.Inputs in = live();
-        in.failure = ClientReason.PAGE_CRASHED;
+        in.failure = ReasonCode.PAGE_CRASHED;
         Placeholder p = PlaceholderModel.resolve(in);
         assertTrue(p.overFrame);
-        assertEquals(ClientReason.PAGE_CRASHED.langKey(), p.key);
+        assertEquals(ReasonCode.PAGE_CRASHED.langKey(), p.key);
         in.hasFrame = false;
-        assertEquals(ClientReason.PAGE_CRASHED.langKey(), PlaceholderModel.resolve(in).detailKey);
+        assertEquals(ReasonCode.PAGE_CRASHED.langKey(), PlaceholderModel.resolve(in).detailKey);
     }
 
     @Test

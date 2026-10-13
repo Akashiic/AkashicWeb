@@ -248,7 +248,7 @@ public final class ClientScreens {
     void onHostEvent(int hostId, String kind) {
         ClientScreen s = byHostId.get(hostId);
         if (s == null) return;
-        ClientReason reason = ClientReason.fromEventKind(kind);
+        ReasonCode reason = ClientReason.fromEventKind(kind);
         if (reason != null) s.failure = reason;
         if ("blocked-url".equals(kind) && isController(s)) notifier.notice(ReasonCode.URL_BLOCKED.langKey());
         LOG.debug("AkashicWeb: {} host event {}", s.key, kind);
@@ -522,7 +522,7 @@ public final class ClientScreens {
         } catch (RuntimeException e) {
             // Documented boundary: a host bug must leave the screen on its placeholder, not break the tick.
             LOG.error("AkashicWeb: createScreen failed for {}", s.key, e);
-            s.failure = ClientReason.HOST_UNAVAILABLE;
+            s.failure = ReasonCode.HOST_UNAVAILABLE;
             return;
         }
         if (id <= 0) return;
@@ -624,9 +624,11 @@ public final class ClientScreens {
         if (status == null || (previous != null && previous.kind == status.kind)) return;
         BrowserHost host = access.started();
         if (status.kind == HostStatus.Kind.DOWN || status.kind == HostStatus.Kind.DISABLED) {
-            // The process is gone: every browser died with it. Forget the ids; the tick recreates when READY again.
+            // The process is gone: every browser died with it. Destroy (not just forget) the ids so M2's
+            // BrowserHostImpl drops its records and does not replay them on the next connect; the tick recreates
+            // fresh browsers when READY again (integration of wave 1: M2 replays every record it still holds).
             LOG.warn("AkashicWeb: browser host {}; {} browser(s) lost", status, byHostId.size());
-            for (ClientScreen s : screens.values()) forgetBrowser(s, host);
+            for (ClientScreen s : screens.values()) destroyBrowser(s, host);
         } else if (status.kind == HostStatus.Kind.READY && host != null && session.policy() != null) {
             host.policy(session.policy());
         }

@@ -53,16 +53,16 @@ public final class EngineManifest {
     public static final long MIN_FREE_BYTES = 1024L * 1024 * 1024;
 
     /** Only these UI locales are kept; the other 53 .pak files are never written (about 40 MB on Windows). */
-    public static final List<String> KEPT_LOCALES = Collections.unmodifiableList(
-        Arrays.asList("locales/en-US.pak", "locales/pt-BR.pak"));
+    public static final List<String> KEPT_LOCALES = Collections
+        .unmodifiableList(Arrays.asList("locales/en-US.pak", "locales/pt-BR.pak"));
     static final String LOCALES_PREFIX = "locales/";
 
     /**
      * Vendor entries that are never installed. Without default_app.asar the exe cannot be pointed at another app
      * folder from its command line, and Electron loads only our {@code resources/app} (ADR-001 amendment).
      */
-    public static final List<String> REMOVED_ENTRIES = Collections.unmodifiableList(
-        Collections.singletonList("resources/default_app.asar"));
+    public static final List<String> REMOVED_ENTRIES = Collections
+        .unmodifiableList(Collections.singletonList("resources/default_app.asar"));
 
     /** Where our host app goes inside the engine folder (Electron's app search path). */
     public static final String APP_DIR = "resources/app";

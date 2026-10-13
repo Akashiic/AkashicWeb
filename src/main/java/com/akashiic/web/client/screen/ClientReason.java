@@ -1,41 +1,27 @@
 package com.akashiic.web.client.screen;
 
-import java.util.Locale;
+import com.akashiic.web.common.ReasonCode;
 
 /**
- * Client-side failure codes that {@code common.ReasonCode} (owned by M4) does not have yet. They use the same lang-key
- * convention ({@code akashicweb.reason.<lower>}) so merging them into ReasonCode at integration is a rename only.
- * Listed in the M5 report.
+ * Maps host EVENT kinds (docs/PROTOCOL.md) to the reason code a screen shows. The client-only codes this class used to
+ * define now live in {@link ReasonCode} (merged at integration of wave 1).
  */
-public enum ClientReason {
+public final class ClientReason {
 
-    /** No BrowserHost implementation was wired, or its factory threw. */
-    HOST_UNAVAILABLE,
-    /** A frame could not be uploaded (GL threw); the screen shows the placeholder. */
-    UPLOAD_FAILED,
-    /** The page size exceeds GL_MAX_TEXTURE_SIZE on this GPU. */
-    TEXTURE_TOO_LARGE,
-    /** The page's renderer process crashed (host EVENT renderer-gone). */
-    PAGE_CRASHED,
-    /** The page failed to load (host EVENT load-error). */
-    PAGE_LOAD_FAILED,
-    /** The page stopped responding (host EVENT unresponsive). */
-    PAGE_UNRESPONSIVE;
+    private ClientReason() {}
 
-    public String langKey() {
-        return "akashicweb.reason." + name().toLowerCase(Locale.ROOT);
-    }
-
-    /** Host EVENT kind to a code; null for kinds that are not screen failures. */
-    public static ClientReason fromEventKind(String kind) {
+    /** Host EVENT kind to a screen failure code; null for kinds that are notices, not screen failures. */
+    public static ReasonCode fromEventKind(String kind) {
         if (kind == null) return null;
         switch (kind) {
             case "renderer-gone":
-                return PAGE_CRASHED;
+                return ReasonCode.PAGE_CRASHED;
             case "load-error":
-                return PAGE_LOAD_FAILED;
+                return ReasonCode.PAGE_LOAD_FAILED;
             case "unresponsive":
-                return PAGE_UNRESPONSIVE;
+                return ReasonCode.PAGE_UNRESPONSIVE;
+            case "capture-error":
+                return ReasonCode.CAPTURE_FAILED;
             default:
                 return null;
         }

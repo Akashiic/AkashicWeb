@@ -62,7 +62,12 @@ class RealEngineTest {
         InstallPaths paths = new InstallPaths(base, base, "test");
         HostApp.Source app = HostApp.classpath(getClass().getClassLoader());
         EngineInstaller installer = new EngineInstaller(
-            paths, t, null, app, File::getUsableSpace, System::currentTimeMillis);
+            paths,
+            t,
+            null,
+            app,
+            File::getUsableSpace,
+            System::currentTimeMillis);
         File engine = installer.installFromZip(zip, ProgressListener.NONE);
         assertEquals(new File(paths.engineRoot(), t.dirName()), engine);
 
@@ -86,6 +91,8 @@ class RealEngineTest {
         assertEquals(EngineManifest.keptBytes(t), vendorBytes, "pinned kept-byte total for the consent screen");
         List<String> files = TestSupport.listFiles(engine);
         assertTrue(files.contains("LICENSE") && files.contains("LICENSES.chromium.html"), "licence notices kept");
-        assertTrue(EngineStore.inspect(engine, false).intact());
+        assertTrue(
+            EngineStore.inspect(engine, false)
+                .intact());
     }
 }

@@ -14,7 +14,9 @@ class SmartAppControlTest {
 
     private static String regOutput(String hex) {
         return "\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy\r\n"
-            + "    VerifiedAndReputablePolicyState    REG_DWORD    0x" + hex + "\r\n\r\n";
+            + "    VerifiedAndReputablePolicyState    REG_DWORD    0x"
+            + hex
+            + "\r\n\r\n";
     }
 
     @Test
@@ -37,9 +39,9 @@ class SmartAppControlTest {
     void anythingElseIsUnknownAndDoesNotBlock() {
         assertEquals(SmartAppControl.State.UNKNOWN, SmartAppControl.parse(0, "garbage"));
         assertEquals(SmartAppControl.State.UNKNOWN, SmartAppControl.parse(5, ""));
-        assertEquals(SmartAppControl.State.UNKNOWN, SmartAppControl.query((c, d, t) -> {
-            throw new IOException("reg.exe missing");
-        }, "C:\\Windows"));
+        assertEquals(
+            SmartAppControl.State.UNKNOWN,
+            SmartAppControl.query((c, d, t) -> { throw new IOException("reg.exe missing"); }, "C:\\Windows"));
     }
 
     @Test
@@ -51,7 +53,12 @@ class SmartAppControlTest {
         }, "D:\\Win");
         assertEquals(SmartAppControl.State.ENFORCE, s);
         List<String> cmd = seen.get(0);
-        assertTrue(cmd.get(0).startsWith("D:\\Win") && cmd.get(0).endsWith("reg.exe"), cmd.get(0));
+        assertTrue(
+            cmd.get(0)
+                .startsWith("D:\\Win")
+                && cmd.get(0)
+                    .endsWith("reg.exe"),
+            cmd.get(0));
         assertTrue(cmd.contains("HKLM\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy"));
         assertTrue(cmd.contains("VerifiedAndReputablePolicyState"));
     }

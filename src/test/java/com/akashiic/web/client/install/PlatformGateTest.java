@@ -87,14 +87,38 @@ class PlatformGateTest {
         assertEquals(
             InstallFailure.UNSUPPORTED_OS,
             decide("Linux", "aarch64", "64", env("POJAV_RENDERER", "opengles3")).failure);
-        PlatformFacts withProps = new PlatformFacts("Linux", "amd64", "64", "Oracle", "OpenJDK", "OpenJDK", DESKTOP,
-            new HashSet<>(Arrays.asList("pojav.path.minecraft")), false);
+        PlatformFacts withProps = new PlatformFacts(
+            "Linux",
+            "amd64",
+            "64",
+            "Oracle",
+            "OpenJDK",
+            "OpenJDK",
+            DESKTOP,
+            new HashSet<>(Arrays.asList("pojav.path.minecraft")),
+            false);
         assertEquals(InstallFailure.UNSUPPORTED_OS, PlatformGate.decide(withProps).failure);
-        PlatformFacts withFiles = new PlatformFacts("Linux", "amd64", "64", "Oracle", "OpenJDK", "OpenJDK", DESKTOP,
-            Collections.<String>emptySet(), true);
+        PlatformFacts withFiles = new PlatformFacts(
+            "Linux",
+            "amd64",
+            "64",
+            "Oracle",
+            "OpenJDK",
+            "OpenJDK",
+            DESKTOP,
+            Collections.<String>emptySet(),
+            true);
         assertEquals(InstallFailure.UNSUPPORTED_OS, PlatformGate.decide(withFiles).failure);
-        PlatformFacts dalvik = new PlatformFacts("Linux", "aarch64", "", "The Android Project", "Dalvik",
-            "Android Runtime", env(), Collections.<String>emptySet(), false);
+        PlatformFacts dalvik = new PlatformFacts(
+            "Linux",
+            "aarch64",
+            "",
+            "The Android Project",
+            "Dalvik",
+            "Android Runtime",
+            env(),
+            Collections.<String>emptySet(),
+            false);
         assertTrue(PlatformGate.decide(dalvik).detail.contains("Android"));
     }
 

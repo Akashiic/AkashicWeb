@@ -88,3 +88,76 @@ akashicweb.cmd.status.screens= Telas: %s carregadas, %s conhecidas, %s com estad
 akashicweb.cmd.status.queue= Fila de ações: %s
 akashicweb.cmd.status.perms= Permissões Bukkit: %s, comandos registrados: %s
 akashicweb.cmd.status.players= Jogadores online: %s
+
+# Motivos adicionados na integração (host, página, GPU, instalador)
+akashicweb.reason.host_unavailable=Navegador indisponível neste cliente. %s
+akashicweb.reason.host_launch_failed=Não foi possível iniciar o navegador (arquivo ausente ou bloqueado pelo antivírus). %s
+akashicweb.reason.host_stalled=O navegador parou de responder; ele vai reiniciar. %s
+akashicweb.reason.host_protocol_error=O navegador enviou dados inválidos; ele vai reiniciar. %s
+akashicweb.reason.host_forbidden_switch=O navegador recusou uma opção de inicialização insegura. %s
+akashicweb.reason.host_connect_failed=O navegador não conseguiu se conectar ao jogo (firewall?). %s
+akashicweb.reason.url_dns_failed=Não foi possível encontrar o site: %s
+akashicweb.reason.page_load_failed=A página não carregou. %s
+akashicweb.reason.page_crashed=A página travou. %s
+akashicweb.reason.page_unresponsive=A página não responde. %s
+akashicweb.reason.capture_failed=O áudio 3D desta tela falhou. %s
+akashicweb.reason.download_blocked=Downloads não são permitidos nas telas. %s
+akashicweb.reason.permission_denied=As telas não dão permissões a sites (câmera, localização...). %s
+akashicweb.reason.popup_blocked=Pop-up bloqueado. %s
+akashicweb.reason.upload_failed=Falha ao desenhar a página. %s
+akashicweb.reason.texture_too_large=Resolução grande demais para esta placa de vídeo. %s
+akashicweb.reason.install_dir_not_writable=Sem permissão para gravar na pasta do navegador. %s
+akashicweb.reason.engine_in_use=Uma versão antiga do navegador ainda está em uso; feche o outro Minecraft. %s
+
+# Cartão de espera na tela
+akashicweb.placeholder.title=AkashicWeb
+akashicweb.placeholder.waiting_server=Aguardando o servidor…
+akashicweb.placeholder.engine_absent=Navegador não instalado
+akashicweb.placeholder.consent_needed=Navegador não instalado
+akashicweb.placeholder.consent_hint=Clique com o botão direito na tela para instalar
+akashicweb.placeholder.installing=Instalando navegador… %d%%
+akashicweb.placeholder.engine_failed=Falha no navegador:
+akashicweb.placeholder.starting=Iniciando navegador…
+akashicweb.placeholder.loading=Carregando…
+akashicweb.placeholder.no_url=Nenhum endereço (agache + botão direito)
+
+# Barra de endereço
+akashicweb.gui.address.title=Endereço da tela
+akashicweb.gui.address.go=Ir
+akashicweb.gui.address.back=Voltar
+akashicweb.gui.address.forward=Avançar
+akashicweb.gui.address.reload=Recarregar
+akashicweb.gui.address.home=Início
+akashicweb.gui.address.keyboard=Teclado
+akashicweb.gui.address.take_control=Assumir controle
+akashicweb.gui.address.release_control=Liberar controle
+akashicweb.gui.address.close=Fechar
+akashicweb.gui.address.invalid_url=Endereço inválido (só http/https)
+akashicweb.gui.address.read_only=Você não pode mudar o endereço desta tela
+akashicweb.gui.address.controller=Controlado por: %s
+akashicweb.gui.address.nobody=ninguém
+akashicweb.gui.address.you=você
+
+# Teclado da tela
+akashicweb.gui.keyboard.hint=Digitando na tela — Esc para sair
+akashicweb.gui.keyboard.not_controller=Outra pessoa controla esta tela
+
+# Teclas
+akashicweb.key.category=AkashicWeb
+akashicweb.key.keyboard=Teclado da tela
+akashicweb.key.address=Barra de endereço da tela
+
+# Chat
+akashicweb.chat.prefix=[AkashicWeb]
+akashicweb.chat.no_screen=Mire em uma tela primeiro
+
+# Instalação do navegador (texto de consentimento: aguarda aprovação do dono, P-12)
+akashicweb.install.consent.title=Instalar o navegador das telas?
+akashicweb.install.consent.body1=As telas do AkashicWeb usam um navegador separado: %s, de %s.
+akashicweb.install.consent.body2=Download de %s MB de %s; ocupa %s MB em disco.
+akashicweb.install.consent.body3=Ele roda fora do Minecraft, só neste PC. Para remover, apague a pasta %s.
+akashicweb.install.consent.accept=Instalar
+akashicweb.install.consent.decline=Agora não
+akashicweb.install.progress=Instalando navegador… %d%%
+akashicweb.install.repair=Reparar
+akashicweb.install.import_hint=Sem internet? Coloque o arquivo %s na pasta %s.

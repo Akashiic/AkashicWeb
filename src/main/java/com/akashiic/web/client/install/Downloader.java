@@ -157,7 +157,8 @@ public final class Downloader {
             try {
                 sleeper.sleep(delay);
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                Thread.currentThread()
+                    .interrupt();
                 throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "interrupted", e);
             }
         }
@@ -191,7 +192,8 @@ public final class Downloader {
             if (r.code == 206 && ranged) {
                 long[] range = parseContentRange(c.getHeaderField("Content-Range"));
                 String etag = c.getHeaderField("ETag");
-                if (range == null || range[0] != have || range[2] != t.size
+                if (range == null || range[0] != have
+                    || range[2] != t.size
                     || (etag != null && !etag.equals(st.etag))) {
                     // A 206 that does not continue our bytes of the same entity: never splice, start over.
                     delete(part);
@@ -258,7 +260,8 @@ public final class Downloader {
     }
 
     private InstallException writeFailure(File part, long remaining, IOException e) {
-        File dir = part.getAbsoluteFile().getParentFile();
+        File dir = part.getAbsoluteFile()
+            .getParentFile();
         if (usableSpace.applyAsLong(dir) < remaining + WRITE_MARGIN) {
             return new InstallException(InstallFailure.DISK_FULL, "no space left for " + part.getName(), e);
         }

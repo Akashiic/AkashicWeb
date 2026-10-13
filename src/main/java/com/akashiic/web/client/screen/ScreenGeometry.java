@@ -1,5 +1,6 @@
 package com.akashiic.web.client.screen;
 
+import com.akashiic.web.common.BlockSide;
 import com.akashiic.web.common.ScreenState;
 
 /**
@@ -7,11 +8,12 @@ import com.akashiic.web.common.ScreenState;
  * never disagree: the TESR draws the quad from {@link #basisMatrix()} and {@link #texCoord}, and a click is turned into
  * page (u, v) by {@link #pageUv}, both from the same corners.
  * <p>
- * Multiblock convention (Derived from Web Displays by montoyo (public domain), {@code utilities/BlockSide}): the
- * screen's blocks are {@code origin + i*right + j*up} for {@code i < widthBlocks}, {@code j < heightBlocks}, with
- * Web Displays' right/up vectors per face ({@link #EXTENT_RIGHT}, {@link #EXTENT_UP}); the picture is inset by
- * Web Displays' 2/16-block frame. Web Displays' BOTTOM "up" is mirrored for a viewer below, so the visible orientation
- * uses {@link #VIEW_UP} (its renderer does the same with a +90° X rotation).
+ * Multiblock convention: the server's {@link BlockSide} (M4), so drawing, client hit-testing and the server's
+ * {@link com.akashiic.web.common.HitMath} pointer check agree on every face. The screen's blocks are
+ * {@code origin + i*right + j*up} for {@code i < widthBlocks}, {@code j < heightBlocks}; the picture is inset by the
+ * 2/16-block frame ({@link com.akashiic.web.common.HitMath#BORDER}). Unlike Web Displays, BlockSide's BOTTOM face is
+ * not mirrored, so the visible "up" is the extent "up" on every face (checked against HitMath in
+ * ScreenGeometryTest).
  * <p>
  * All coordinates are relative to the origin block's minimum corner. Rotation is clockwise when looking at the face.
  * Immutable and pure; tested in ScreenGeometryTest.
@@ -25,13 +27,18 @@ public final class ScreenGeometry {
     /** A ray hit lies on the block surface; anything farther from the plane is not on this face. */
     public static final double PLANE_TOLERANCE = 0.05;
 
-    // Forge side order: 0 down, 1 up, 2 north, 3 south, 4 west, 5 east.
-    static final int[][] NORMAL = { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 } };
-    static final int[][] EXTENT_RIGHT = { { 1, 0, 0 }, { 1, 0, 0 }, { -1, 0, 0 }, { 1, 0, 0 }, { 0, 0, 1 },
-        { 0, 0, -1 } };
-    static final int[][] EXTENT_UP = { { 0, 0, -1 }, { 0, 0, -1 }, { 0, 1, 0 }, { 0, 1, 0 }, { 0, 1, 0 }, { 0, 1, 0 } };
-    /** Up as seen by a viewer facing the face (right = viewer forward x up); differs from EXTENT_UP on BOTTOM only. */
-    static final int[][] VIEW_UP = { { 0, 0, 1 }, { 0, 0, -1 }, { 0, 1, 0 }, { 0, 1, 0 }, { 0, 1, 0 }, { 0, 1, 0 } };
+    // Forge side order: 0 down, 1 up, 2 north, 3 south, 4 west, 5 east; vectors taken from the server's BlockSide.
+    static final int[][] NORMAL = new int[6][];
+    static final int[][] EXTENT_RIGHT = new int[6][];
+    static final int[][] EXTENT_UP = new int[6][];
+
+    static {
+        for (BlockSide b : BlockSide.values()) {
+            NORMAL[b.side()] = new int[] { b.fwdX, b.fwdY, b.fwdZ };
+            EXTENT_RIGHT[b.side()] = new int[] { b.rightX, b.rightY, b.rightZ };
+            EXTENT_UP[b.side()] = new int[] { b.upX, b.upY, b.upZ };
+        }
+    }
 
     /** Page corners in face-corner order TL, TR, BR, BL (unrotated). */
     private static final float[][] PAGE_CORNERS = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
@@ -57,8 +64,7 @@ public final class ScreenGeometry {
         this.quarterTurns = quarterTurns;
         this.normal = toDouble(NORMAL[side]);
         this.right = toDouble(EXTENT_RIGHT[side]);
-        double[] viewUp = toDouble(VIEW_UP[side]);
-        this.down = scale(viewUp, -1);
+        this.down = scale(toDouble(EXTENT_UP[side]), -1);
         // Centre of the origin block's face, then to the centre of the whole multiblock face.
         double[] center = add(new double[] { 0.5, 0.5, 0.5 }, scale(normal, 0.5));
         center = add(center, scale(toDouble(EXTENT_RIGHT[side]), (widthBlocks - 1) / 2.0));

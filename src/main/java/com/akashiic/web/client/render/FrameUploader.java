@@ -13,9 +13,9 @@ import com.akashiic.web.AkashicWeb;
 import com.akashiic.web.client.host.BrowserHost;
 import com.akashiic.web.client.host.FrameRing;
 import com.akashiic.web.client.host.FrameSlot;
-import com.akashiic.web.client.screen.ClientReason;
 import com.akashiic.web.client.screen.ClientScreen;
 import com.akashiic.web.client.screen.ClientScreens;
+import com.akashiic.web.common.ReasonCode;
 
 /**
  * Texture uploads, once per render frame at RenderTickEvent START (ADR-004): never in the TESR, never in the shadow
@@ -113,7 +113,7 @@ public final class FrameUploader {
             case DROP_INVALID:
                 stats.recordDroppedInvalid();
                 if (slot.width > maxTexture || slot.height > maxTexture)
-                    s.onUploadFailure(ClientReason.TEXTURE_TOO_LARGE);
+                    s.onUploadFailure(ReasonCode.TEXTURE_TOO_LARGE);
                 ring.release(slot);
                 return;
             default:
@@ -142,7 +142,7 @@ public final class FrameUploader {
             // and
             // the next frame retries with a full upload.
             stats.recordFailure();
-            s.onUploadFailure(ClientReason.UPLOAD_FAILED);
+            s.onUploadFailure(ReasonCode.UPLOAD_FAILED);
             s.carriedDamage = new Rect(0, 0, slot.width, slot.height);
             if ((stats.failures() - 1) % LOG_EVERY == 0)
                 LOG.error("AkashicWeb: texture upload failed for {} ({})", s.key, plan, e);

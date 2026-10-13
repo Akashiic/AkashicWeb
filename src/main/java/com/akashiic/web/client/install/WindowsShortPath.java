@@ -34,7 +34,8 @@ final class WindowsShortPath {
         if (output == null) return null;
         String line = output.trim();
         int nl = line.indexOf('\n');
-        if (nl >= 0) line = line.substring(0, nl).trim();
+        if (nl >= 0) line = line.substring(0, nl)
+            .trim();
         if (!line.matches("[A-Za-z]:\\\\[\\x20-\\x7E]*")) return null;
         return line;
     }

@@ -47,10 +47,17 @@ final class DownloadState {
             if (!root.isJsonObject()) return null;
             JsonObject o = root.getAsJsonObject();
             if (!o.has("url") || !o.has("size")) return null;
-            String etag = o.has("etag") && !o.get("etag").isJsonNull() ? o.get("etag").getAsString() : null;
-            return new DownloadState(o.get("url").getAsString(), etag, o.get("size").getAsLong());
-        } catch (IOException | JsonParseException | IllegalStateException | ClassCastException
-            | NumberFormatException | UnsupportedOperationException e) {
+            String etag = o.has("etag") && !o.get("etag")
+                .isJsonNull() ? o.get("etag")
+                    .getAsString() : null;
+            return new DownloadState(
+                o.get("url")
+                    .getAsString(),
+                etag,
+                o.get("size")
+                    .getAsLong());
+        } catch (IOException | JsonParseException | IllegalStateException | ClassCastException | NumberFormatException
+            | UnsupportedOperationException e) {
             return null;
         }
     }
@@ -60,7 +67,9 @@ final class DownloadState {
         o.addProperty("url", url);
         if (etag != null) o.addProperty("etag", etag);
         o.addProperty("size", size);
-        String json = new GsonBuilder().setPrettyPrinting().create().toJson(o) + "\n";
+        String json = new GsonBuilder().setPrettyPrinting()
+            .create()
+            .toJson(o) + "\n";
         try {
             FileOps.writeAtomic(f, json.getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {

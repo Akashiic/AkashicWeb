@@ -29,4 +29,9 @@
 - Contract types in Java for parallel module work (`client.host`, `client.install`, `common`, `common.net`), documented in `docs/CONTRACTS.md`.
 - Build evidence (Linux container): `./gradlew build` green, 4 JUnit + 3 node tests pass, class major 52. Not run: Windows, Minecraft client, Crucible server.
 
+### Added (2026-10-13, wave 1 of the implementation)
+- Five modules built in parallel against `docs/CONTRACTS.md` and merged: AkashicWebHost app (`host/`, M1), host connection (`client.host`, M2), engine installer (`client.install`, M3), screen block, rights, network and commands (`common`, `server`, M4), client screens, rendering, input and sync (`client.*`, M5).
+- Integration fixes: one `ReasonCode` list (18 codes proposed by M1/M2/M3/M5 merged), every lang key in `en_US.lang` and `pt_BR.lang` (140 each), the client geometry now uses the server's `BlockSide` (the ceiling layout was mirrored), and the client destroys its browser ids when the host goes down so the host connection does not replay stale screens.
+- Evidence (Linux container only): `./gradlew build` green with 440 JUnit tests (2 env-gated skips); `node --test` 123 unit + 29 Electron 44.7.0 integration tests pass under Xvfb; all 321 classes in the jar are major 52; no natives in the jar. Not run: Windows, a Minecraft client, the Crucible server. Reviews of M1 and M2 found defects that wave 2 fixes; the M3, M4 and M5 reviews did not run (usage limit) and are part of wave 2.
+
 No release yet.

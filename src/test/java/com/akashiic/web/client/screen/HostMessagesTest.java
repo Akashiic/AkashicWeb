@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 
 import com.akashiic.web.client.sync.LocalMedia;
+import com.akashiic.web.common.ReasonCode;
 
 class HostMessagesTest {
 
@@ -66,9 +67,9 @@ class HostMessagesTest {
         assertEquals("renderer-gone", HostMessages.eventKind("{\"kind\":\"renderer-gone\",\"detail\":{}}"));
         assertNull(HostMessages.eventKind("{\"detail\":1}"));
         assertNull(HostMessages.eventKind("{\"kind\":\"\"}"));
-        assertEquals(ClientReason.PAGE_CRASHED, ClientReason.fromEventKind("renderer-gone"));
-        assertEquals(ClientReason.PAGE_LOAD_FAILED, ClientReason.fromEventKind("load-error"));
+        assertEquals(ReasonCode.PAGE_CRASHED, ClientReason.fromEventKind("renderer-gone"));
+        assertEquals(ReasonCode.PAGE_LOAD_FAILED, ClientReason.fromEventKind("load-error"));
         assertNull(ClientReason.fromEventKind("blocked-url"));
-        assertEquals("akashicweb.reason.page_crashed", ClientReason.PAGE_CRASHED.langKey());
+        assertEquals("akashicweb.reason.page_crashed", ReasonCode.PAGE_CRASHED.langKey());
     }
 }

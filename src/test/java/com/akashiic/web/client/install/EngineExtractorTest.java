@@ -44,8 +44,15 @@ class EngineExtractorTest {
 
         List<String> files = TestSupport.listFiles(staging);
         assertEquals(
-            Arrays.asList("AkashicWebHost.exe", "LICENSE", "LICENSES.chromium.html", "ffmpeg.dll", "locales/en-US.pak",
-                "locales/pt-BR.pak", "resources.pak", "version"),
+            Arrays.asList(
+                "AkashicWebHost.exe",
+                "LICENSE",
+                "LICENSES.chromium.html",
+                "ffmpeg.dll",
+                "locales/en-US.pak",
+                "locales/pt-BR.pak",
+                "resources.pak",
+                "version"),
             files);
         // Renamed, not modified: the exe keeps the vendor's exact bytes (and so its hash and reputation).
         byte[] exe = Files.readAllBytes(new File(staging, "AkashicWebHost.exe").toPath());
@@ -72,15 +79,21 @@ class EngineExtractorTest {
         assertTrue(new File(staging, "chrome_crashpad_handler").canExecute());
         assertTrue(new File(staging, "chrome-sandbox").exists());
         assertFalse(new File(staging, "electron").exists());
-        assertEquals(Arrays.asList("AkashicWebHost", "chrome-sandbox", "chrome_crashpad_handler", "libffmpeg.so",
-            "locales/en-US.pak", "locales/pt-BR.pak"), TestSupport.listFiles(staging));
+        assertEquals(
+            Arrays.asList(
+                "AkashicWebHost",
+                "chrome-sandbox",
+                "chrome_crashpad_handler",
+                "libffmpeg.so",
+                "locales/en-US.pak",
+                "locales/pt-BR.pak"),
+            TestSupport.listFiles(staging));
     }
 
     @Test
     void zipSlipEntryIsRejectedAndNothingEscapes() throws Exception {
         for (String evil : new String[] { "../evil.txt", "locales/../../evil.txt", "/tmp/evil.txt",
-            "a\\..\\..\\evil.txt",
-            "C:/evil.txt", "resources/../../evil.txt" }) {
+            "a\\..\\..\\evil.txt", "C:/evil.txt", "resources/../../evil.txt" }) {
             Map<String, byte[]> entries = TestSupport.windowsLikeEntries(3);
             entries.put(evil, "pwned".getBytes("UTF-8"));
             File zip = writeZip(entries);

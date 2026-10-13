@@ -81,7 +81,8 @@ final class TestServer implements AutoCloseable {
     }
 
     String base() {
-        return "http://127.0.0.1:" + server.getAddress().getPort();
+        return "http://127.0.0.1:" + server.getAddress()
+            .getPort();
     }
 
     String canonicalUrl(String name) {
@@ -108,19 +109,26 @@ final class TestServer implements AutoCloseable {
     }
 
     private void handle(HttpExchange ex) throws IOException {
-        String path = ex.getRequestURI().getPath();
-        String query = ex.getRequestURI().getRawQuery();
-        requests.add(new Request(
-            path + (query == null ? "" : "?" + query),
-            ex.getRequestHeaders().getFirst("Range"),
-            ex.getRequestHeaders().getFirst("If-Range"),
-            ex.getRequestHeaders().getFirst("User-Agent")));
+        String path = ex.getRequestURI()
+            .getPath();
+        String query = ex.getRequestURI()
+            .getRawQuery();
+        requests.add(
+            new Request(
+                path + (query == null ? "" : "?" + query),
+                ex.getRequestHeaders()
+                    .getFirst("Range"),
+                ex.getRequestHeaders()
+                    .getFirst("If-Range"),
+                ex.getRequestHeaders()
+                    .getFirst("User-Agent")));
         try {
             if (path.startsWith("/canonical/")) {
                 canonicalHits.incrementAndGet();
                 String sig = "s" + signatures.incrementAndGet();
                 String name = path.substring("/canonical/".length());
-                ex.getResponseHeaders().set("Location", "/signed/" + name + "?sig=" + sig);
+                ex.getResponseHeaders()
+                    .set("Location", "/signed/" + name + "?sig=" + sig);
                 ex.sendResponseHeaders(302, -1);
                 return;
             }
@@ -154,24 +162,30 @@ final class TestServer implements AutoCloseable {
         byte[] b = body;
         String tag = etag;
         long from = 0;
-        String range = ex.getRequestHeaders().getFirst("Range");
-        String ifRange = ex.getRequestHeaders().getFirst("If-Range");
+        String range = ex.getRequestHeaders()
+            .getFirst("Range");
+        String ifRange = ex.getRequestHeaders()
+            .getFirst("If-Range");
         if (range != null) {
             Matcher m = RANGE.matcher(range);
             if (m.matches() && (ifRange == null || ifRange.equals(tag))) {
                 from = Long.parseLong(m.group(1));
                 if (from >= b.length) {
-                    ex.getResponseHeaders().set("Content-Range", "bytes */" + b.length);
+                    ex.getResponseHeaders()
+                        .set("Content-Range", "bytes */" + b.length);
                     ex.sendResponseHeaders(416, -1);
                     return;
                 }
             }
         }
-        ex.getResponseHeaders().set("ETag", tag);
-        ex.getResponseHeaders().set("Accept-Ranges", "bytes");
+        ex.getResponseHeaders()
+            .set("ETag", tag);
+        ex.getResponseHeaders()
+            .set("Accept-Ranges", "bytes");
         long length = b.length - from;
         if (from > 0) {
-            ex.getResponseHeaders().set("Content-Range", "bytes " + from + "-" + (b.length - 1) + "/" + b.length);
+            ex.getResponseHeaders()
+                .set("Content-Range", "bytes " + from + "-" + (b.length - 1) + "/" + b.length);
             ex.sendResponseHeaders(206, length);
         } else {
             long declared = contentLengthOverride >= 0 ? contentLengthOverride : length;
@@ -214,7 +228,8 @@ final class TestServer implements AutoCloseable {
         try {
             release.await(30, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            Thread.currentThread()
+                .interrupt();
         }
     }
 

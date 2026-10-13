@@ -1,7 +1,7 @@
 package com.akashiic.web.client.gui;
 
 /**
- * Every lang key M5 uses besides {@code ReasonCode.langKey()} / {@code ClientReason.langKey()}. The lang files belong
+ * Every lang key M5 uses besides {@code ReasonCode.langKey()} / {@code ReasonCode.langKey()}. The lang files belong
  * to M4; these keys (with pt_BR and en_US texts) are listed in the M5 report for merging at integration. Until then
  * Minecraft shows the raw key, which is ugly but never wrong.
  */

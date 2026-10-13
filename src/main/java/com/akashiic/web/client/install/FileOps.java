@@ -18,7 +18,8 @@ final class FileOps {
 
     /** Writes via a temp file in the same folder and an atomic rename, so readers never see half a file. */
     static void writeAtomic(File target, byte[] bytes) throws IOException {
-        File dir = target.getAbsoluteFile().getParentFile();
+        File dir = target.getAbsoluteFile()
+            .getParentFile();
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("cannot create " + dir);
         File tmp = new File(dir, target.getName() + ".tmp-" + Long.toHexString(System.nanoTime()));
         try (OutputStream out = new FileOutputStream(tmp)) {
@@ -82,7 +83,8 @@ final class FileOps {
         try {
             Thread.sleep(ms);
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            Thread.currentThread()
+                .interrupt();
             throw new IOException("interrupted", e);
         }
     }

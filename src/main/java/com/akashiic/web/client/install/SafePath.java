@@ -21,8 +21,15 @@ final class SafePath {
         if (path.startsWith("/") || path.endsWith("/")) return false;
         for (int i = 0; i < path.length(); i++) {
             char c = path.charAt(i);
-            if (c < 0x20 || c == 0x7F || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<'
-                || c == '>' || c == '|') {
+            if (c < 0x20 || c == 0x7F
+                || c == '\\'
+                || c == ':'
+                || c == '*'
+                || c == '?'
+                || c == '"'
+                || c == '<'
+                || c == '>'
+                || c == '|') {
                 return false;
             }
         }
@@ -54,7 +61,8 @@ final class SafePath {
         File out = new File(root, relative.replace('/', File.separatorChar));
         try {
             String rootCanon = root.getCanonicalPath() + File.separator;
-            if (!out.getCanonicalPath().startsWith(rootCanon)) {
+            if (!out.getCanonicalPath()
+                .startsWith(rootCanon)) {
                 throw new InstallException(InstallFailure.HASH_MISMATCH, "path escapes target: " + printable(relative));
             }
         } catch (IOException e) {

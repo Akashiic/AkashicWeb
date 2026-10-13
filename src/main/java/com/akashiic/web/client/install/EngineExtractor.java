@@ -67,7 +67,10 @@ final class EngineExtractor {
             }
             long total = 0;
             for (Enumeration<? extends ZipEntry> en = zf.entries(); en.hasMoreElements();) {
-                total += Math.max(0, en.nextElement().getSize());
+                total += Math.max(
+                    0,
+                    en.nextElement()
+                        .getSize());
             }
             long done = 0;
             for (Enumeration<? extends ZipEntry> en = zf.entries(); en.hasMoreElements();) {
@@ -165,7 +168,8 @@ final class EngineExtractor {
      * deleting it; for other files it is reported as a plain failure.
      */
     private InstallException writeFailure(String target, File out, IOException ex) {
-        File dir = out.getAbsoluteFile().getParentFile();
+        File dir = out.getAbsoluteFile()
+            .getParentFile();
         if (usableSpace.applyAsLong(dir) < Downloader.WRITE_MARGIN) {
             return new InstallException(InstallFailure.DISK_FULL, "no space left writing " + target, ex);
         }

@@ -88,3 +88,76 @@ akashicweb.cmd.status.screens= Screens: %s loaded, %s known, %s with live state
 akashicweb.cmd.status.queue= Action queue: %s
 akashicweb.cmd.status.perms= Bukkit permissions: %s, commands registered: %s
 akashicweb.cmd.status.players= Players online: %s
+
+# Reasons added at integration (host, page, GPU, installer)
+akashicweb.reason.host_unavailable=Browser unavailable on this client. %s
+akashicweb.reason.host_launch_failed=The browser could not be started (missing file or blocked by antivirus). %s
+akashicweb.reason.host_stalled=The browser stopped responding; it will restart. %s
+akashicweb.reason.host_protocol_error=The browser sent invalid data; it will restart. %s
+akashicweb.reason.host_forbidden_switch=The browser refused an unsafe start-up option. %s
+akashicweb.reason.host_connect_failed=The browser could not connect to the game (firewall?). %s
+akashicweb.reason.url_dns_failed=Could not find the site: %s
+akashicweb.reason.page_load_failed=The page failed to load. %s
+akashicweb.reason.page_crashed=The page crashed. %s
+akashicweb.reason.page_unresponsive=The page is not responding. %s
+akashicweb.reason.capture_failed=This screen's 3D audio failed. %s
+akashicweb.reason.download_blocked=Downloads are not allowed on screens. %s
+akashicweb.reason.permission_denied=Screens never grant site permissions (camera, location...). %s
+akashicweb.reason.popup_blocked=Pop-up blocked. %s
+akashicweb.reason.upload_failed=Failed to draw the page. %s
+akashicweb.reason.texture_too_large=Resolution too large for this GPU. %s
+akashicweb.reason.install_dir_not_writable=The browser folder is not writable. %s
+akashicweb.reason.engine_in_use=An old browser version is still in use; close the other Minecraft. %s
+
+# Placeholder card on the screen
+akashicweb.placeholder.title=AkashicWeb
+akashicweb.placeholder.waiting_server=Waiting for the server…
+akashicweb.placeholder.engine_absent=Browser not installed
+akashicweb.placeholder.consent_needed=Browser not installed
+akashicweb.placeholder.consent_hint=Right-click the screen to install
+akashicweb.placeholder.installing=Installing browser… %d%%
+akashicweb.placeholder.engine_failed=Browser failed:
+akashicweb.placeholder.starting=Starting browser…
+akashicweb.placeholder.loading=Loading…
+akashicweb.placeholder.no_url=No address (sneak + right-click)
+
+# Address bar
+akashicweb.gui.address.title=Screen address
+akashicweb.gui.address.go=Go
+akashicweb.gui.address.back=Back
+akashicweb.gui.address.forward=Forward
+akashicweb.gui.address.reload=Reload
+akashicweb.gui.address.home=Home
+akashicweb.gui.address.keyboard=Keyboard
+akashicweb.gui.address.take_control=Take control
+akashicweb.gui.address.release_control=Release control
+akashicweb.gui.address.close=Close
+akashicweb.gui.address.invalid_url=Invalid address (http/https only)
+akashicweb.gui.address.read_only=You cannot change this screen's address
+akashicweb.gui.address.controller=Controlled by: %s
+akashicweb.gui.address.nobody=nobody
+akashicweb.gui.address.you=you
+
+# Screen keyboard
+akashicweb.gui.keyboard.hint=Typing on the screen — Esc to leave
+akashicweb.gui.keyboard.not_controller=Someone else controls this screen
+
+# Key bindings
+akashicweb.key.category=AkashicWeb
+akashicweb.key.keyboard=Screen keyboard
+akashicweb.key.address=Screen address bar
+
+# Chat
+akashicweb.chat.prefix=[AkashicWeb]
+akashicweb.chat.no_screen=Aim at a screen first
+
+# Browser install (consent wording awaits the owner's approval, P-12)
+akashicweb.install.consent.title=Install the screens' browser?
+akashicweb.install.consent.body1=AkashicWeb screens use a separate browser: %s, by %s.
+akashicweb.install.consent.body2=Downloads %s MB from %s and takes %s MB on disk.
+akashicweb.install.consent.body3=It runs outside Minecraft, on this PC only. To remove it, delete the folder %s.
+akashicweb.install.consent.accept=Install
+akashicweb.install.consent.decline=Not now
+akashicweb.install.progress=Installing browser… %d%%
+akashicweb.install.repair=Repair
+akashicweb.install.import_hint=No internet? Put the file %s in the folder %s.
