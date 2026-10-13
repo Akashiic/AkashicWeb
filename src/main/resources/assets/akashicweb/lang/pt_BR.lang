@@ -166,3 +166,6 @@ akashicweb.install.import_hint=Sem internet? Coloque o arquivo %s na pasta %s.
 
 # M5 wave 2
 akashicweb.placeholder.consent_postponed=Instalação adiada: digite /awinstall
+akashicweb.install.cancel=Cancelar
+akashicweb.install.ready=O navegador está instalado.
+akashicweb.install.download_hint=Ou baixe pelo seu navegador: %s

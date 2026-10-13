@@ -53,5 +53,27 @@ public final class LangKeys {
     public static final String CHAT_PREFIX = "akashicweb.chat.prefix";
     public static final String CHAT_NO_SCREEN = "akashicweb.chat.no_screen";
 
+    // Install prompt (ConsentGui); wording awaits the owner's approval (P-12)
+    public static final String CONSENT_TITLE = "akashicweb.install.consent.title";
+    /** Two arguments: component, publisher. */
+    public static final String CONSENT_BODY1 = "akashicweb.install.consent.body1";
+    /** Three arguments: download MB, source host, disk MB. */
+    public static final String CONSENT_BODY2 = "akashicweb.install.consent.body2";
+    /** One argument: the AkashicWeb folder. */
+    public static final String CONSENT_BODY3 = "akashicweb.install.consent.body3";
+    public static final String CONSENT_ACCEPT = "akashicweb.install.consent.accept";
+    public static final String CONSENT_DECLINE = "akashicweb.install.consent.decline";
+    /** One argument: integer percent. */
+    public static final String INSTALL_PROGRESS = "akashicweb.install.progress";
+    public static final String INSTALL_REPAIR = "akashicweb.install.repair";
+    /** Two arguments: zip file name, import folder. */
+    public static final String INSTALL_IMPORT_HINT = "akashicweb.install.import_hint";
+    /** M5 wave 2. */
+    public static final String INSTALL_CANCEL = "akashicweb.install.cancel";
+    /** M5 wave 2. */
+    public static final String INSTALL_READY = "akashicweb.install.ready";
+    /** M5 wave 2. One argument: the official download URL. */
+    public static final String INSTALL_DOWNLOAD_HINT = "akashicweb.install.download_hint";
+
     private LangKeys() {}
 }

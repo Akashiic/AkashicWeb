@@ -5,7 +5,7 @@ import net.minecraft.util.MovingObjectPosition;
 import net.minecraftforge.client.event.MouseEvent;
 
 import com.akashiic.web.client.gui.AddressBarGui;
-import com.akashiic.web.client.install.EngineState;
+import com.akashiic.web.client.gui.ConsentController;
 import com.akashiic.web.common.net.ScreenInput;
 
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
@@ -54,7 +54,7 @@ public final class ScreenInteraction {
         boolean attack = e.button == mc.gameSettings.keyBindAttack.getKeyCode() + 100;
         if (!use && !attack) return;
 
-        if (use && consentNeeded()) {
+        if (use && ConsentController.opensOnUse(HostAccess.SERVICES.engine(), ClientServices.consentPostponed())) {
             Runnable opener = ClientServices.consentOpener();
             if (opener != null) {
                 opener.run();
@@ -85,8 +85,4 @@ public final class ScreenInteraction {
             mop.sideHit);
     }
 
-    private static boolean consentNeeded() {
-        EngineState s = HostAccess.SERVICES.engine();
-        return s != null && s.kind == EngineState.Kind.CONSENT_NEEDED;
-    }
 }
