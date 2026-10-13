@@ -45,6 +45,29 @@ test('the host-wide screen cap answers EVENT screen-limit (reason count), not lo
   }
 });
 
+test('a blocked-url flood never hides renderer-gone or capture-error; dropped ones are reported as a count', () => {
+  const f = fakeContext();
+  const sm = new ScreenManager(f.ctx);
+  try {
+    sm.create(4, spec());
+    for (let i = 0; i < 200; i++) sm.emitEvent(4, 'blocked-url', { url: 'http://192.168.0.' + (i % 250) + '/', reason: 'internal' });
+    sm.emitEvent(4, 'renderer-gone', { reason: 'crashed', exitCode: 1 });
+    sm.emitEvent(4, 'capture-error', { detail: 'x' });
+    sm.emitEvent(4, 'unresponsive', {});
+    sm.emitEvent(4, 'load-error', { code: -105, description: 'ERR_NAME_NOT_RESOLVED', url: 'https://a/' });
+    const kinds = f.events().map(e => e.kind);
+    assert.ok(kinds.includes('renderer-gone') && kinds.includes('capture-error') && kinds.includes('unresponsive') && kinds.includes('load-error'));
+    assert.ok(kinds.filter(k => k === 'blocked-url').length <= 21, 'the flood itself is limited');
+    sm.reportSuppressed();
+    const summary = f.events().pop();
+    assert.strictEqual(summary.kind, 'blocked-url');
+    assert.strictEqual(summary.screenId, 4);
+    assert.strictEqual(summary.detail.suppressed, 200 - kinds.filter(k => k === 'blocked-url').length);
+  } finally {
+    sm.destroyAll();
+  }
+});
+
 test('RESIZE beyond the cap keeps the current size and answers EVENT screen-limit', async () => {
   const f = fakeContext();
   const sm = new ScreenManager(f.ctx);

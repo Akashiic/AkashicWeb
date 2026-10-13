@@ -133,18 +133,30 @@ test('rejection logging is rate limited after the first 20', () => {
   assert.strictEqual(warnings.length, 22, 'first 20, then the 100th and 200th');
 });
 
-test('EventLimiter: burst then steady rate per key', () => {
+test('EventLimiter: burst then steady rate per screen and per noisy kind', () => {
   let now = 0;
   const lim = new EventLimiter(3, 2, () => now);
-  assert.deepStrictEqual([1, 2, 3, 4].map(() => lim.allow('a')), [true, true, true, false]);
-  assert.strictEqual(lim.allow('b'), true, 'keys are independent');
+  assert.deepStrictEqual([1, 2, 3, 4].map(() => lim.allow(1, 'blocked-url')), [true, true, true, false]);
+  assert.strictEqual(lim.allow(2, 'blocked-url'), true, 'screens are independent');
+  assert.strictEqual(lim.allow(1, 'permission-denied'), true, 'kinds have their own bucket');
   now += 500; // +1 token
-  assert.deepStrictEqual([lim.allow('a'), lim.allow('a')], [true, false]);
+  assert.deepStrictEqual([lim.allow(1, 'blocked-url'), lim.allow(1, 'blocked-url')], [true, false]);
   now += 10000;
-  assert.deepStrictEqual([1, 2, 3, 4].map(() => lim.allow('a')), [true, true, true, false], 'never more than the burst');
+  assert.deepStrictEqual([1, 2, 3, 4].map(() => lim.allow(1, 'blocked-url')), [true, true, true, false], 'never more than the burst');
   assert.strictEqual(lim.dropped, 3);
-  lim.forget('a');
-  assert.strictEqual(lim.allow('a'), true);
+  assert.deepStrictEqual(lim.takeSuppressed(), [{ screenId: 1, kind: 'blocked-url', count: 3 }]);
+  assert.deepStrictEqual(lim.takeSuppressed(), [], 'counts reset once taken');
+  lim.forget(1);
+  assert.strictEqual(lim.allow(1, 'blocked-url'), true);
+});
+
+test('EventLimiter: failures the game must see are never dropped, whatever floods before them', () => {
+  const lim = new EventLimiter(2, 1, () => 0);
+  for (let i = 0; i < 100; i++) lim.allow(1, 'blocked-url');
+  for (const kind of ['renderer-gone', 'capture-error', 'unresponsive', 'responsive', 'load-error', 'screen-limit', 'policy-error']) {
+    for (let i = 0; i < 50; i++) assert.strictEqual(lim.allow(1, kind), true, kind);
+  }
+  assert.strictEqual(lim.takeSuppressed()[0].count, 98);
 });
 
 test('redactUrl keeps scheme, host and path only', () => {

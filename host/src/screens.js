@@ -17,6 +17,7 @@ const { EventLimiter } = require('./limiter');
 
 const MAX_SCREENS = 16; // Java's browser budget is 2-4 (ADR-012 item 7); this is only a safety cap
 const MAX_TITLE = 256;
+const SUPPRESSED_REPORT_MS = 2000; // how often counts of rate-limited EVENTs are reported
 // Net errors that are our own doing or a user stop, not a load failure worth a placeholder.
 const QUIET_LOAD_ERRORS = new Set([-3 /* ERR_ABORTED */, -20 /* ERR_BLOCKED_BY_CLIENT */]);
 
@@ -358,12 +359,37 @@ class ScreenManager {
       emitEvent: (screenId, kind, detail) => this.emitEvent(screenId, kind, detail),
     });
     this.screens = new Map();
-    this.limiter = new EventLimiter();
+    this.limiter = ctx.limiter || new EventLimiter();
+    this.reportTimer = null;
   }
 
+  /**
+   * Sends an EVENT. Only page-triggerable kinds are rate limited (limiter.js); what is dropped is
+   * reported every SUPPRESSED_REPORT_MS as one EVENT of the same kind with detail {suppressed: n}.
+   */
   emitEvent(screenId, kind, detail) {
-    if (!this.limiter.allow(screenId)) return;
+    if (!this.limiter.allow(screenId, kind)) {
+      this._scheduleSuppressedReport();
+      return;
+    }
     this.ctx.link.send(P.T.EVENT, screenId, { kind, detail });
+  }
+
+  _scheduleSuppressedReport() {
+    if (this.reportTimer) return;
+    this.reportTimer = setTimeout(() => {
+      this.reportTimer = null;
+      this.reportSuppressed();
+    }, SUPPRESSED_REPORT_MS);
+    if (typeof this.reportTimer.unref === 'function') this.reportTimer.unref();
+  }
+
+  /** Sends the pending {suppressed: n} counts (also called by tests). */
+  reportSuppressed() {
+    for (const s of this.limiter.takeSuppressed()) {
+      if (s.screenId !== 0 && !this.screens.has(s.screenId)) continue;
+      this.ctx.link.send(P.T.EVENT, s.screenId, { kind: s.kind, detail: { suppressed: s.count } });
+    }
   }
 
   create(id, spec) {
@@ -408,6 +434,8 @@ class ScreenManager {
 
   destroyAll() {
     for (const id of [...this.screens.keys()]) this.destroy(id);
+    if (this.reportTimer) clearTimeout(this.reportTimer);
+    this.reportTimer = null;
   }
 
   setPolicyNow() {

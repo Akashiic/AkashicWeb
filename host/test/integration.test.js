@@ -392,9 +392,12 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     game.send(P.T.RESIZE, 1, { width: 4096, height: 1100 });
     ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'screen-limit', 5000, 'screen-limit for RESIZE', since);
     assert.strictEqual(ev.json.detail.reason, 'size');
-    await sleep(500);
+    game.send(P.T.NAVIGATE, 1, { url: pageUrl + '#busy' }); // repaint continuously, to see the size
+    await sleep(800);
     assert.strictEqual(frames(game, 5, since).length, 0, 'no screen 5');
-    for (const m of frames(game, 1, since)) assert.strictEqual(frameHeader(m).width, 320, 'screen 1 kept its size');
+    const after = frames(game, 1, since);
+    assert.ok(after.length > 0, 'screen 1 still paints');
+    for (const m of after) assert.strictEqual(frameHeader(m).width, 320, 'screen 1 kept its size');
   });
 
   await t.test('two screens render independently in separate sessions', async () => {
