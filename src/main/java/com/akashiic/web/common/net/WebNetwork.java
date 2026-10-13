@@ -9,11 +9,15 @@ import cpw.mods.fml.relauncher.Side;
 
 /**
  * The {@code akashicweb} SimpleNetworkWrapper channel with the packet ids of docs/PROTOCOL.md section 2. Ids are part
- * of the wire format: never renumber. Server-to-client handlers live next to their messages and only call
- * {@link ClientHooks}; client-to-server handlers live in {@code server.net}. FML instantiates the handlers of both
- * directions on both sides, which is safe because none of them references client classes.
+ * of the wire format: never renumber, never reuse a retired id. Server-to-client handlers live next to their messages
+ * and only call {@link ClientHooks}; client-to-server handlers live in {@code server.net}. FML instantiates the
+ * handlers of both directions on both sides, which is safe because none of them references client classes.
  * <p>
- * Threading rule (from AkashicFM FmNetwork): only the server main thread sends. The 1.7.10 wrapper keeps the target
+ * Threads (1.7.10 and Crucible): FMLProxyPacket does not override hasPriority, so NetworkManager hands our packets to
+ * the server main thread (processReceivedPackets) and, on the client, to the client thread; handlers do not run on
+ * Netty threads. Nothing relies on that: the server queues its work and M5 hops to its own queue anyway.
+ * <p>
+ * Sending rule (from AkashicFM FmNetwork): only the server main thread sends. The 1.7.10 wrapper keeps the target
  * player in attributes of a shared channel, so two threads sending at once can swap recipients.
  */
 public final class WebNetwork {
@@ -23,14 +27,17 @@ public final class WebNetwork {
     public static final int S2C_HELLO = 0;
     public static final int S2C_SCREEN_STATE = 1;
     public static final int S2C_URL = 2;
-    public static final int S2C_INPUT = 3;
+    /** Retired by D-016 (was S2CInput); reserved, registered as a tombstone. */
+    public static final int RETIRED_S2C_INPUT = 3;
     public static final int S2C_MEDIA_CLOCK = 4;
     public static final int S2C_CLOCK_PONG = 5;
     public static final int S2C_NOTICE = 6;
     public static final int C2S_SET_URL = 16;
     public static final int C2S_NAV = 17;
-    public static final int C2S_POINTER = 18;
-    public static final int C2S_KEY = 19;
+    /** Retired by D-016 (was C2SPointer); reserved, registered as a tombstone. */
+    public static final int RETIRED_C2S_POINTER = 18;
+    /** Retired by D-016 (was C2SKey); reserved, registered as a tombstone. */
+    public static final int RETIRED_C2S_KEY = 19;
     public static final int C2S_MEDIA_SAMPLE = 20;
     public static final int C2S_CONTROL = 21;
     public static final int C2S_RIGHTS = 22;
@@ -47,14 +54,22 @@ public final class WebNetwork {
         c.registerMessage(S2CHello.Handler.class, S2CHello.class, S2C_HELLO, Side.CLIENT);
         c.registerMessage(S2CScreenState.Handler.class, S2CScreenState.class, S2C_SCREEN_STATE, Side.CLIENT);
         c.registerMessage(S2CUrl.Handler.class, S2CUrl.class, S2C_URL, Side.CLIENT);
-        c.registerMessage(S2CInput.Handler.class, S2CInput.class, S2C_INPUT, Side.CLIENT);
+        c.registerMessage(
+            RetiredMessage.Input3.Handler.class,
+            RetiredMessage.Input3.class,
+            RETIRED_S2C_INPUT,
+            Side.CLIENT);
         c.registerMessage(S2CMediaClock.Handler.class, S2CMediaClock.class, S2C_MEDIA_CLOCK, Side.CLIENT);
         c.registerMessage(S2CClockPong.Handler.class, S2CClockPong.class, S2C_CLOCK_PONG, Side.CLIENT);
         c.registerMessage(S2CNotice.Handler.class, S2CNotice.class, S2C_NOTICE, Side.CLIENT);
         c.registerMessage(ServerPackets.SetUrl.class, C2SSetUrl.class, C2S_SET_URL, Side.SERVER);
         c.registerMessage(ServerPackets.Nav.class, C2SNav.class, C2S_NAV, Side.SERVER);
-        c.registerMessage(ServerPackets.Pointer.class, C2SPointer.class, C2S_POINTER, Side.SERVER);
-        c.registerMessage(ServerPackets.Key.class, C2SKey.class, C2S_KEY, Side.SERVER);
+        c.registerMessage(
+            RetiredMessage.Pointer18.Handler.class,
+            RetiredMessage.Pointer18.class,
+            RETIRED_C2S_POINTER,
+            Side.SERVER);
+        c.registerMessage(RetiredMessage.Key19.Handler.class, RetiredMessage.Key19.class, RETIRED_C2S_KEY, Side.SERVER);
         c.registerMessage(ServerPackets.Media.class, C2SMediaSample.class, C2S_MEDIA_SAMPLE, Side.SERVER);
         c.registerMessage(ServerPackets.Control.class, C2SControl.class, C2S_CONTROL, Side.SERVER);
         c.registerMessage(ServerPackets.RightsChanged.class, C2SRights.class, C2S_RIGHTS, Side.SERVER);

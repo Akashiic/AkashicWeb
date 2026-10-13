@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
@@ -23,6 +24,7 @@ import com.akashiic.web.common.ScreenMode;
 import com.akashiic.web.common.ScreenState;
 import com.akashiic.web.common.SitePolicy;
 import com.akashiic.web.common.TestScreens;
+import com.akashiic.web.protocol.Protocol;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -53,16 +55,101 @@ class NetCodecTest {
 
     // ---- round trips of every packet in PROTOCOL.md section 2 ----
 
+    private static final UUID PLAYER = UUID.fromString("12345678-0000-0000-0000-00000000abcd");
+
     @Test
     void hello() {
         SitePolicy p = SitePolicy
             .of(SitePolicy.Mode.BLOCKLIST, Arrays.asList("a.com"), Arrays.asList("b.com", "c.org"));
-        S2CHello h = roundTrip(new S2CHello(1, 3, true, p, 123456789L), S2CHello::new);
+        S2CHello h = roundTrip(new S2CHello(1, 3, true, p, 123456789L, PLAYER), S2CHello::new);
         assertEquals(1, h.protoMajor);
         assertEquals(3, h.protoMinor);
         assertTrue(h.killSwitch);
         assertEquals(p, h.policy);
         assertEquals(123456789L, h.serverTimeMs);
+        assertEquals(PLAYER, h.playerUuid, "D-016: the player's server-side UUID");
+        assertFalse(h.foreignMajor);
+    }
+
+    /** Review finding: a hello with an appended field was dropped as malformed, so mixed versions showed nothing. */
+    @Test
+    void helloOfTheSameMajorToleratesAppendedFields() {
+        ByteBuf b = Unpooled.buffer();
+        new S2CHello(Protocol.MAJOR, 9, false, SitePolicy.blocklist(Arrays.asList("x.com")), 5L, PLAYER).toBytes(b);
+        b.writeLong(42L); // a field a newer server appended
+        b.writeBoolean(true);
+        S2CHello h = decode(b, S2CHello::new);
+        assertNull(h.malformed, h.malformed);
+        assertEquals(PLAYER, h.playerUuid);
+        assertEquals(9, h.protoMinor);
+        assertFalse(b.isReadable(), "the unknown bytes are consumed");
+    }
+
+    /** Review finding: a hello of another major must reach the client as a mismatch (placeholder), not be dropped. */
+    @Test
+    void helloOfAnotherMajorIsReportedNotDropped() {
+        ByteBuf b = Unpooled.buffer();
+        b.writeShort(Protocol.MAJOR + 1);
+        b.writeShort(0);
+        b.writeByte(26); // whatever the next major puts here: not a valid policy mode for this client
+        b.writeInt(0xDEADBEEF);
+        S2CHello h = decode(b, S2CHello::new);
+        assertNull(h.malformed, h.malformed);
+        assertTrue(h.foreignMajor);
+        assertEquals(Protocol.MAJOR + 1, h.protoMajor);
+        assertNull(h.policy);
+        assertNull(h.playerUuid);
+    }
+
+    /** A server of the same major built before D-016 sends no playerUuid; the hello still decodes. */
+    @Test
+    void helloWithoutThePlayerUuidStillDecodes() {
+        ByteBuf b = Unpooled.buffer();
+        b.writeShort(Protocol.MAJOR);
+        b.writeShort(0);
+        b.writeBoolean(false);
+        NetCodec.writePolicy(b, SitePolicy.blocklist(Arrays.<String>asList()));
+        b.writeLong(7L);
+        S2CHello h = decode(b, S2CHello::new);
+        assertNull(h.malformed, h.malformed);
+        assertNull(h.playerUuid);
+        assertEquals(7L, h.serverTimeMs);
+    }
+
+    /** Client-to-server packets stay strict: the server never guesses. */
+    @Test
+    void clientToServerPacketsStayStrictAboutTrailingBytes() {
+        ByteBuf b = Unpooled.buffer();
+        new C2SClockPing(1L, 2L).toBytes(b);
+        b.writeByte(0);
+        assertNotNull(decode(b, C2SClockPing::new).malformed);
+        ByteBuf s2c = Unpooled.buffer();
+        new S2CClockPong(1L, 2L, 3L).toBytes(s2c);
+        s2c.writeByte(0);
+        assertNull(decode(s2c, S2CClockPong::new).malformed);
+    }
+
+    /** D-016 retired ids 3, 18 and 19: an old peer's packet is skipped and dropped, never a decode failure. */
+    @Test
+    void retiredIdsAreTombstones() {
+        assertEquals(3, WebNetwork.RETIRED_S2C_INPUT);
+        assertEquals(18, WebNetwork.RETIRED_C2S_POINTER);
+        assertEquals(19, WebNetwork.RETIRED_C2S_KEY);
+        ByteBuf old = Unpooled.buffer();
+        NetCodec.writeKey(old, KEY);
+        old.writeByte(1);
+        old.writeFloat(0.5f);
+        RetiredMessage.Pointer18 m = new RetiredMessage.Pointer18();
+        m.fromBytes(old);
+        assertFalse(old.isReadable(), "payload skipped unread");
+        long before = RetiredMessage.dropped();
+        assertNull(new RetiredMessage.Pointer18.Handler().onMessage(m, null));
+        assertNull(new RetiredMessage.Key19.Handler().onMessage(new RetiredMessage.Key19(), null));
+        assertNull(new RetiredMessage.Input3.Handler().onMessage(new RetiredMessage.Input3(), null));
+        assertEquals(before + 3, RetiredMessage.dropped());
+        ByteBuf out = Unpooled.buffer();
+        new RetiredMessage.Input3().toBytes(out);
+        assertFalse(out.isReadable(), "nothing is ever written for a retired id");
     }
 
     @Test
@@ -88,6 +175,26 @@ class NetCodecTest {
         assertEquals(ScreenMode.PRIVATE, r.mode);
         assertTrue(r.locked);
         assertEquals(Rights.CLICK_TYPE, r.otherRights);
+        assertEquals("", r.controllerName, "no name was set");
+        s.controllerName = "Friend\u00a7k";
+        assertEquals("Friend", roundTrip(new S2CScreenState(s), S2CScreenState::new).state.controllerName);
+        s.controller = null;
+        assertEquals("", roundTrip(new S2CScreenState(s), S2CScreenState::new).state.controllerName, "no controller");
+    }
+
+    /** A state from a server built before D-016 ends at the mode: it still decodes, without a controller name. */
+    @Test
+    void screenStateWithoutTheControllerNameStillDecodes() {
+        ScreenState s = TestScreens.state(BlockSide.NORTH, 1, 2, 3, 2, 2, 0);
+        s.controller = TestScreens.FRIEND;
+        s.controllerName = "Friend";
+        ByteBuf b = Unpooled.buffer();
+        new S2CScreenState(s).toBytes(b);
+        ByteBuf old = b.copy(0, b.readableBytes() - 7); // varint length 6 + "Friend"
+        S2CScreenState r = decode(old, S2CScreenState::new);
+        assertNull(r.malformed, r.malformed);
+        assertEquals(TestScreens.FRIEND, r.state.controller);
+        assertEquals("", r.state.controllerName);
     }
 
     @Test
@@ -97,21 +204,29 @@ class NetCodecTest {
         assertEquals("https://x.com/a?b=c", u.url);
         assertEquals(7, u.epoch);
 
-        S2CInput in = roundTrip(
-            new S2CInput(KEY, 9, ScreenInput.pointer(ScreenInput.Kind.DOWN, 0.25f, 0.75f, 1, 2, ScreenInput.MOD_SHIFT)),
-            S2CInput::new);
-        assertEquals(ScreenInput.Kind.DOWN, in.input.kind);
-        assertEquals(0.25f, in.input.u);
-        assertEquals(0.75f, in.input.v);
-        assertEquals(1, in.input.button);
-        assertEquals(2, in.input.clickCount);
-        assertEquals(ScreenInput.MOD_SHIFT, in.input.modifiers);
-
-        S2CMediaClock c = roundTrip(new S2CMediaClock(KEY, 3, 61.5, 1.05f, true, 99L), S2CMediaClock::new);
+        S2CMediaClock c = roundTrip(new S2CMediaClock(KEY, 3, 61.5, 1.05f, true, 99L, true, 2500), S2CMediaClock::new);
         assertEquals(61.5, c.mediaTime);
         assertEquals(1.05f, c.rate);
         assertTrue(c.paused);
         assertEquals(99L, c.serverTimeMs);
+        assertTrue(c.live);
+        assertEquals(2500, c.liveLagMs);
+        assertEquals(
+            S2CMediaClock.MAX_LIVE_LAG_MS,
+            roundTrip(
+                new S2CMediaClock(KEY, 3, 1, 1f, false, 1L, true, Integer.MAX_VALUE),
+                S2CMediaClock::new).liveLagMs,
+            "the writer clamps");
+        ByteBuf badLag = Unpooled.buffer();
+        new S2CMediaClock(KEY, 3, 1, 1f, false, 1L, true, 0).toBytes(badLag);
+        badLag.setInt(badLag.writerIndex() - 4, -1);
+        assertNotNull(decode(badLag, S2CMediaClock::new).malformed);
+        ByteBuf preD016 = Unpooled.buffer();
+        new S2CMediaClock(KEY, 3, 1, 1f, false, 1L, true, 9).toBytes(preD016);
+        S2CMediaClock old = decode(preD016.copy(0, preD016.readableBytes() - 5), S2CMediaClock::new);
+        assertNull(old.malformed, "a clock without the D-016 fields still decodes");
+        assertFalse(old.live);
+        assertEquals(0, old.liveLagMs);
 
         S2CClockPong pong = roundTrip(new S2CClockPong(5L, 6L, 7L), S2CClockPong::new);
         assertEquals(5L, pong.nonce);
@@ -130,16 +245,6 @@ class NetCodecTest {
         assertEquals(4, set.epoch);
 
         assertEquals("back", roundTrip(new C2SNav(KEY, 1, "back"), C2SNav::new).action);
-
-        C2SPointer w = roundTrip(new C2SPointer(KEY, ScreenInput.wheel(0.5f, 0.5f, 0f, -120f, 0)), C2SPointer::new);
-        assertEquals(ScreenInput.Kind.WHEEL, w.input.kind);
-        assertEquals(-120f, w.input.wheelY);
-
-        C2SKey k = roundTrip(new C2SKey(KEY, ScreenInput.key(true, "Enter", ScreenInput.MOD_CTRL)), C2SKey::new);
-        assertEquals(ScreenInput.Kind.KEY_DOWN, k.input.kind);
-        assertEquals("Enter", k.input.key);
-        C2SKey ch = roundTrip(new C2SKey(KEY, ScreenInput.chars("ação $%&")), C2SKey::new);
-        assertEquals("ação $%&", ch.input.text);
 
         MediaSample ms = new MediaSample(2, 12.5, 1f, false, true, true, 3.25, 1000L);
         C2SMediaSample m = roundTrip(new C2SMediaSample(KEY, ms), C2SMediaSample::new);
@@ -227,17 +332,9 @@ class NetCodecTest {
         assertNotNull(decode(side, C2SControl::new).malformed);
 
         ByteBuf nan = Unpooled.buffer();
-        new C2SPointer(KEY, ScreenInput.pointer(ScreenInput.Kind.MOVE, 0.5f, 0.5f, 0, 0, 0)).toBytes(nan);
-        nan.setFloat(17 + 1, Float.NaN); // key (17 bytes), kind (1), then u
-        assertNotNull(decode(nan, C2SPointer::new).malformed);
-
-        // A key event inside a pointer packet and the other way round.
-        ByteBuf wrong = Unpooled.buffer();
-        new C2SKey(KEY, ScreenInput.key(true, "a", 0)).toBytes(wrong);
-        assertNotNull(decode(wrong, C2SPointer::new).malformed);
-        ByteBuf wrong2 = Unpooled.buffer();
-        new C2SPointer(KEY, ScreenInput.pointer(ScreenInput.Kind.UP, 0, 0, 0, 1, 0)).toBytes(wrong2);
-        assertNotNull(decode(wrong2, C2SKey::new).malformed);
+        new C2SMediaSample(KEY, new MediaSample(1, 2.0, 1f, false, false, false, 0, 5L)).toBytes(nan);
+        nan.setDouble(17 + 4, Double.NaN); // key (17 bytes), epoch (4), then mediaTime
+        assertNotNull(decode(nan, C2SMediaSample::new).malformed);
     }
 
     @Test
@@ -314,7 +411,10 @@ class NetCodecTest {
     @Test
     void protocolIdsMatchTheSpec() {
         assertEquals(0, WebNetwork.S2C_HELLO);
+        assertEquals(4, WebNetwork.S2C_MEDIA_CLOCK);
         assertEquals(6, WebNetwork.S2C_NOTICE);
+        assertEquals(20, WebNetwork.C2S_MEDIA_SAMPLE);
+        assertEquals(21, WebNetwork.C2S_CONTROL);
         assertEquals(16, WebNetwork.C2S_SET_URL);
         assertEquals(24, WebNetwork.C2S_PREFLIGHT);
         assertFalse(WebNetwork.CHANNEL_NAME.length() > 20, "FML channel names are at most 20 characters");

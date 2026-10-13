@@ -43,12 +43,21 @@ class ScreenNbtTest {
         assertTrue(r.locked);
         assertEquals(ScreenMode.CAST, r.mode);
         assertNull(r.controller, "the save file never holds a controller lock");
+        assertEquals("", r.controllerName);
+        s.controllerName = "Friend";
         NBTTagCompound desc = new NBTTagCompound();
         ScreenNbt.write(desc, Arrays.asList(s), true);
+        ScreenState d = ScreenNbt.read(desc, 0, 5, 70, -3)
+            .get(0);
+        assertEquals(TestScreens.FRIEND, d.controller);
+        assertEquals("Friend", d.controllerName, "D-016: the description packet names the controller");
+        NBTTagCompound save = new NBTTagCompound();
+        ScreenNbt.write(save, Arrays.asList(s), false);
         assertEquals(
-            TestScreens.FRIEND,
-            ScreenNbt.read(desc, 0, 5, 70, -3)
-                .get(0).controller);
+            "",
+            ScreenNbt.read(save, 0, 5, 70, -3)
+                .get(0).controllerName,
+            "nor its name");
     }
 
     @Test

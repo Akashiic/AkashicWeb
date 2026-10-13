@@ -17,15 +17,11 @@ import com.akashiic.web.common.WebConfig;
 import com.akashiic.web.common.WebSettings;
 import com.akashiic.web.common.block.TileEntityScreen;
 import com.akashiic.web.common.net.C2SControl;
-import com.akashiic.web.common.net.C2SKey;
 import com.akashiic.web.common.net.C2SMediaSample;
 import com.akashiic.web.common.net.C2SNav;
-import com.akashiic.web.common.net.C2SPointer;
 import com.akashiic.web.common.net.C2SRights;
 import com.akashiic.web.common.net.C2SSetUrl;
-import com.akashiic.web.common.net.S2CInput;
 import com.akashiic.web.common.net.S2CUrl;
-import com.akashiic.web.common.net.ScreenInput;
 import com.mojang.authlib.GameProfile;
 
 /**
@@ -182,64 +178,6 @@ public final class ScreenActions {
         ScreenSync.sendUrl(s);
     }
 
-    // ---- input ----
-
-    public static void pointer(EntityPlayerMP p, C2SPointer m) {
-        Target t = resolve(p, m.key, "pointer", true);
-        if (t == null || !inputAllowed(t, "pointer")) return;
-        double[] look = ScreenWorld.look(p);
-        ReasonCode r = PointerCheck.check(
-            t.state,
-            t.eye[0],
-            t.eye[1],
-            t.eye[2],
-            look,
-            m.input.u,
-            m.input.v,
-            t.cfg.pointerReach,
-            t.cfg.pointerMaxAngleDeg);
-        if (r != ReasonCode.OK) {
-            reject(p, r, "pointer", "", m.input.kind == ScreenInput.Kind.MOVE);
-            return;
-        }
-        echo(t, m.input);
-    }
-
-    public static void key(EntityPlayerMP p, C2SKey m) {
-        Target t = resolve(p, m.key, "key", true);
-        if (t == null || !inputAllowed(t, "key")) return;
-        ReasonCode r = PointerCheck.near(t.state, t.eye[0], t.eye[1], t.eye[2], t.cfg.pointerReach, true);
-        if (r != ReasonCode.OK) {
-            reject(p, r, "key", "", false);
-            return;
-        }
-        echo(t, m.input);
-    }
-
-    /**
-     * Input rights plus the controller lock. A player with CLICK_TYPE on a screen without controller becomes the
-     * controller implicitly on their first input.
-     */
-    private static boolean inputAllowed(Target t, String action) {
-        ReasonCode r = RightsPolicy.canInput(t.state, t.id, t.admin);
-        if (r == ReasonCode.NOT_CONTROLLER && t.state.controller == null
-            && RightsPolicy.canTakeControl(t.state, t.id, t.admin) == ReasonCode.OK) {
-            setController(t, t.id, "implicit");
-            r = ReasonCode.OK;
-        }
-        if (r != ReasonCode.OK) {
-            reject(t.player, r, action, "", r == ReasonCode.NOT_CONTROLLER);
-            return false;
-        }
-        return true;
-    }
-
-    /** ADR-012 amendment: accepted input goes back to the sender's own client only, never to followers. */
-    private static void echo(Target t, ScreenInput input) {
-        ServerRuntime.session(t.state).lastInputMs = ServerClock.nowMs();
-        ScreenSync.sendTo(t.player, new S2CInput(t.state.key, t.state.epoch, input));
-    }
-
     // ---- media clock ----
 
     public static void media(EntityPlayerMP p, C2SMediaSample m) {
@@ -276,6 +214,7 @@ public final class ScreenActions {
     private static void setController(Target t, UUID controller, String why) {
         UUID previous = t.state.controller;
         t.state.controller = controller;
+        t.state.controllerName = controller == null ? "" : t.player.getCommandSenderName();
         ServerRuntime.session(t.state).lastInputMs = ServerClock.nowMs();
         if (previous != null && controller != null) {
             AuditLog
@@ -288,6 +227,7 @@ public final class ScreenActions {
     /** Housekeeping release (offline, idle, far, other dimension). */
     static void releaseControl(ScreenState s, String why) {
         s.controller = null;
+        s.controllerName = "";
         TileEntityScreen te = ServerRuntime.LOADED.tile(s.key);
         if (te != null) ScreenSync.sendDescription(te);
         com.akashiic.web.AkashicWeb.LOG.debug("AkashicWeb: {} controller released ({})", s.key, why);
@@ -298,6 +238,7 @@ public final class ScreenActions {
         TileEntityScreen te = ServerRuntime.LOADED.tile(s.key);
         UUID previous = s.controller;
         s.controller = admin.getUniqueID();
+        s.controllerName = admin.getCommandSenderName();
         ServerRuntime.session(s).lastInputMs = ServerClock.nowMs();
         if (te != null) ScreenSync.sendDescription(te);
         AuditLog.log(admin.getCommandSenderName(), admin.getUniqueID(), "admin takeover", s.key + " from " + previous);
@@ -362,7 +303,10 @@ public final class ScreenActions {
     public static void setLocked(ScreenState s, boolean locked, String actor, UUID actorId) {
         if (s.locked == locked) return;
         s.locked = locked;
-        if (locked && s.controller != null) s.controller = null;
+        if (locked && s.controller != null) {
+            s.controller = null;
+            s.controllerName = "";
+        }
         TileEntityScreen te = ServerRuntime.LOADED.tile(s.key);
         if (te != null) {
             te.markDirty();

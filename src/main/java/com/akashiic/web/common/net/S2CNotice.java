@@ -12,7 +12,7 @@ import io.netty.buffer.ByteBuf;
  * S2C 6: a reason code with arguments for the player (refusals, screen events). The code travels by name, so a code
  * added on the server later is simply unknown (null) on an older client, which logs and ignores it.
  */
-public final class S2CNotice extends AkwMessage {
+public final class S2CNotice extends S2CMessage {
 
     /** Null on the client when the server sent a code this client does not know. */
     public ReasonCode code;

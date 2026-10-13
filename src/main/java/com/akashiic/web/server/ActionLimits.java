@@ -9,7 +9,7 @@ import com.akashiic.web.common.RateLimiter;
 import com.akashiic.web.common.WebSettings;
 
 /**
- * Per-player rate limits, one token bucket per kind of client packet, so a flood of pointer moves never starves URL
+ * Per-player rate limits, one token bucket per kind of client packet, so a flood of media samples never starves URL
  * changes and the other way round. Thread-safe (consulted on the network thread before queueing).
  */
 public final class ActionLimits {
@@ -18,8 +18,6 @@ public final class ActionLimits {
 
         URL,
         NAV,
-        POINTER,
-        KEY,
         MEDIA,
         CONTROL,
         RIGHTS,
@@ -30,10 +28,6 @@ public final class ActionLimits {
 
         int rate(WebSettings s) {
             switch (this) {
-                case POINTER:
-                    return s.pointerPerSecond;
-                case KEY:
-                    return s.keysPerSecond;
                 case MEDIA:
                     return s.mediaSamplesPerSecond;
                 case PING:

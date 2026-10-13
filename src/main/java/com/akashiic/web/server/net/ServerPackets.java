@@ -11,10 +11,8 @@ import com.akashiic.web.common.WebConfig;
 import com.akashiic.web.common.net.AkwMessage;
 import com.akashiic.web.common.net.C2SClockPing;
 import com.akashiic.web.common.net.C2SControl;
-import com.akashiic.web.common.net.C2SKey;
 import com.akashiic.web.common.net.C2SMediaSample;
 import com.akashiic.web.common.net.C2SNav;
-import com.akashiic.web.common.net.C2SPointer;
 import com.akashiic.web.common.net.C2SPreflight;
 import com.akashiic.web.common.net.C2SRights;
 import com.akashiic.web.common.net.C2SSetUrl;
@@ -67,9 +65,9 @@ public final class ServerPackets {
         }
     }
 
-    /** Main thread. A pointer flood must not flood notices: RATE_LIMITED on pointer/media is recorded quietly. */
+    /** Main thread. A sample flood must not flood notices: RATE_LIMITED on media/ping is recorded quietly. */
     private static void rejected(EntityPlayerMP p, ReasonCode code, String action, String detail) {
-        boolean quiet = "pointer".equals(action) || "media".equals(action) || "ping".equals(action);
+        boolean quiet = "media".equals(action) || "ping".equals(action);
         ScreenActions.reject(p, code, action, detail, quiet);
     }
 
@@ -87,24 +85,6 @@ public final class ServerPackets {
         @Override
         public IMessage onMessage(C2SNav m, MessageContext ctx) {
             accept(ctx, m, ActionLimits.Kind.NAV, p -> ScreenActions.nav(p, m));
-            return null;
-        }
-    }
-
-    public static final class Pointer implements IMessageHandler<C2SPointer, IMessage> {
-
-        @Override
-        public IMessage onMessage(C2SPointer m, MessageContext ctx) {
-            accept(ctx, m, ActionLimits.Kind.POINTER, p -> ScreenActions.pointer(p, m));
-            return null;
-        }
-    }
-
-    public static final class Key implements IMessageHandler<C2SKey, IMessage> {
-
-        @Override
-        public IMessage onMessage(C2SKey m, MessageContext ctx) {
-            accept(ctx, m, ActionLimits.Kind.KEY, p -> ScreenActions.key(p, m));
             return null;
         }
     }

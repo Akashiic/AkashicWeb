@@ -104,12 +104,15 @@ public final class ScreenSync {
         p.addChatMessage(msg);
     }
 
-    /** S2CHello for one player (login). */
+    /**
+     * S2CHello for one player (login, policy reload, kill switch). It carries the player's UUID as this server knows
+     * it, which is what ScreenState.controller holds (D-016: the client recognises itself as the controller with it).
+     */
     public static void hello(EntityPlayerMP p) {
         WebSettings cfg = WebConfig.get();
         long now = ServerClock.nowMs();
         ServerRuntime.DIAGNOSTICS.of(p.getUniqueID()).helloSentMs = now;
-        sendTo(p, new S2CHello(Protocol.MAJOR, Protocol.MINOR, cfg.killSwitch, cfg.sitePolicy, now));
+        sendTo(p, new S2CHello(Protocol.MAJOR, Protocol.MINOR, cfg.killSwitch, cfg.sitePolicy, now, p.getUniqueID()));
     }
 
     /** S2CHello for everyone (policy reload, kill switch). */

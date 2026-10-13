@@ -12,7 +12,7 @@ import io.netty.buffer.ByteBuf;
  * their actions was refused). Broadcasts to every tracker use the tile entity's description packet instead, so the
  * client tile entity (which the renderer reads) never goes stale; both paths end in {@link ClientHooks#onScreenState}.
  */
-public final class S2CScreenState extends AkwMessage {
+public final class S2CScreenState extends S2CMessage {
 
     public ScreenState state;
 

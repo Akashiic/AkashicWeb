@@ -139,8 +139,6 @@ public final class WebConfig {
         c.addCustomCategoryComment(LIMITS, "Per-player rate limits (per second, burst 2x) and validation distances.");
         b.actionsPerSecond = c
             .getInt("actionsPerSecond", LIMITS, d.actionsPerSecond, 1, 100, "URL, nav, rights, control.");
-        b.pointerPerSecond = c.getInt("pointerPerSecond", LIMITS, d.pointerPerSecond, 1, 200, "Pointer packets.");
-        b.keysPerSecond = c.getInt("keysPerSecond", LIMITS, d.keysPerSecond, 1, 200, "Key packets.");
         b.mediaSamplesPerSecond = c.getInt("mediaSamplesPerSecond", LIMITS, d.mediaSamplesPerSecond, 1, 40, "");
         b.clockPingsPerSecond = c.getInt("clockPingsPerSecond", LIMITS, d.clockPingsPerSecond, 1, 40, "");
         b.interactRange = c.getInt(
@@ -219,8 +217,6 @@ public final class WebConfig {
         b.maxResolutionPixels = s.maxResolutionPixels;
         b.maxFriends = s.maxFriends;
         b.actionsPerSecond = s.actionsPerSecond;
-        b.pointerPerSecond = s.pointerPerSecond;
-        b.keysPerSecond = s.keysPerSecond;
         b.mediaSamplesPerSecond = s.mediaSamplesPerSecond;
         b.clockPingsPerSecond = s.clockPingsPerSecond;
         b.interactRange = s.interactRange;

@@ -34,16 +34,6 @@ final class ChannelServerBound implements ServerBound {
     }
 
     @Override
-    public void pointer(ScreenKey key, ScreenInput input) {
-        send(new C2SPointer(key, input));
-    }
-
-    @Override
-    public void key(ScreenKey key, ScreenInput input) {
-        send(new C2SKey(key, input));
-    }
-
-    @Override
     public void mediaSample(ScreenKey key, MediaSample sample) {
         send(new C2SMediaSample(key, sample));
     }

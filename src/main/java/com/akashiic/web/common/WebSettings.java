@@ -34,7 +34,7 @@ public final class WebSettings {
     public final int maxFriends;
 
     // limits
-    public final int actionsPerSecond, pointerPerSecond, keysPerSecond, mediaSamplesPerSecond, clockPingsPerSecond;
+    public final int actionsPerSecond, mediaSamplesPerSecond, clockPingsPerSecond;
     public final double interactRange, pointerReach, pointerMaxAngleDeg;
     public final int mediaClockHz;
     public final int controllerIdleSeconds;
@@ -68,8 +68,6 @@ public final class WebSettings {
         defaultResolutionH = clamp(b.defaultResolutionH, ScreenGeometry.MIN_RESOLUTION, maxResolutionH);
         maxFriends = clamp(b.maxFriends, 0, 64);
         actionsPerSecond = clamp(b.actionsPerSecond, 1, 100);
-        pointerPerSecond = clamp(b.pointerPerSecond, 1, 200);
-        keysPerSecond = clamp(b.keysPerSecond, 1, 200);
         mediaSamplesPerSecond = clamp(b.mediaSamplesPerSecond, 1, 40);
         clockPingsPerSecond = clamp(b.clockPingsPerSecond, 1, 40);
         interactRange = Math.max(2, Math.min(256, b.interactRange));
@@ -151,8 +149,6 @@ public final class WebSettings {
         public long maxResolutionPixels = 1920L * 1080L;
         public int maxFriends = 32;
         public int actionsPerSecond = 4;
-        public int pointerPerSecond = 60;
-        public int keysPerSecond = 40;
         public int mediaSamplesPerSecond = 8;
         public int clockPingsPerSecond = 8;
         public double interactRange = 24;

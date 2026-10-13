@@ -88,6 +88,8 @@ public final class ClientScreens {
     static final long SYNC_INTERVAL_MS = 250;
     static final long HOUSEKEEPING_INTERVAL_MS = 1_000;
     static final long PRUNE_GRACE_MS = 3_000;
+    /** The controller repeats C2SControl take at most this often while it interacts (D-016 keepalive). */
+    static final long KEEPALIVE_MS = 5_000;
 
     private final Map<ScreenKey, ClientScreen> screens = new LinkedHashMap<>();
     private final Map<Integer, ClientScreen> byHostId = new HashMap<>();
@@ -125,7 +127,12 @@ public final class ClientScreens {
     // ------------------------------------------------------------------ server packets (client thread)
 
     public void onHello(int protoMajor, int protoMinor, boolean killSwitch, SitePolicy policy) {
-        session.onHello(protoMajor, protoMinor, killSwitch, policy);
+        onHello(protoMajor, protoMinor, killSwitch, policy, null);
+    }
+
+    /** @param playerUuid the local player's UUID as the server knows it (D-016), or null from an older server */
+    public void onHello(int protoMajor, int protoMinor, boolean killSwitch, SitePolicy policy, UUID playerUuid) {
+        session.onHello(protoMajor, protoMinor, killSwitch, policy, playerUuid);
         LOG.info("AkashicWeb: server hello: {}", session);
         if (!session.allowsBrowsers()) destroyAllBrowsers();
         BrowserHost host = access.started();
@@ -195,15 +202,6 @@ public final class ClientScreens {
         BrowserHost host = access.started();
         if (s.hostScreenId != 0 && host != null) navigate(s, host);
         else s.navigatedEpoch = epoch;
-    }
-
-    /** S2CInput: our own input, validated and relayed back by the server (we are the controller). */
-    public void onInput(ScreenKey key, int epoch, ScreenInput input) {
-        ClientScreen s = screens.get(key);
-        BrowserHost host = access.started();
-        if (s == null || host == null || s.hostScreenId == 0 || epoch != s.state().epoch) return;
-        InputEvent e = InputTranslator.toHost(input, s.requestedW, s.requestedH);
-        if (e != null) host.input(s.hostScreenId, e);
     }
 
     public void onMediaClock(ScreenKey key, int epoch, double mediaTime, float rate, boolean paused,
@@ -383,7 +381,13 @@ public final class ClientScreens {
         return null;
     }
 
+    /**
+     * The local player as the server knows it: the UUID from S2CHello (D-016; on offline-mode or proxied servers it
+     * can differ from the session's), else the one Minecraft reports.
+     */
     public UUID player() {
+        UUID server = session.playerUuid();
+        if (server != null) return server;
         return view == null ? null : view.player;
     }
 
@@ -398,33 +402,49 @@ public final class ClientScreens {
     // ------------------------------------------------------------------ player actions (client thread)
 
     /**
-     * A click from the crosshair: becomes a page left click on the controller's own browser after the server checks
-     * rights, reach and the controller lock. A free screen is taken first so the click is not rejected.
+     * A click from the crosshair: a page left click on this client's own browser (D-016: input never goes to the
+     * server). Applied only while the server says we are the controller, or on a PRIVATE screen. On a free screen the
+     * click asks for the lock and is not replayed once it is granted (M5 follow-up).
      */
     public boolean click(ClientScreen s, double u, double v, int button, int modifiers) {
         if (!can(s, Rights.CLICK_TYPE)) return false;
         takeIfFree(s);
         int count = clicks.click(s.key, u, v, timeMs.getAsLong());
-        ServerBound out = server.get();
-        out.pointer(s.key, ScreenInput.pointer(ScreenInput.Kind.DOWN, (float) u, (float) v, button, count, modifiers));
-        out.pointer(s.key, ScreenInput.pointer(ScreenInput.Kind.UP, (float) u, (float) v, button, count, modifiers));
+        applyLocally(s, ScreenInput.pointer(ScreenInput.Kind.DOWN, (float) u, (float) v, button, count, modifiers));
+        applyLocally(s, ScreenInput.pointer(ScreenInput.Kind.UP, (float) u, (float) v, button, count, modifiers));
         return true;
     }
 
     public boolean wheel(ClientScreen s, double u, double v, float notches, int modifiers) {
         if (!can(s, Rights.CLICK_TYPE) || notches == 0) return false;
         takeIfFree(s);
-        server.get()
-            .pointer(s.key, ScreenInput.wheel((float) u, (float) v, 0, notches, modifiers));
+        applyLocally(s, ScreenInput.wheel((float) u, (float) v, 0, notches, modifiers));
         return true;
     }
 
-    /** Keyboard GUI output (C2SKey). */
+    /** Keyboard GUI output, applied to this client's own browser like {@link #click}. */
     public boolean type(ClientScreen s, ScreenInput input) {
         if (input == null || !can(s, Rights.CLICK_TYPE)) return false;
         takeIfFree(s);
-        server.get()
-            .key(s.key, input);
+        applyLocally(s, input);
+        return true;
+    }
+
+    /**
+     * D-016: the local player's input goes straight to its own browser, only while ScreenState.controller is this
+     * player's server-side UUID (or the screen is PRIVATE). While it does, the controller repeats C2SControl take at
+     * most every {@link #KEEPALIVE_MS} so the server does not release the lock as idle.
+     */
+    private boolean applyLocally(ClientScreen s, ScreenInput input) {
+        boolean shared = s.state().mode != ScreenMode.PRIVATE;
+        if (shared && !isController(s)) return false;
+        BrowserHost host = access.started();
+        if (host == null || s.hostScreenId == 0) return false;
+        InputEvent e = InputTranslator.toHost(input, s.requestedW, s.requestedH);
+        if (e == null) return false;
+        host.input(s.hostScreenId, e);
+        long now = timeMs.getAsLong();
+        if (shared && now - s.lastTakeMs >= KEEPALIVE_MS) control(s, true);
         return true;
     }
 
@@ -447,6 +467,7 @@ public final class ClientScreens {
     }
 
     public void control(ClientScreen s, boolean take) {
+        if (take) s.lastTakeMs = timeMs.getAsLong();
         server.get()
             .control(s.key, take);
     }

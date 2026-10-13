@@ -1,6 +1,7 @@
 package com.akashiic.web.server;
 
 import com.akashiic.web.common.net.MediaSample;
+import com.akashiic.web.common.net.S2CMediaClock;
 
 /**
  * The server's media clock for one screen (ADR-012 item 4): anchored on the controller's last good sample and
@@ -110,6 +111,12 @@ public final class MediaClock {
 
     public double behindLiveEdge() {
         return behindLiveEdge;
+    }
+
+    /** The controller's distance behind the live edge in ms for S2CMediaClock; 0 for VOD. */
+    public int liveLagMs() {
+        if (!live) return 0;
+        return (int) Math.max(0, Math.min(S2CMediaClock.MAX_LIVE_LAG_MS, Math.round(behindLiveEdge * 1000.0)));
     }
 
     public long anchorMs() {

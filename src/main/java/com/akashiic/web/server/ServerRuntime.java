@@ -97,7 +97,9 @@ public final class ServerRuntime {
                     session.clock.positionAt(now),
                     session.clock.rate(),
                     session.clock.paused(),
-                    now));
+                    now,
+                    session.clock.live(),
+                    session.clock.liveLagMs()));
         }
     }
 

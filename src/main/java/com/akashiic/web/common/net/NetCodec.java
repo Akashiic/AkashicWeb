@@ -30,8 +30,6 @@ public final class NetCodec {
     /** Wire caps (characters unless stated). */
     public static final int MAX_URL = UrlPolicy.MAX_URL_LENGTH;
     public static final int MAX_NAME = 32;
-    public static final int MAX_KEY_NAME = 32;
-    public static final int MAX_TEXT = 64;
     public static final int MAX_ACTION = 16;
     public static final int MAX_NOTICE_ARGS = 4;
     public static final int MAX_NOTICE_ARG = 256;
@@ -39,8 +37,6 @@ public final class NetCodec {
     public static final int MAX_PREFLIGHT_ENTRIES = 16;
     public static final int MAX_PREFLIGHT_KEY = 32;
     public static final int MAX_PREFLIGHT_VALUE = 128;
-    /** Largest absolute wheel delta accepted (pixels). */
-    public static final float MAX_WHEEL = 10_000f;
 
     private NetCodec() {}
 
@@ -139,56 +135,6 @@ public final class NetCodec {
         return new ScreenKey(dim, x, y, z, side);
     }
 
-    public static void writeInput(ByteBuf b, ScreenInput in) {
-        b.writeByte(in.kind.ordinal());
-        b.writeFloat(in.u);
-        b.writeFloat(in.v);
-        b.writeByte(in.button);
-        b.writeByte(in.clickCount);
-        b.writeFloat(in.wheelX);
-        b.writeFloat(in.wheelY);
-        writeString(b, in.key, MAX_KEY_NAME);
-        writeString(b, in.text, MAX_TEXT);
-        b.writeByte(in.modifiers);
-    }
-
-    public static ScreenInput readInput(ByteBuf b) {
-        int k = b.readUnsignedByte();
-        ScreenInput.Kind[] kinds = ScreenInput.Kind.values();
-        if (k >= kinds.length) throw new CodecException("input kind " + k);
-        ScreenInput.Kind kind = kinds[k];
-        float u = readFiniteFloat(b), v = readFiniteFloat(b);
-        int button = b.readUnsignedByte(), clicks = b.readUnsignedByte();
-        float wx = readFiniteFloat(b), wy = readFiniteFloat(b);
-        String key = readString(b, MAX_KEY_NAME);
-        String text = readString(b, MAX_TEXT);
-        int mods = b.readUnsignedByte()
-            & (ScreenInput.MOD_SHIFT | ScreenInput.MOD_CTRL | ScreenInput.MOD_ALT | ScreenInput.MOD_META);
-        if (button > ScreenInput.BUTTON_MIDDLE) throw new CodecException("button " + button);
-        if (clicks > 3) throw new CodecException("clickCount " + clicks);
-        if (Math.abs(wx) > MAX_WHEEL || Math.abs(wy) > MAX_WHEEL) throw new CodecException("wheel");
-        switch (kind) {
-            case MOVE:
-            case DOWN:
-            case UP:
-                return ScreenInput.pointer(kind, u, v, button, clicks, mods);
-            case WHEEL:
-                return ScreenInput.wheel(u, v, wx, wy, mods);
-            case KEY_DOWN:
-            case KEY_UP:
-                return ScreenInput.key(kind == ScreenInput.Kind.KEY_DOWN, keyName(key), mods);
-            default:
-                return ScreenInput.chars(TextSanitizer.cleanInput(text, MAX_TEXT));
-        }
-    }
-
-    /** DOM key names are short printable ASCII ("Enter", "ArrowLeft", "a", "ç" for ABNT2 is allowed too). */
-    static String keyName(String raw) {
-        String k = TextSanitizer.cleanInput(raw, MAX_KEY_NAME);
-        if (k.isEmpty()) throw new CodecException("empty key name");
-        return k;
-    }
-
     public static void writeSample(ByteBuf b, MediaSample s) {
         b.writeInt(s.epoch);
         b.writeDouble(s.mediaTime);
@@ -238,7 +184,11 @@ public final class NetCodec {
         return out;
     }
 
-    /** Full screen record (S2CScreenState). The controller is included: it is part of the live network form. */
+    /**
+     * Full screen record (S2CScreenState). The controller and its name are included: they are part of the live network
+     * form. Must be the last thing in its packet, because fields added later are appended here and read only when
+     * present.
+     */
     public static void writeState(ByteBuf b, ScreenState s) {
         writeKey(b, s.key);
         b.writeByte(s.widthBlocks);
@@ -263,6 +213,8 @@ public final class NetCodec {
         b.writeBoolean(s.locked);
         writeUuid(b, s.controller);
         b.writeByte(s.mode.ordinal());
+        // Appended by D-016; must stay the last field (S2CScreenState carries nothing after the state).
+        writeString(b, s.controller == null ? "" : s.controllerName, MAX_NAME);
     }
 
     public static ScreenState readState(ByteBuf b) {
@@ -301,6 +253,9 @@ public final class NetCodec {
         ScreenMode[] modes = ScreenMode.values();
         if (mode >= modes.length) throw new CodecException("mode " + mode);
         s.mode = modes[mode];
+        // Appended by D-016 as the last field: a server of the same major built before it does not send it.
+        s.controllerName = b.isReadable() ? readText(b, MAX_NAME) : "";
+        if (s.controller == null) s.controllerName = "";
         return s;
     }
 

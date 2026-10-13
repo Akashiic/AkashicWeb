@@ -1,5 +1,6 @@
 package com.akashiic.web.client.net;
 
+import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.function.LongSupplier;
 
@@ -9,7 +10,6 @@ import com.akashiic.web.common.ScreenKey;
 import com.akashiic.web.common.ScreenState;
 import com.akashiic.web.common.SitePolicy;
 import com.akashiic.web.common.net.ClientHooks;
-import com.akashiic.web.common.net.ScreenInput;
 
 /**
  * M5's side of the network seam (docs/CONTRACTS.md): M4's packet handlers call this from the Netty thread and its tile
@@ -33,9 +33,10 @@ public final class ClientNetHooks implements ClientHooks {
     }
 
     @Override
-    public void onHello(int protoMajor, int protoMinor, boolean killSwitch, SitePolicy policy, long serverTimeMs) {
+    public void onHello(int protoMajor, int protoMinor, boolean killSwitch, SitePolicy policy, long serverTimeMs,
+        UUID playerUuid) {
         // serverTimeMs alone (no round trip) cannot correct the clock; ServerClock's ping exchange does that.
-        clientThread.execute(() -> screens.onHello(protoMajor, protoMinor, killSwitch, policy));
+        clientThread.execute(() -> screens.onHello(protoMajor, protoMinor, killSwitch, policy, playerUuid));
     }
 
     @Override
@@ -54,13 +55,9 @@ public final class ClientNetHooks implements ClientHooks {
     }
 
     @Override
-    public void onInput(ScreenKey key, int epoch, ScreenInput input) {
-        if (key != null && input != null) clientThread.execute(() -> screens.onInput(key, epoch, input));
-    }
-
-    @Override
-    public void onMediaClock(ScreenKey key, int epoch, double mediaTime, float rate, boolean paused,
-        long serverTimeMs) {
+    public void onMediaClock(ScreenKey key, int epoch, double mediaTime, float rate, boolean paused, long serverTimeMs,
+        boolean live, int liveLagMs) {
+        // live and liveLagMs (D-016) are not used yet: the followers' live-edge rule will take them (M5 follow-up).
         if (key != null)
             clientThread.execute(() -> screens.onMediaClock(key, epoch, mediaTime, rate, paused, serverTimeMs));
     }

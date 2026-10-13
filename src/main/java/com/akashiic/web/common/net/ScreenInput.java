@@ -1,8 +1,9 @@
 package com.akashiic.web.common.net;
 
 /**
- * One input gesture on a screen, in face coordinates (u, v in 0..1 from the top-left of the page). Carried by
- * C2SPointer / C2SKey and relayed back in S2CInput. The client converts to page pixels. Contract type.
+ * One input gesture on a screen, in face coordinates (u, v in 0..1 from the top-left of the page). Client-local since
+ * D-016: M5's GUIs produce it and turn it into the host's INPUT message (page pixels) for this client's own browser; it
+ * never travels to the server. Contract type (M2 also uses the MOD_* bits).
  */
 public final class ScreenInput {
 

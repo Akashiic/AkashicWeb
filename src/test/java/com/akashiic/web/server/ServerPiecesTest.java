@@ -72,10 +72,10 @@ class ServerPiecesTest {
         int urls = 0;
         while (l.tryAcquire(p, ActionLimits.Kind.URL, cfg)) urls++;
         assertEquals(cfg.actionsPerSecond * 2, urls);
-        assertTrue(l.tryAcquire(p, ActionLimits.Kind.POINTER, cfg), "pointer bucket unaffected");
-        int pointers = 1;
-        while (l.tryAcquire(p, ActionLimits.Kind.POINTER, cfg)) pointers++;
-        assertEquals(cfg.pointerPerSecond * 2, pointers);
+        assertTrue(l.tryAcquire(p, ActionLimits.Kind.MEDIA, cfg), "media bucket unaffected");
+        int samples = 1;
+        while (l.tryAcquire(p, ActionLimits.Kind.MEDIA, cfg)) samples++;
+        assertEquals(cfg.mediaSamplesPerSecond * 2, samples);
         l.forget(p);
         assertTrue(l.tryAcquire(p, ActionLimits.Kind.URL, cfg));
     }

@@ -86,6 +86,17 @@ class MediaClockTest {
         assertEquals(1, c.positionAt(5000), 1e-9);
     }
 
+    /** D-016: S2CMediaClock carries the controller's distance behind the live edge, 0 for VOD. */
+    @Test
+    void liveLagIsReportedInMillisecondsForLiveStreamsOnly() {
+        MediaClock c = new MediaClock(0);
+        c.apply(new MediaSample(0, 100, 1f, false, false, true, 2.5, 1000), 0, 1000);
+        assertTrue(c.live());
+        assertEquals(2500, c.liveLagMs());
+        c.apply(new MediaSample(0, 101, 1f, false, false, false, 7, 2000), 0, 2000);
+        assertEquals(0, c.liveLagMs(), "VOD");
+    }
+
     @Test
     void clockNeverGoesNegative() {
         MediaClock c = new MediaClock(0);

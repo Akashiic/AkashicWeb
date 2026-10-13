@@ -6,7 +6,7 @@ import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
 
 /** S2C 5: answer to C2SClockPing with the server's clock (see {@link com.akashiic.web.common.ClockMath}). */
-public final class S2CClockPong extends AkwMessage {
+public final class S2CClockPong extends S2CMessage {
 
     public long nonce;
     public long clientSendMs;
