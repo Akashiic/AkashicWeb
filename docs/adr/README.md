@@ -1148,6 +1148,20 @@ Under the JCEF engine fallback: allowlist-only on every SHARED screen, and keep 
 (4) Keep the server-side UrlPolicy.
 Add to the G3 tests: a page on a public host that fetch()es http://192.168.0.1/ and http://127.0.0.1:&lt;port>/ must fail without any request reaching a local listener.
 
+### Lead amendment (2026-10-13, wave 2 evidence)
+
+- **Electron 44 disables Chromium's Local Network Access checks.** Measured in the wave-1 review (AUTOMATED, Linux, Electron 44.7.0): the renderer runs with `--disable-features=...LocalNetworkAccessChecks...`, `--enable-features` cannot turn it back on, and denying the LNA permissions blocks nothing. A public page could reach LAN devices through subresources.
+- **Replacement (wave 2, M1).** The host resolves the host name of every http/https/ws/wss request, not only frames, and blocks internal addresses.
+  - Verdicts are cached per session and host: 30 s for answers, 5 s for failures, at most 1,024 hosts.
+  - Lookups fail closed.
+  - Proxied requests skip the response detector (`resolveProxy`), and a failed lookup behind a proxy is reported as `dns-via-proxy`.
+  - In the integration test, fetch, img, WebSocket and beacon to a name resolving to loopback reached the listener 0 times.
+- **Residual risk (AW-30).**
+  - DNS rebinding: the host's lookup and Chromium's lookup are separate, so a TTL-0 name can answer differently to each.
+  - WebRTC and DNS prefetch/preconnect are not covered.
+  - Worth reporting upstream to Electron.
+- **Document-start preload.** Volume, media sampling, SYNC and the print/file guard run from a sandboxed preload at document start in every frame. Every document response also gets a CSP `sandbox` header without `allow-modals`, and service workers are refused. Its effect on YouTube/Twitch is not yet checked live.
+
 ## ADR-014
 
 **Platform and test matrix for 10-25 (replaces the GTNH-based matrix)** — status: `accepted`

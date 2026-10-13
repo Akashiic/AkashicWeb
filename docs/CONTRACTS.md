@@ -73,7 +73,14 @@ public final class FrameSlot {
 }
 ```
 
-Listener callbacks arrive on the reader thread; M5 must hop to the client thread (`ClientTaskQueue`) before touching Minecraft.
+Callback threads (wave 2): host messages arrive on the reader thread, `onStatus` on the supervisor thread, and the local `blocked-url` EVENT on the caller's thread (or the supervisor thread during a replay). M5 must hop to the client thread (`ClientTaskQueue`) before touching Minecraft. A listener that throws, even an Error, is logged and skipped.
+
+Wave-2 additions to the M2 contract:
+- `BrowserHost.shutdown()` blocks for up to about 3.5 s; call it at game exit only. The other methods never block.
+- New default methods: `BrowserHost.reenable()`, `BrowserHost.diagnostics()` and `FrameRing.requeue(FrameSlot)`, which returns a slot that was taken but not uploaded so its damage is kept.
+- `FrameSlot.MAX_DIMENSION = 4096`; the constructor rejects sizes below 0 or above it.
+- `HostProtocol.read()` throws `EOFException` when a stream is cut inside the magic bytes.
+- URLs are checked locally before they leave the JVM (see PROTOCOL.md section 1). The policy is deny-all until `policy()` is called. An empty URL gives a blank page.
 
 ## M3 → M2: engine location (`client.install`)
 
