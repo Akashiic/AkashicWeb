@@ -151,30 +151,21 @@ public final class ScreenLifecycle {
             refuseFormation(p, plan, maxW, maxH);
             return;
         }
-        // Existing screens on this side inside the new rectangle (the edge check guarantees they are fully inside):
-        // only their owner or an admin may merge them into the bigger one.
-        List<ScreenState> inside = new ArrayList<>();
-        for (ScreenState s : ServerRuntime.LOADED.faces()) {
-            if (s.key.dim == clicked.dim && s.key.side == clicked.side
-                && ScreenFormation.overlaps(
-                    plan.originX,
-                    plan.originY,
-                    plan.originZ,
-                    plan.width,
-                    plan.height,
-                    s.key.x,
-                    s.key.y,
-                    s.key.z,
-                    s.widthBlocks,
-                    s.heightBlocks,
-                    side)) {
-                if (!admin && !playerId.equals(s.owner)) {
-                    ScreenSync.tell(p, ReasonCode.SCREEN_OVERLAP, s.ownerName);
-                    return;
-                }
-                inside.add(s);
-            }
+        int[] box = ScreenFormation.blockBox(plan.originX, plan.originY, plan.originZ, side, plan.width, plan.height);
+        Overlap overlap = overlap(
+            clicked.dim,
+            clicked.side,
+            box,
+            ServerRuntime.LOADED.faces(),
+            ServerRuntime.index()
+                .all(),
+            playerId,
+            admin);
+        if (overlap.reason != ReasonCode.OK) {
+            ScreenSync.tell(p, overlap.reason, overlap.ownerName);
+            return;
         }
+        List<ScreenState> inside = overlap.sameSide;
         int ownedAfter = ServerRuntime.index()
             .ownedBy(playerId) + 1;
         for (ScreenState s : inside) if (playerId.equals(s.owner)) ownedAfter--;
@@ -213,6 +204,52 @@ public final class ScreenLifecycle {
             "screen formed",
             s.key + " " + s.widthBlocks + "x" + s.heightBlocks + (inside.isEmpty() ? "" : " merged=" + inside.size()));
         ScreenSync.chat(p, "akashicweb.msg.formed", s.widthBlocks, s.heightBlocks);
+    }
+
+    /** What already uses the blocks of a planned screen. */
+    static final class Overlap {
+
+        final ReasonCode reason;
+        /** Owner of the screen that refused it, for the notice. */
+        final String ownerName;
+        /** Screens on the clicked side inside the rectangle: merged into the new one. */
+        final List<ScreenState> sameSide;
+
+        Overlap(ReasonCode reason, String ownerName, List<ScreenState> sameSide) {
+            this.reason = reason;
+            this.ownerName = ownerName;
+            this.sameSide = sameSide;
+        }
+    }
+
+    /**
+     * Screens that share a block with the planned rectangle, on any side (review finding: the back face of another
+     * player's one-block-thick screen could be formed into a second screen, after which its owner could no longer
+     * break their own blocks). One owned by someone else refuses the formation unless the player is an admin. Those on
+     * the clicked side are merged (the edge check of {@link ScreenFormation#plan} guarantees they lie fully inside);
+     * the player's own screens on other sides stay, which makes a double-sided screen. Screens that are not loaded are
+     * found through the index: a perpendicular screen can share a block while its origin's chunk is unloaded.
+     */
+    static Overlap overlap(int dim, int side, int[] box, Iterable<ScreenState> loaded,
+        Iterable<ScreenIndex.Entry> known, UUID player, boolean admin) {
+        List<ScreenState> sameSide = new ArrayList<>();
+        for (ScreenState s : loaded) {
+            if (s.key.dim != dim || !ScreenFormation.boxesIntersect(box, blocks(s.key, s.widthBlocks, s.heightBlocks)))
+                continue;
+            if (!admin && !player.equals(s.owner)) return new Overlap(ReasonCode.SCREEN_OVERLAP, s.ownerName, null);
+            if (s.key.side == side) sameSide.add(s);
+        }
+        for (ScreenIndex.Entry e : known) {
+            if (e.key.dim != dim || admin || player.equals(e.owner)) continue;
+            if (ScreenFormation.boxesIntersect(box, blocks(e.key, e.width, e.height))) {
+                return new Overlap(ReasonCode.SCREEN_OVERLAP, e.ownerName, null);
+            }
+        }
+        return new Overlap(ReasonCode.OK, "", sameSide);
+    }
+
+    private static int[] blocks(ScreenKey key, int w, int h) {
+        return ScreenFormation.blockBox(key.x, key.y, key.z, BlockSide.fromSide(key.side), w, h);
     }
 
     private static void refuseFormation(EntityPlayerMP p, ScreenFormation.Plan plan, int maxW, int maxH) {

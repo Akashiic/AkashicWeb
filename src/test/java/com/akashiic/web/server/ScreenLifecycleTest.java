@@ -13,6 +13,8 @@ import net.minecraft.nbt.NBTTagCompound;
 import org.junit.jupiter.api.Test;
 
 import com.akashiic.web.common.BlockSide;
+import com.akashiic.web.common.ReasonCode;
+import com.akashiic.web.common.ScreenFormation;
 import com.akashiic.web.common.ScreenKey;
 import com.akashiic.web.common.ScreenState;
 import com.akashiic.web.common.TestScreens;
@@ -62,6 +64,62 @@ class ScreenLifecycleTest {
             .newScreen(k, 2, 2, FORMER, "Former", 0f, CFG, Collections.<ScreenState>emptyList(), index);
         assertTrue(newer(again.epoch, fresh.epoch), "two formations in one tick still grow");
     }
+
+    /**
+     * Review finding: the back face of another player's free-standing screen could be formed into a second screen,
+     * and the original owner could then no longer break, move or re-form their own blocks.
+     */
+    @Test
+    void theBackOfSomeoneElsesScreenCannotBeFormed() {
+        // A 2x2 SOUTH screen on blocks x 0..1, y 64..65, z 0, owned by OWNER.
+        ScreenState front = TestScreens.state(BlockSide.SOUTH, 0, 64, 0, 2, 2, 0);
+        // The same blocks seen from the north: NORTH's right is -X, so its origin is x = 1.
+        int[] back = ScreenFormation.blockBox(1, 64, 0, BlockSide.NORTH, 2, 2);
+        int north = BlockSide.NORTH.side();
+        ScreenLifecycle.Overlap visitor = ScreenLifecycle
+            .overlap(0, north, back, Arrays.asList(front), NO_INDEX, TestScreens.VISITOR, false);
+        assertEquals(ReasonCode.SCREEN_OVERLAP, visitor.reason);
+        assertEquals("Owner", visitor.ownerName);
+        ScreenLifecycle.Overlap own = ScreenLifecycle
+            .overlap(0, north, back, Arrays.asList(front), NO_INDEX, TestScreens.OWNER, false);
+        assertEquals(ReasonCode.OK, own.reason, "the owner may make it double-sided");
+        assertTrue(own.sameSide.isEmpty(), "the front face stays a screen of its own");
+        assertEquals(
+            ReasonCode.OK,
+            ScreenLifecycle.overlap(0, north, back, Arrays.asList(front), NO_INDEX, TestScreens.VISITOR, true).reason,
+            "admins may");
+        int[] behindTheWall = ScreenFormation.blockBox(1, 64, -1, BlockSide.NORTH, 2, 2);
+        assertEquals(
+            ReasonCode.OK,
+            ScreenLifecycle
+                .overlap(0, north, behindTheWall, Arrays.asList(front), NO_INDEX, TestScreens.VISITOR, false).reason,
+            "a parallel wall of one's own blocks is fine");
+    }
+
+    @Test
+    void sameSideScreensAreMergedAndUnloadedOnesStillCount() {
+        ScreenState mine = TestScreens.state(BlockSide.SOUTH, 0, 64, 0, 2, 2, 0);
+        int[] bigger = ScreenFormation.blockBox(0, 64, 0, BlockSide.SOUTH, 4, 3);
+        ScreenLifecycle.Overlap merge = ScreenLifecycle
+            .overlap(0, BlockSide.SOUTH.side(), bigger, Arrays.asList(mine), NO_INDEX, TestScreens.OWNER, false);
+        assertEquals(Arrays.asList(mine), merge.sameSide);
+        // A perpendicular screen whose origin chunk is unloaded is only in the index.
+        ScreenState other = TestScreens.state(BlockSide.EAST, 3, 64, 0, 2, 2, 0);
+        other.owner = TestScreens.FRIEND;
+        other.ownerName = "Friend";
+        ScreenLifecycle.Overlap refused = ScreenLifecycle.overlap(
+            0,
+            BlockSide.SOUTH.side(),
+            bigger,
+            Collections.<ScreenState>emptyList(),
+            Arrays.asList(ScreenIndex.Entry.of(other)),
+            TestScreens.OWNER,
+            false);
+        assertEquals(ReasonCode.SCREEN_OVERLAP, refused.reason);
+        assertEquals("Friend", refused.ownerName);
+    }
+
+    private static final java.util.List<ScreenIndex.Entry> NO_INDEX = Collections.emptyList();
 
     @Test
     void theHighWaterMarkFollowsUrlChangesSurvivesSavesAndWraps() {

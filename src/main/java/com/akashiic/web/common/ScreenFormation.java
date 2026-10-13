@@ -180,6 +180,23 @@ public final class ScreenFormation {
         return r >= 0 && r < w && u >= 0 && u < h;
     }
 
+    /**
+     * The blocks of a w x h screen with this origin and side as an inclusive box {minX, minY, minZ, maxX, maxY, maxZ}.
+     * A screen is a flat rectangle of blocks, which is exactly its box, so two screens on any sides share a block
+     * exactly when their boxes intersect ({@link #boxesIntersect}).
+     */
+    public static int[] blockBox(int ox, int oy, int oz, BlockSide s, int w, int h) {
+        int fx = ox + s.rightX * (w - 1) + s.upX * (h - 1);
+        int fy = oy + s.rightY * (w - 1) + s.upY * (h - 1);
+        int fz = oz + s.rightZ * (w - 1) + s.upZ * (h - 1);
+        return new int[] { Math.min(ox, fx), Math.min(oy, fy), Math.min(oz, fz), Math.max(ox, fx), Math.max(oy, fy),
+            Math.max(oz, fz) };
+    }
+
+    public static boolean boxesIntersect(int[] a, int[] b) {
+        return a[0] <= b[3] && b[0] <= a[3] && a[1] <= b[4] && b[1] <= a[4] && a[2] <= b[5] && b[2] <= a[5];
+    }
+
     /** True if two screens on the same side and plane share at least one block. */
     public static boolean overlaps(int ax, int ay, int az, int aw, int ah, int bx, int by, int bz, int bw, int bh,
         BlockSide s) {
