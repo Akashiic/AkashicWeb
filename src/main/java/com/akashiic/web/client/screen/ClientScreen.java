@@ -48,6 +48,8 @@ public final class ClientScreen {
     // Page
     PageState page = PageState.EMPTY;
     ReasonCode failure;
+    /** Detail argument of {@link #failure} for its reason text ("" when none). */
+    String failureDetail = "";
     boolean reportedUrl;
     long lastUrlReportMs;
 
@@ -121,12 +123,32 @@ public final class ClientScreen {
     public void onFrameUploaded() {
         hasFrame = true;
         if (failure == ReasonCode.UPLOAD_FAILED || failure == ReasonCode.PAGE_CRASHED
-            || failure == ReasonCode.PAGE_UNRESPONSIVE) failure = null;
+            || failure == ReasonCode.PAGE_UNRESPONSIVE
+            || failure == ReasonCode.BAD_RESOLUTION) clearFailure();
     }
 
     /** Called by FrameUploader when GL refused the frame or the page is too large for this GPU. */
     public void onUploadFailure(ReasonCode reason) {
+        onUploadFailure(reason, "");
+    }
+
+    /** As {@link #onUploadFailure(ReasonCode)} with the detail shown in the reason text (e.g. the page size). */
+    public void onUploadFailure(ReasonCode reason, String detail) {
+        fail(reason, detail);
+    }
+
+    void fail(ReasonCode reason, String detail) {
         failure = reason;
+        failureDetail = detail == null ? "" : detail;
+    }
+
+    void clearFailure() {
+        failure = null;
+        failureDetail = "";
+    }
+
+    public ReasonCode failure() {
+        return failure;
     }
 
     static ScreenState copyOf(ScreenState s) {

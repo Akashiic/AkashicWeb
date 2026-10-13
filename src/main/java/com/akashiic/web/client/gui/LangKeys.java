@@ -1,9 +1,9 @@
 package com.akashiic.web.client.gui;
 
 /**
- * Every lang key M5 uses besides {@code ReasonCode.langKey()} / {@code ReasonCode.langKey()}. The lang files belong
- * to M4; these keys (with pt_BR and en_US texts) are listed in the M5 report for merging at integration. Until then
- * Minecraft shows the raw key, which is ugly but never wrong.
+ * Every lang key M5 uses besides {@code ReasonCode.langKey()}. Reason keys take exactly one argument (the detail, ""
+ * when there is none); the keys here take the arguments their comment states, none otherwise. Keys added in wave 2 are
+ * appended to both lang files under "# M5 wave 2"; LangKeysTest checks that every key here exists in both.
  */
 public final class LangKeys {
 
@@ -13,6 +13,8 @@ public final class LangKeys {
     public static final String ENGINE_ABSENT = "akashicweb.placeholder.engine_absent";
     public static final String CONSENT_NEEDED = "akashicweb.placeholder.consent_needed";
     public static final String CONSENT_HINT = "akashicweb.placeholder.consent_hint";
+    /** After "Not now" on the install prompt: right-click no longer asks; /awinstall does. M5 wave 2. */
+    public static final String CONSENT_POSTPONED = "akashicweb.placeholder.consent_postponed";
     /** One argument: integer percent. */
     public static final String INSTALLING = "akashicweb.placeholder.installing";
     public static final String ENGINE_FAILED = "akashicweb.placeholder.engine_failed";

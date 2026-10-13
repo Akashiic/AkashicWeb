@@ -120,7 +120,34 @@ class PlaceholderModelTest {
             Placeholder.card("k", 1)
                 .equals(Placeholder.card("k", 2)));
         assertFalse(
-            Placeholder.banner("k")
-                .equals(Placeholder.card("k")));
+            Placeholder.reasonBanner(ReasonCode.PAGE_CRASHED, "")
+                .equals(Placeholder.card(ReasonCode.PAGE_CRASHED.langKey(), "")));
+        assertFalse(
+            Placeholder.reasonCard(ReasonCode.URL_BLOCKED, "a.example")
+                .equals(Placeholder.reasonCard(ReasonCode.URL_BLOCKED, "b.example")),
+            "the detail argument is part of the value (the renderer caches by it)");
+    }
+
+    @Test
+    void aScreenWithoutAPageNeverAsksThePlayerToComeCloser() {
+        PlaceholderModel.Inputs in = live();
+        in.hasUrl = false;
+        in.granted = false;
+        in.browserLive = false;
+        in.hasFrame = false;
+        assertEquals(LangKeys.NO_URL, PlaceholderModel.resolve(in).key);
+    }
+
+    @Test
+    void failuresCarryTheirDetailAndPostponedConsentNamesTheCommand() {
+        PlaceholderModel.Inputs in = live();
+        in.failure = ReasonCode.URL_BLOCKED;
+        in.failureDetail = "bad.example";
+        Placeholder p = PlaceholderModel.resolve(in);
+        assertArrayEquals(new Object[] { "bad.example" }, p.args);
+        in.failure = null;
+        in.engine = new EngineState(EngineState.Kind.CONSENT_NEEDED, 0, null);
+        in.consentPostponed = true;
+        assertEquals(LangKeys.CONSENT_POSTPONED, PlaceholderModel.resolve(in).detailKey);
     }
 }

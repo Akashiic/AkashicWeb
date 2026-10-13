@@ -207,7 +207,8 @@ public final class ScreenRenderer extends TileEntitySpecialRenderer {
             this.placeholder = p;
             this.title = I18n.format(LangKeys.TITLE);
             this.main = LangKeys.TITLE.equals(p.key) ? "" : I18n.format(p.key, p.args);
-            this.detail = p.detailKey == null ? null : I18n.format(p.detailKey);
+            // Reason keys take exactly one argument (Placeholder): never format them bare ("Format error").
+            this.detail = p.detailKey == null ? null : I18n.format(p.detailKey, p.detailArgs);
         }
     }
 

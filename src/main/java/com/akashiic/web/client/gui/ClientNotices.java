@@ -12,14 +12,14 @@ import net.minecraft.util.EnumChatFormatting;
 public final class ClientNotices {
 
     static final int MAX_ARG = 128;
+    static final String REASON_PREFIX = "akashicweb.reason.";
 
     private ClientNotices() {}
 
     public static void show(String langKey, Object... args) {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc == null || mc.thePlayer == null || mc.ingameGUI == null) return;
-        Object[] safe = new Object[args == null ? 0 : args.length];
-        for (int i = 0; i < safe.length; i++) safe[i] = sanitize(String.valueOf(args[i]));
+        Object[] safe = safeArgs(langKey, args);
         ChatComponentTranslation line = new ChatComponentTranslation(LangKeys.CHAT_PREFIX);
         line.getChatStyle()
             .setColor(EnumChatFormatting.AQUA);
@@ -30,6 +30,19 @@ public final class ClientNotices {
             .appendSibling(body);
         mc.ingameGUI.getChatGUI()
             .printChatMessage(line);
+    }
+
+    /**
+     * Sanitised arguments; a reason key always gets exactly one (its detail, "" when none was given), because every
+     * {@code akashicweb.reason.*} text carries one {@code %s} and ChatComponentTranslation prints the raw key when an
+     * argument is missing. Pure.
+     */
+    public static Object[] safeArgs(String langKey, Object... args) {
+        int n = args == null ? 0 : args.length;
+        boolean reason = langKey != null && langKey.startsWith(REASON_PREFIX);
+        Object[] safe = new Object[reason ? Math.max(1, n) : n];
+        for (int i = 0; i < safe.length; i++) safe[i] = i < n ? sanitize(String.valueOf(args[i])) : "";
+        return safe;
     }
 
     /** Removes the section sign (formatting codes) and control characters; caps the length. Pure. */

@@ -248,7 +248,7 @@ public final class ClientScreens {
         if (s == null) return;
         ReasonCode reason = ClientReason.fromEventKind(kind);
         if (reason != null) s.failure = reason;
-        if ("blocked-url".equals(kind) && isController(s)) notifier.notice(ReasonCode.URL_BLOCKED.langKey());
+        if ("blocked-url".equals(kind) && isController(s)) notifier.notice(ReasonCode.URL_BLOCKED.langKey(), "");
         LOG.debug("AkashicWeb: {} host event {}", s.key, kind);
     }
 
@@ -365,7 +365,9 @@ public final class ClientScreens {
         in.hasFrame = s.hasFrame;
         in.painting = s.lastLodSent == null || s.lastLodSent.painting;
         in.failure = s.failure;
+        in.failureDetail = s.failureDetail;
         in.hasUrl = s.state().url != null && !s.state().url.isEmpty();
+        in.consentPostponed = access.consentPostponed();
         return PlaceholderModel.resolve(in);
     }
 
@@ -543,7 +545,7 @@ public final class ClientScreens {
         } catch (RuntimeException e) {
             // Documented boundary: a host bug must leave the screen on its placeholder, not break the tick.
             LOG.error("AkashicWeb: createScreen failed for {}", s.key, e);
-            s.failure = ReasonCode.HOST_UNAVAILABLE;
+            s.fail(ReasonCode.HOST_UNAVAILABLE, "");
             return;
         }
         if (id <= 0) return;
@@ -553,7 +555,7 @@ public final class ClientScreens {
         s.requestedH = size[1];
         s.navigatedEpoch = s.state().epoch;
         s.lastNavigateMs = timeMs.getAsLong();
-        s.failure = null;
+        s.clearFailure();
         s.page = PageState.EMPTY;
         // Silent until the first audio tick decides; the page must never blare before distance is applied.
         host.audio(id, true, 0f);
@@ -568,7 +570,7 @@ public final class ClientScreens {
         host.navigate(s.hostScreenId, s.state().url);
         s.navigatedEpoch = s.state().epoch;
         s.lastNavigateMs = timeMs.getAsLong();
-        s.failure = null;
+        s.clearFailure();
     }
 
     private void applyLod(ClientScreen s, BrowserHost host) {

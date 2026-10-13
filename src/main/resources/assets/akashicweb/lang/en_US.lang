@@ -163,3 +163,6 @@ akashicweb.install.consent.decline=Not now
 akashicweb.install.progress=Installing browser… %d%%
 akashicweb.install.repair=Repair
 akashicweb.install.import_hint=No internet? Put the file %s in the folder %s.
+
+# M5 wave 2
+akashicweb.placeholder.consent_postponed=Install postponed: type /awinstall
