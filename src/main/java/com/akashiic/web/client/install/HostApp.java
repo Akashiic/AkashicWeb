@@ -135,6 +135,27 @@ public final class HostApp {
         return Collections.unmodifiableList(out);
     }
 
+    /**
+     * True when the installed app was made from this jar and the engine's local manifest lists exactly the jar's app
+     * files with the jar's hashes. With {@link LocalManifest#hostAppCheck} (the files on disk against the local
+     * manifest) this ties every app file to the jar, so a folder with a self-consistent but foreign app is refreshed.
+     */
+    static boolean isCurrent(Source src, File appDir, LocalManifest local) throws InstallException {
+        if (local == null || !isCurrent(src, appDir)) return false;
+        byte[] manifest = manifestBytes(src);
+        String prefix = EngineManifest.APP_DIR + "/";
+        java.util.Map<String, String> expected = new java.util.HashMap<>();
+        for (Pin p : parse(manifest)) expected.put(prefix + p.path, p.sha256);
+        expected.put(prefix + MANIFEST, Sha256.of(manifest));
+        int listed = 0;
+        for (LocalManifest.Entry e : local.entries) {
+            if (!LocalManifest.isHostApp(e.path)) continue;
+            listed++;
+            if (!e.sha256.equals(expected.get(e.path))) return false;
+        }
+        return listed == expected.size();
+    }
+
     /** True when the installed app was made from exactly this jar's manifest. */
     static boolean isCurrent(Source src, File appDir) throws InstallException {
         byte[] jar = manifestBytes(src);

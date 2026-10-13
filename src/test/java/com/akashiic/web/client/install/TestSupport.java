@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.TreeMap;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 /** Builders shared by the installer tests: fake engine zips, host app sources, platform facts and targets. */
@@ -75,7 +76,13 @@ final class TestSupport {
     }
 
     static EngineTarget target(String platform, String url, byte[] zip, boolean windows) {
-        String version = "44.7.0";
+        return target(platform, "44.7.0", url, zip, windows);
+    }
+
+    /** A target for {@code zip} with its per-file pins computed the way EngineManifest's were. */
+    static EngineTarget target(String platform, String version, String url, byte[] zip, boolean windows) {
+        String vendorExe = windows ? "electron.exe" : "electron";
+        String hostExe = windows ? "AkashicWebHost.exe" : "AkashicWebHost";
         return new EngineTarget(
             platform,
             version,
@@ -83,11 +90,60 @@ final class TestSupport {
             url,
             zip.length,
             Sha256.of(zip),
-            windows ? "electron.exe" : "electron",
-            windows ? "AkashicWebHost.exe" : "AkashicWebHost",
+            vendorExe,
+            hostExe,
             windows,
             windows ? Collections.<String>emptyList()
-                : Arrays.asList("AkashicWebHost", "chrome_crashpad_handler", "chrome-sandbox"));
+                : Arrays.asList("AkashicWebHost", "chrome_crashpad_handler", "chrome-sandbox"),
+            pins(zip, vendorExe, hostExe));
+    }
+
+    /** The same target served from another URL. */
+    static EngineTarget withUrl(EngineTarget t, String url) {
+        return new EngineTarget(
+            t.platform,
+            t.version,
+            t.assetName,
+            url,
+            t.size,
+            t.sha256,
+            t.vendorExecutable,
+            t.hostExecutable,
+            t.windows,
+            t.unixExecutables,
+            new ArrayList<>(t.vendorFiles.values()));
+    }
+
+    /** Per-file pins of every entry the installer keeps from {@code zip}. */
+    static List<LocalManifest.Entry> pins(byte[] zip, String vendorExe, String hostExe) {
+        List<LocalManifest.Entry> out = new ArrayList<>();
+        try (ZipInputStream in = new ZipInputStream(new ByteArrayInputStream(zip))) {
+            for (ZipEntry e; (e = in.getNextEntry()) != null;) {
+                if (e.isDirectory()) continue;
+                String path;
+                try {
+                    path = EngineExtractor.installedPath(e.getName(), vendorExe, hostExe);
+                } catch (RuntimeException ex) {
+                    continue;
+                }
+                if (path == null || !SafePath.isSafeRelative(path)) continue;
+                final String p = path;
+                if (out.stream()
+                    .anyMatch(x -> x.path.equals(p))) continue; // duplicate names: the extractor rejects those
+                ByteArrayOutputStream b = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                for (int n; (n = in.read(buf)) != -1;) b.write(buf, 0, n);
+                out.add(new LocalManifest.Entry(path, b.size(), Sha256.of(b.toByteArray())));
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+        if (out.stream()
+            .noneMatch(x -> x.path.equals(hostExe))) {
+            // Zips built to be rejected (no executable): pin a placeholder so the target can exist at all.
+            out.add(new LocalManifest.Entry(hostExe, 0, Sha256.of(new byte[0])));
+        }
+        return out;
     }
 
     /** An in-memory host app with a correct sha256sum-style manifest. */

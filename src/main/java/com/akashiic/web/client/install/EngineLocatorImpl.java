@@ -2,6 +2,8 @@ package com.akashiic.web.client.install;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -293,7 +295,7 @@ public final class EngineLocatorImpl implements EngineLocator {
     private boolean useInstalledEngine(boolean full) {
         EngineStore store = new EngineStore(paths.engineRoot());
         File dir = store.dirFor(target);
-        EngineStore.Inspection in = EngineStore.inspect(dir, full);
+        EngineStore.Inspection in = EngineStore.inspect(dir, known(), full);
         if (!in.installed()) return false;
         if (in.problem != null && !in.problem.hostAppOnly) {
             fail(EngineState.Kind.FAILED, in.problem.failure, "engine damaged: " + in.problem.detail);
@@ -301,14 +303,15 @@ public final class EngineLocatorImpl implements EngineLocator {
         }
         try {
             File appDir = new File(dir, EngineManifest.APP_DIR);
-            if (in.problem == null && HostApp.isCurrent(cfg.hostApp, appDir) && in.manifest.hostAppCheck(dir) == null) {
+            if (in.problem == null && HostApp.isCurrent(cfg.hostApp, appDir, in.manifest)
+                && in.manifest.hostAppCheck(dir) == null) {
                 // The common start: nothing to write, so no lock (another instance may hold it for a long download).
                 ready(dir, in.marker, full ? "re-hashed: intact" : "installed");
                 return true;
             }
             try (InstallLock lock = InstallLock.acquire(paths.lockFile())) {
                 newInstaller().refreshHostApp(dir, in.marker, appHold);
-                EngineStore.Inspection again = EngineStore.inspect(dir, full);
+                EngineStore.Inspection again = EngineStore.inspect(dir, known(), full);
                 if (!again.intact()) {
                     String why = again.problem != null ? again.problem.detail : "marker missing";
                     InstallFailure f = again.problem != null ? again.problem.failure : InstallFailure.HASH_MISMATCH;
@@ -352,7 +355,7 @@ public final class EngineLocatorImpl implements EngineLocator {
             EngineStore store = new EngineStore(paths.engineRoot());
             store.cleanStaging();
             // Another game instance may have finished the same install while we waited for the lock.
-            EngineStore.Inspection done = EngineStore.inspect(store.dirFor(target), false);
+            EngineStore.Inspection done = EngineStore.inspect(store.dirFor(target), known(), false);
             if (done.intact() && !replace) {
                 ConsentRecord.delete(paths.downloadDir(), target);
                 ready(done.dir, done.marker, "installed by another instance");
@@ -420,10 +423,10 @@ public final class EngineLocatorImpl implements EngineLocator {
         File dir = engineDir;
         if (dir == null || paths == null) return;
         if (windows() && sacBlocks()) return;
-        EngineStore.Inspection full = EngineStore.inspect(dir, true);
+        EngineStore.Inspection full = EngineStore.inspect(dir, known(), true);
         boolean appCurrent;
         try {
-            appCurrent = HostApp.isCurrent(cfg.hostApp, new File(dir, EngineManifest.APP_DIR));
+            appCurrent = HostApp.isCurrent(cfg.hostApp, new File(dir, EngineManifest.APP_DIR), full.manifest);
         } catch (InstallException e) {
             fail(EngineState.Kind.FAILED, e.failure, e.detail);
             return;
@@ -440,7 +443,7 @@ public final class EngineLocatorImpl implements EngineLocator {
             EngineInstaller installer = newInstaller();
             if (full.installed() && (full.problem == null || full.problem.hostAppOnly)) {
                 installer.refreshHostApp(dir, full.marker, appHold);
-                EngineStore.Inspection again = EngineStore.inspect(dir, true);
+                EngineStore.Inspection again = EngineStore.inspect(dir, known(), true);
                 if (again.intact()) {
                     ready(dir, again.marker, "host app repaired after a load failure");
                     return;
@@ -450,10 +453,10 @@ public final class EngineLocatorImpl implements EngineLocator {
             for (File other : installer.store()
                 .installedEngines()) {
                 if (other.equals(dir) || !samePlatform(other)) continue;
-                EngineStore.Inspection prev = EngineStore.inspect(other, true);
+                EngineStore.Inspection prev = EngineStore.inspect(other, known(), true);
                 if (!prev.intact() && !(prev.installed() && prev.problem.hostAppOnly)) continue;
                 installer.refreshHostApp(other, prev.marker, appHold);
-                EngineStore.Inspection ok = EngineStore.inspect(other, true);
+                EngineStore.Inspection ok = EngineStore.inspect(other, known(), true);
                 if (ok.intact()) {
                     ready(other, ok.marker, "rolled back to " + ok.marker.engineId + " after a load failure");
                     return;
@@ -464,6 +467,15 @@ public final class EngineLocatorImpl implements EngineLocator {
         } catch (InstallException e) {
             fail(EngineState.Kind.FAILED, e.failure, e.detail);
         }
+    }
+
+    /** Every build this mod version can check file by file: the current pin, then earlier ones (rollback). */
+    private List<EngineTarget> known() {
+        List<EngineTarget> out = new ArrayList<>();
+        EngineTarget t = target;
+        if (t != null) out.add(t);
+        out.addAll(cfg.previousTargets);
+        return out;
     }
 
     private boolean samePlatform(File dir) {
@@ -594,6 +606,7 @@ public final class EngineLocatorImpl implements EngineLocator {
         Executor executor;
         File baseDirOverride;
         Function<PlatformGate.Kind, EngineTarget> targets = PlatformGate::target;
+        List<EngineTarget> previousTargets = EngineManifest.PREVIOUS;
         boolean allowPlainHttp;
 
         private Builder() {}
@@ -657,6 +670,12 @@ public final class EngineLocatorImpl implements EngineLocator {
         /** Skips the install-folder resolution (tests: a temporary folder). */
         Builder baseDir(File base) {
             this.baseDirOverride = base;
+            return this;
+        }
+
+        /** Earlier pins a rollback may go to (tests: an engine installed before a re-pin). */
+        Builder previousTargets(List<EngineTarget> previous) {
+            this.previousTargets = previous;
             return this;
         }
 

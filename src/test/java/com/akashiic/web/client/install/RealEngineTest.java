@@ -92,7 +92,7 @@ class RealEngineTest {
         List<String> files = TestSupport.listFiles(engine);
         assertTrue(files.contains("LICENSE") && files.contains("LICENSES.chromium.html"), "licence notices kept");
         assertTrue(
-            EngineStore.inspect(engine, false)
+            EngineStore.inspect(engine, java.util.Collections.singletonList(t), false)
                 .intact());
     }
 }

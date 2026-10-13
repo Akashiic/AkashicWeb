@@ -132,7 +132,7 @@ final class EngineInstaller {
     boolean refreshHostApp(File engineDir, EngineStore.Marker marker, AppUseLock.Hold mine) throws InstallException {
         File appDir = new File(engineDir, EngineManifest.APP_DIR);
         LocalManifest old = LocalManifest.read(engineDir);
-        if (HostApp.isCurrent(hostApp, appDir) && old.hostAppCheck(engineDir) == null) return false;
+        if (HostApp.isCurrent(hostApp, appDir, old) && old.hostAppCheck(engineDir) == null) return false;
         boolean done = AppUseLock.exclusively(engineDir, mine, () -> swapHostApp(engineDir, appDir, old, marker));
         if (!done) {
             throw new InstallException(

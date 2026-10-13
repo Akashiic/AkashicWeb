@@ -187,8 +187,12 @@ final class EngineStore {
         if (m.exists() && !m.delete()) LOG.warn("Could not remove the install marker in {}", dir.getName());
     }
 
-    /** Checks one engine folder: marker, manifest binding, then sizes (quick) or hashes (full). */
-    static Inspection inspect(File dir, boolean full) {
+    /**
+     * Checks one engine folder: marker, manifest binding, the manifest's vendor files against the pins of the engine
+     * it names (one of {@code known}), then the files on disk: sizes (quick) or hashes (full). Together these tie every
+     * vendor file on disk to the pinned build; a folder whose engine has no pins here is not trusted.
+     */
+    static Inspection inspect(File dir, List<EngineTarget> known, boolean full) {
         Marker marker = readMarker(dir);
         if (marker == null) return new Inspection(dir, null, null, null);
         LocalManifest manifest;
@@ -202,9 +206,35 @@ final class EngineStore {
             LocalManifest.Problem drift = problem(InstallFailure.HASH_MISMATCH, "manifest does not match marker");
             return new Inspection(dir, marker, manifest, drift);
         }
+        EngineTarget pinned = pinsFor(marker, known);
+        if (pinned == null) {
+            LocalManifest.Problem unknown = problem(
+                InstallFailure.HASH_MISMATCH,
+                marker.engineId + " is not a build this mod version has pins for");
+            return new Inspection(dir, marker, manifest, unknown);
+        }
+        String mismatch = pinned.vendorMismatch(manifest.vendorEntries());
+        if (mismatch != null) {
+            LocalManifest.Problem foreign = problem(
+                InstallFailure.HASH_MISMATCH,
+                "engine files are not the pinned ones: " + mismatch);
+            return new Inspection(dir, marker, manifest, foreign);
+        }
         LocalManifest.Problem p = full ? manifest.fullCheck(dir, marker.hostExecutable)
             : manifest.quickCheck(dir, marker.hostExecutable);
         return new Inspection(dir, marker, manifest, p);
+    }
+
+    /** The known target the marker names (engine id and zip SHA-256 both), or null. */
+    static EngineTarget pinsFor(Marker marker, List<EngineTarget> known) {
+        for (EngineTarget t : known) {
+            if (t.engineId()
+                .equals(marker.engineId) && t.sha256.equals(marker.zipSha256)
+                && t.hostExecutable.equals(marker.hostExecutable)) {
+                return t;
+            }
+        }
+        return null;
     }
 
     private static LocalManifest.Problem problem(InstallFailure f, String detail) {

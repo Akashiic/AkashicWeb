@@ -295,17 +295,7 @@ class EngineLocatorImplTest {
     @Test
     void consentForAnotherPinOrUrlIsNotConsent() throws Exception {
         File downloads = leavePartialDownload();
-        EngineTarget otherUrl = new EngineTarget(
-            target.platform,
-            target.version,
-            target.assetName,
-            "https://mirror.invalid/" + target.assetName,
-            target.size,
-            target.sha256,
-            target.vendorExecutable,
-            target.hostExecutable,
-            target.windows,
-            target.unixExecutables);
+        EngineTarget otherUrl = TestSupport.withUrl(target, "https://mirror.invalid/" + target.assetName);
         ConsentRecord.write(downloads, otherUrl, 1L);
         assertEquals(
             EngineState.Kind.CONSENT_NEEDED,
@@ -399,7 +389,7 @@ class EngineLocatorImplTest {
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
         assertTrue(server.requestCount() > requests, "the engine was downloaded again");
         assertTrue(
-            EngineStore.inspect(engineDir(), true)
+            EngineStore.inspect(engineDir(), java.util.Collections.singletonList(target), true)
                 .intact());
     }
 
@@ -517,7 +507,7 @@ class EngineLocatorImplTest {
             new String(Files.readAllBytes(new File(app, "src/main.js").toPath()), StandardCharsets.UTF_8)
                 .contains("v2"));
         assertTrue(
-            EngineStore.inspect(engineDir(), true)
+            EngineStore.inspect(engineDir(), java.util.Collections.singletonList(target), true)
                 .intact(),
             "manifest and marker were rewritten");
     }
@@ -532,7 +522,7 @@ class EngineLocatorImplTest {
         l.requestInstall();
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
         assertTrue(
-            EngineStore.inspect(engineDir(), true)
+            EngineStore.inspect(engineDir(), java.util.Collections.singletonList(target), true)
                 .intact());
     }
 
@@ -553,7 +543,7 @@ class EngineLocatorImplTest {
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
         assertTrue(
-            EngineStore.inspect(engineDir(), true)
+            EngineStore.inspect(engineDir(), java.util.Collections.singletonList(target), true)
                 .intact());
     }
 
@@ -572,18 +562,11 @@ class EngineLocatorImplTest {
         byte[] zipB = TestSupport.zip(TestSupport.linuxLikeEntries(70));
         server.body = zipB;
         server.etag = "\"b\"";
-        EngineTarget targetB = new EngineTarget(
-            "linux-x64",
-            "44.8.0",
-            "electron-v44.8.0-linux-x64.zip",
-            server.canonicalUrl("electron-v44.8.0-linux-x64.zip"),
-            zipB.length,
-            Sha256.of(zipB),
-            "electron",
-            "AkashicWebHost",
-            false,
-            target.unixExecutables);
-        EngineLocatorImpl b = started(builder(TestSupport.linuxDesktop(), targetB));
+        EngineTarget targetB = TestSupport
+            .target("linux-x64", "44.8.0", server.canonicalUrl("electron-v44.8.0-linux-x64.zip"), zipB, false);
+        // A is the previous pin: this mod version can still check it file by file.
+        EngineLocatorImpl b = started(
+            builder(TestSupport.linuxDesktop(), targetB).previousTargets(java.util.Collections.singletonList(target)));
         b.requestInstall();
         assertEquals(EngineState.Kind.READY, b.state().kind, b.detail());
         File dirB = b.hostExecutable()
@@ -633,17 +616,8 @@ class EngineLocatorImplTest {
             byte[] z = TestSupport.zip(TestSupport.linuxLikeEntries(100 + i));
             server.body = z;
             server.etag = "\"e" + i + "\"";
-            EngineTarget t = new EngineTarget(
-                "linux-x64",
-                "44.8." + i,
-                "electron-v44.8." + i + "-linux-x64.zip",
-                server.canonicalUrl("electron-v44.8." + i + ".zip"),
-                z.length,
-                Sha256.of(z),
-                "electron",
-                "AkashicWebHost",
-                false,
-                target.unixExecutables);
+            EngineTarget t = TestSupport
+                .target("linux-x64", "44.8." + i, server.canonicalUrl("electron-v44.8." + i + ".zip"), z, false);
             EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), t));
             l.requestInstall();
             assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
@@ -763,17 +737,8 @@ class EngineLocatorImplTest {
             byte[] z = TestSupport.zip(TestSupport.linuxLikeEntries(200 + i));
             server.body = z;
             server.etag = "\"p" + i + "\"";
-            EngineTarget t = new EngineTarget(
-                "linux-x64",
-                "44.9." + i,
-                "electron-v44.9." + i + "-linux-x64.zip",
-                server.canonicalUrl("electron-v44.9." + i + ".zip"),
-                z.length,
-                Sha256.of(z),
-                "electron",
-                "AkashicWebHost",
-                false,
-                target.unixExecutables);
+            EngineTarget t = TestSupport
+                .target("linux-x64", "44.9." + i, server.canonicalUrl("electron-v44.9." + i + ".zip"), z, false);
             EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), t));
             l.requestInstall();
             assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
@@ -781,5 +746,89 @@ class EngineLocatorImplTest {
         }
         assertTrue(new File(oldest, LocalManifest.MARKER).isFile(), "the engine a running instance uses stays whole");
         assertEquals(EngineState.Kind.READY, first.state().kind);
+    }
+
+    /**
+     * Review finding (medium, 1a, probe 'forged'): a hand-made engine folder with its own manifest and marker is not
+     * trusted, because its files are not the pinned ones. Install replaces it with the real engine.
+     */
+    @Test
+    void aForgedEngineFolderIsNotTrusted() throws Exception {
+        File dir = engineDir();
+        assertTrue(new File(dir, "resources").mkdirs());
+        Files.write(
+            new File(dir, "AkashicWebHost").toPath(),
+            "#!/bin/sh\necho pwned\n".getBytes(StandardCharsets.UTF_8));
+        List<LocalManifest.Entry> forged = new ArrayList<>(
+            HostApp.install(TestSupport.defaultHostApp(), new File(dir, EngineManifest.APP_DIR)));
+        forged.add(
+            new LocalManifest.Entry(
+                "AkashicWebHost",
+                new File(dir, "AkashicWebHost").length(),
+                Sha256.of(new File(dir, "AkashicWebHost"))));
+        LocalManifest m = new LocalManifest(target.engineId(), target.sha256, forged);
+        m.write(dir);
+        new EngineStore(new File(base, "engine")).writeMarker(dir, m, "AkashicWebHost", 1L);
+
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.FAILED, l.state().kind);
+        assertEquals(ReasonCode.HASH_MISMATCH, l.state().reason);
+        assertTrue(
+            l.detail()
+                .contains("not the pinned"),
+            l.detail());
+        assertNull(l.hostExecutable());
+        l.requestInstall();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertTrue(
+            EngineStore.inspect(dir, java.util.Collections.singletonList(target), true)
+                .intact());
+    }
+
+    /**
+     * Review finding (medium, 1a): a self-consistent but foreign host app (manifest and marker rewritten) is replaced.
+     */
+    @Test
+    void aSelfConsistentForeignHostAppIsReplacedFromTheJar() throws Exception {
+        installed().release();
+        File dir = engineDir();
+        File main = new File(dir, "resources/app/src/main.js");
+        Files.write(main.toPath(), "evil()".getBytes(StandardCharsets.UTF_8));
+        LocalManifest old = LocalManifest.read(dir);
+        List<LocalManifest.Entry> entries = new ArrayList<>();
+        for (LocalManifest.Entry e : old.entries) {
+            entries.add(
+                e.path.equals("resources/app/src/main.js")
+                    ? new LocalManifest.Entry(e.path, main.length(), Sha256.of(main))
+                    : e);
+        }
+        LocalManifest forged = new LocalManifest(old.engineId, old.zipSha256, entries);
+        forged.write(dir);
+        new EngineStore(new File(base, "engine")).writeMarker(dir, forged, "AkashicWebHost", 2L);
+
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertTrue(installedMainJs().contains("test host app v1"), "the jar's app is back");
+    }
+
+    @Test
+    void rollbackGoesOnlyToAnEngineThisVersionHasPinsFor() throws Exception {
+        installed().release();
+        File dirA = engineDir();
+        byte[] zipB = TestSupport.zip(TestSupport.linuxLikeEntries(71));
+        server.body = zipB;
+        server.etag = "\"b2\"";
+        EngineTarget targetB = TestSupport
+            .target("linux-x64", "44.8.0", server.canonicalUrl("electron-v44.8.0-linux-x64.zip"), zipB, false);
+        EngineLocatorImpl b = started(builder(TestSupport.linuxDesktop(), targetB)); // A's pins unknown to "this" jar
+        b.requestInstall();
+        assertEquals(EngineState.Kind.READY, b.state().kind, b.detail());
+        File exeB = b.hostExecutable();
+        byte[] bytes = Files.readAllBytes(exeB.toPath());
+        bytes[0] ^= 1;
+        Files.write(exeB.toPath(), bytes);
+        b.verifyAfterLoadFailure();
+        assertEquals(EngineState.Kind.FAILED, b.state().kind, b.detail());
+        assertTrue(new File(dirA, LocalManifest.MARKER).isFile(), "the unpinned engine was left alone, not used");
     }
 }
