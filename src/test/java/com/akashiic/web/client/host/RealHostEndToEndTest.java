@@ -499,7 +499,7 @@ class RealHostEndToEndTest {
     }
 
     /** The repository's host/ directory: walks up from the working directory and from this class's location. */
-    private static File findHostDir() {
+    static File findHostDir() {
         List<File> starts = new ArrayList<>();
         starts.add(new File(System.getProperty("user.dir")).getAbsoluteFile());
         try {
