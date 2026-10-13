@@ -59,7 +59,8 @@ class CaptureRegistry {
 
 class SpatialCapture {
   /**
-   * options: screenWc, session, registry, onPcm(parts), onStarted(info), onError(detail), log
+   * options: screenWc, session, registry, onPcm(parts), onStarted(info), onError(detail), log;
+   * for tests: createWindow(options), loadTimeoutMs, startTimeoutMs.
    */
   constructor(options) {
     this.o = options;
@@ -70,8 +71,9 @@ class SpatialCapture {
 
   async start() {
     const o = this.o;
-    const { BrowserWindow } = require('electron'); // loaded here so plain-Node unit tests can import this file
-    const win = new BrowserWindow({
+    // Electron is loaded here so plain-Node unit tests can import this file (they pass createWindow).
+    const create = o.createWindow || (opts => new (require('electron').BrowserWindow)(opts));
+    const win = create({
       show: false,
       width: 64,
       height: 64,
@@ -99,11 +101,12 @@ class SpatialCapture {
     wc.ipc.on('akw-pcm', (event, data) => this._onPcm(event, data));
     wc.ipc.on('akw-capture-ended', () => this._fail('capture track ended'));
     try {
-      await withTimeout(win.loadFile(CAPTURE_HTML), LOAD_TIMEOUT_MS);
+      await withTimeout(win.loadFile(CAPTURE_HTML), o.loadTimeoutMs || LOAD_TIMEOUT_MS);
       if (this.stopped) return null;
       wc.stopPainting();
       // userGesture=true: getDisplayMedia needs transient activation.
-      const info = await withTimeout(wc.executeJavaScript('window.akwStartCapture(' + JSON.stringify(pcm.workletSource()) + ')', true), START_TIMEOUT_MS);
+      const info = await withTimeout(wc.executeJavaScript('window.akwStartCapture(' + JSON.stringify(pcm.workletSource()) + ')', true),
+        o.startTimeoutMs || START_TIMEOUT_MS);
       if (this.stopped) return null;
       o.log.info('spatial capture started', JSON.stringify(info));
       if (o.onStarted) o.onStarted(info);

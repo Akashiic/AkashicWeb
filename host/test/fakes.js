@@ -131,6 +131,11 @@ class FakeWindow {
 
   setContentSize(w, h) { this.contentSize = [w, h]; }
 
+  loadFile(file) {
+    this.loadedFile = file;
+    return this.loadFileResult || Promise.resolve();
+  }
+
   isDestroyed() { return this.destroyed; }
 
   destroy() {

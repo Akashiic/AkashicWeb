@@ -544,10 +544,12 @@ function publicSite() {
       + 'f.contentWindow.navigator.serviceWorker.register("/sw.js?frame").then(()=>{r.frame="registered";done()},()=>{r.frame="refused";done()})}'
       + '</script></body>',
   };
+  site.userAgents = new Set();
   site.server = require('http').createServer((req, res) => {
     site.hits++;
     const p = new URL(req.url, 'http://x').pathname;
     site.paths.push(p);
+    site.userAgents.add(req.headers['user-agent']);
     if (p === '/slow.png') {
       site.held.push(res); // never answered: the page keeps loading
       return;
@@ -596,6 +598,8 @@ test('public site through a loopback proxy: preload (volume, MEDIA while loading
     assert.deepStrictEqual(internalIp.map(m => m.json), [], 'not mistaken for an internal hit');
     const last = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1).pop();
     assert.strictEqual(last.json.url, 'http://public.akw.test/', 'not blanked');
+    // This WELCOME carries no userAgent: the host keeps its stock Chrome UA (never Electron's).
+    assert.deepStrictEqual([...site.userAgents], [STOCK_UA.replace('Windows NT 10.0; Win64; x64', 'X11; Linux x86_64')]);
   });
 
   await t.test('a name that does not resolve behind a proxy is refused as dns-via-proxy', async () => {
