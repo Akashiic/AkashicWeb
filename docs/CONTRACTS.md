@@ -91,6 +91,9 @@ public interface EngineLocator {
     java.io.File userDataDir();       // per-instance profile root
     String engineId();                // e.g. "electron-44.7.0-win32-x64"
     void requestInstall();            // after consent
+    // wave 2 (default methods): repair(), cancelInstall(), verifyAfterLoadFailure(String launchError),
+    // detail(), consentInfo() -> ConsentInfo {component, publisher, host, download/disk/free sizes,
+    // installDir (whole AkashicWeb folder), installDirDisplay, zipName, downloadUrl, importDir, importDirDisplay}
 }
 ```
 
