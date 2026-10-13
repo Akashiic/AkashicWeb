@@ -3,8 +3,8 @@
 // RESIZE/SYNC, STATE on change, EVENT on failures. Pure decisions live in policy.js, input.js,
 // media.js and frames.js; this file is the Electron wiring.
 
-const { BrowserWindow } = require('electron');
 const P = require('./protocol');
+const { pageSizeProblem } = require('./messages');
 const { checkNavigation, resolveVerdict } = require('./policy');
 const { InputMapper } = require('./input');
 const { FrameInjector } = require('./inject');
@@ -38,7 +38,7 @@ class Screen {
   open() {
     const ctx = this.ctx;
     this.sessionEntry = ctx.sessions.forScreen(this.id, this.spec.session);
-    this.win = new BrowserWindow({
+    this.win = (ctx.createWindow || createBrowserWindow)({
       show: false,
       width: this.spec.width,
       height: this.spec.height,
@@ -262,6 +262,12 @@ class Screen {
   }
 
   resize(cmd) {
+    const tooBig = pageSizeProblem(cmd.width, cmd.height);
+    if (tooBig) {
+      // The page keeps its current size; a bigger one could not travel as one FRAME.
+      this.ctx.emitEvent(this.id, 'screen-limit', tooBig);
+      return;
+    }
     this.spec = Object.assign({}, this.spec, { width: cmd.width, height: cmd.height });
     this.mapper.setSize(cmd.width, cmd.height);
     this.win.setContentSize(cmd.width, cmd.height);
@@ -363,11 +369,16 @@ class ScreenManager {
   create(id, spec) {
     if (id === 0) throw new Error('screenId 0 is reserved for host messages');
     if (this.screens.has(id)) this.destroy(id); // CREATE resets a screen
-    if (this.screens.size >= MAX_SCREENS) {
-      this.emitEvent(id, 'load-error', { reason: 'screen-limit', limit: MAX_SCREENS });
+    const tooBig = pageSizeProblem(spec.width, spec.height);
+    if (tooBig) {
+      this.emitEvent(id, 'screen-limit', tooBig);
       return null;
     }
-    const s = new Screen(id, spec, this.ctx);
+    if (this.screens.size >= MAX_SCREENS) {
+      this.emitEvent(id, 'screen-limit', { reason: 'count', limit: MAX_SCREENS });
+      return null;
+    }
+    const s = new (this.ctx.ScreenClass || Screen)(id, spec, this.ctx);
     this.screens.set(id, s);
     try {
       s.open();
@@ -411,6 +422,12 @@ class ScreenManager {
       }
     }
   }
+}
+
+/** Real offscreen window; tests pass ctx.createWindow instead, so this module loads without Electron. */
+function createBrowserWindow(options) {
+  const { BrowserWindow } = require('electron');
+  return new BrowserWindow(options);
 }
 
 module.exports = { Screen, ScreenManager, MAX_SCREENS };

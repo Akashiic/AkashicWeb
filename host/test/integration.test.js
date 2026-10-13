@@ -382,6 +382,21 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     assert.deepStrictEqual(frameHeader(f), { width: 320, height: 240, x: 0, y: 0, w: 320, h: 240 });
   });
 
+  await t.test('CREATE/RESIZE beyond the page cap (4096 per side, 4,194,301 px) answer EVENT screen-limit', async () => {
+    let since = game.mark();
+    game.send(P.T.CREATE, 5, { width: 2048, height: 2048, fps: 5, url: pageUrl, session: 'shared', audio: 'os', volume: 0 });
+    let ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 5, 5000, 'screen-limit for CREATE', since);
+    assert.strictEqual(ev.json.kind, 'screen-limit');
+    assert.deepStrictEqual(ev.json.detail, { reason: 'size', width: 2048, height: 2048, maxWidth: 4096, maxHeight: 4096, maxPixels: 4194301 });
+    since = game.mark();
+    game.send(P.T.RESIZE, 1, { width: 4096, height: 1100 });
+    ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'screen-limit', 5000, 'screen-limit for RESIZE', since);
+    assert.strictEqual(ev.json.detail.reason, 'size');
+    await sleep(500);
+    assert.strictEqual(frames(game, 5, since).length, 0, 'no screen 5');
+    for (const m of frames(game, 1, since)) assert.strictEqual(frameHeader(m).width, 320, 'screen 1 kept its size');
+  });
+
   await t.test('two screens render independently in separate sessions', async () => {
     const since = game.mark();
     game.send(P.T.CREATE, 2, { width: 256, height: 144, fps: 15, url: pageUrl, session: 'shared', audio: 'os', volume: 0 });

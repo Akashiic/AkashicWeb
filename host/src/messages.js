@@ -6,6 +6,9 @@
 const LIMITS = Object.freeze({
   MIN_SIZE: 16,
   MAX_SIZE: 4096,
+  // A full BGRA frame must fit one FRAME payload: (16 MiB - 12-byte frame header) / 4 bytes per pixel.
+  // The game (M2) closes the connection on a bigger FRAME, so bigger pages are refused up front.
+  MAX_PIXELS: Math.floor((16 * 1024 * 1024 - 12) / 4), // 4,194,301
   MIN_FPS: 1,
   MAX_FPS: 60,
   MAX_URL: 8192,
@@ -124,11 +127,25 @@ function parseWelcome(v) {
   };
 }
 
+/**
+ * Page size cap: width and height at most 4096 and width x height at most 4,194,301, so a full frame
+ * fits one FRAME. Returns null when the size is acceptable, else the EVENT 'screen-limit' detail.
+ * Sizes below MIN_SIZE are not refused: the parsers raise them to MIN_SIZE.
+ */
+function pageSizeProblem(width, height) {
+  if (width <= LIMITS.MAX_SIZE && height <= LIMITS.MAX_SIZE && width * height <= LIMITS.MAX_PIXELS) return null;
+  return { reason: 'size', width, height, maxWidth: LIMITS.MAX_SIZE, maxHeight: LIMITS.MAX_SIZE, maxPixels: LIMITS.MAX_PIXELS };
+}
+
+// Sizes are parsed up to the u16 range of the FRAME header; pageSizeProblem() then refuses what is too
+// big (the screen manager answers EVENT 'screen-limit'), instead of silently shrinking the page.
+const MAX_PARSED_SIZE = 0xffff;
+
 function parseCreate(v) {
   const o = obj(v);
   return {
-    width: int(o.width, 'width', LIMITS.MIN_SIZE, LIMITS.MAX_SIZE),
-    height: int(o.height, 'height', LIMITS.MIN_SIZE, LIMITS.MAX_SIZE),
+    width: int(o.width, 'width', LIMITS.MIN_SIZE, MAX_PARSED_SIZE),
+    height: int(o.height, 'height', LIMITS.MIN_SIZE, MAX_PARSED_SIZE),
     fps: o.fps == null ? 30 : int(o.fps, 'fps', LIMITS.MIN_FPS, LIMITS.MAX_FPS),
     url: urlString(o.url),
     session: oneOf(o.session, ['shared', 'private'], 'shared', 'session'),
@@ -155,8 +172,8 @@ function parseRender(v) {
 function parseResize(v) {
   const o = obj(v);
   return {
-    width: int(o.width, 'width', LIMITS.MIN_SIZE, LIMITS.MAX_SIZE),
-    height: int(o.height, 'height', LIMITS.MIN_SIZE, LIMITS.MAX_SIZE),
+    width: int(o.width, 'width', LIMITS.MIN_SIZE, MAX_PARSED_SIZE),
+    height: int(o.height, 'height', LIMITS.MIN_SIZE, MAX_PARSED_SIZE),
   };
 }
 
@@ -205,6 +222,6 @@ function acceptLanguages(locale) {
 }
 
 module.exports = {
-  LIMITS, MessageError, normalizeHostEntry, denyAllPolicy, parsePolicy, parseWelcome, parseCreate, parseNavigate, parseRender,
+  LIMITS, MessageError, normalizeHostEntry, denyAllPolicy, pageSizeProblem, parsePolicy, parseWelcome, parseCreate, parseNavigate, parseRender,
   parseResize, parseAudio, parseSync, parsePing, parseLocale, parseUserAgent, stockChromeUserAgent, acceptLanguages,
 };

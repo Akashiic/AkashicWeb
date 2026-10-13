@@ -6,8 +6,10 @@ const M = require('../src/messages');
 test('CREATE: defaults, clamps and enum names from Java (SHARED/OS) or the wire (shared/os)', () => {
   assert.deepStrictEqual(M.parseCreate({ width: 1280, height: 720, url: 'https://a.com' }),
     { width: 1280, height: 720, fps: 30, url: 'https://a.com', session: 'shared', audio: 'os', volume: 1 });
+  // Too-large sizes are no longer shrunk silently: they parse (up to the u16 FRAME range) and the screen
+  // manager refuses them with EVENT screen-limit (pageSizeProblem below).
   assert.deepStrictEqual(M.parseCreate({ width: 99999, height: 2, fps: 500, url: '  https://a.com/  ', session: 'PRIVATE', audio: 'SPATIAL', volume: 3 }),
-    { width: 4096, height: 16, fps: 60, url: 'https://a.com/', session: 'private', audio: 'spatial', volume: 1 });
+    { width: 65535, height: 16, fps: 60, url: 'https://a.com/', session: 'private', audio: 'spatial', volume: 1 });
   assert.strictEqual(M.parseCreate({ width: 640.6, height: 360, url: null }).width, 641);
   assert.strictEqual(M.parseCreate({ width: 640, height: 360 }).url, '');
 });
@@ -21,6 +23,16 @@ test('CREATE: wrong types are rejected with a code', () => {
   ]) {
     assert.throws(() => M.parseCreate(bad), err => err instanceof M.MessageError && err.code === code, code);
   }
+});
+
+test('page size cap: 4096 per side and 4,194,301 pixels (one 16 MiB FRAME)', () => {
+  assert.strictEqual(M.LIMITS.MAX_PIXELS, 4194301);
+  assert.strictEqual(M.LIMITS.MAX_PIXELS * 4 + 12, 16 * 1024 * 1024 - 0, 'a full frame payload is exactly 16 MiB at the cap');
+  for (const [w, h] of [[1280, 720], [1920, 1080], [4096, 1023], [2048, 2047], [16, 4096], [4096, 16]]) assert.strictEqual(M.pageSizeProblem(w, h), null, w + 'x' + h);
+  for (const [w, h] of [[4097, 16], [16, 4097], [2048, 2048], [4096, 1024], [3000, 3000]]) {
+    assert.deepStrictEqual(M.pageSizeProblem(w, h), { reason: 'size', width: w, height: h, maxWidth: 4096, maxHeight: 4096, maxPixels: 4194301 }, w + 'x' + h);
+  }
+  assert.deepStrictEqual(M.parseResize({ width: 5000, height: 100 }), { width: 5000, height: 100 }, 'parsed, then refused by the screen manager');
 });
 
 test('NAVIGATE: url or one of four actions', () => {

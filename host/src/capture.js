@@ -6,7 +6,6 @@
 // silent-source behaviour on Windows (enableLocalEcho=false) is untested.
 
 const path = require('path');
-const { BrowserWindow } = require('electron');
 const { monoMicros } = require('./clock');
 const pcm = require('./pcm');
 
@@ -67,6 +66,7 @@ class SpatialCapture {
 
   async start() {
     const o = this.o;
+    const { BrowserWindow } = require('electron'); // loaded here so plain-Node unit tests can import this file
     const win = new BrowserWindow({
       show: false,
       width: 64,
