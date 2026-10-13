@@ -40,6 +40,14 @@ public final class ScreenState {
     /** Friend names as last seen by the server, for the rights GUI (UUID -> name). Same keys as {@link #friends}. */
     public final java.util.Map<UUID, String> friendNames = new java.util.LinkedHashMap<>();
 
+    // ---- added by D-016 (additive) ----
+
+    /**
+     * Name of {@link #controller} for display, "" when there is none. Network form and description packet only, like
+     * the controller itself; the save file never stores either.
+     */
+    public String controllerName = "";
+
     /** Deep copy, so a receiver can keep a snapshot while the owner keeps mutating its record. */
     public ScreenState copy() {
         ScreenState c = new ScreenState();
@@ -59,6 +67,7 @@ public final class ScreenState {
         c.otherRights = otherRights;
         c.locked = locked;
         c.controller = controller;
+        c.controllerName = controllerName;
         c.mode = mode;
         return c;
     }

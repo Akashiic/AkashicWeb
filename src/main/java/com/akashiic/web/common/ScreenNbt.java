@@ -12,8 +12,9 @@ import net.minecraft.nbt.NBTTagList;
  * back is clamped and sanitised: NBT can come from old saves, world editors or a hostile server.
  * <p>
  * Layout (version 1): {@code faces} = list of compounds {side, w, h, resW, resH, rot, url, epoch, owner (UUID string),
- * ownerName, friends = list of {id, name}, friendRights, otherRights, locked, mode, controller (description packet
- * only)}. Coordinates and dimension are not stored: they come from the tile entity when it joins a world.
+ * ownerName, friends = list of {id, name}, friendRights, otherRights, locked, mode, controller and controllerName
+ * (description packet only)}. Coordinates and dimension are not stored: they come from the tile entity when it joins
+ * a world.
  */
 public final class ScreenNbt {
 
@@ -61,7 +62,10 @@ public final class ScreenNbt {
         t.setByte("otherRights", (byte) s.otherRights);
         t.setBoolean("locked", s.locked);
         t.setString("mode", s.mode.name());
-        if (withController && s.controller != null) t.setString("controller", s.controller.toString());
+        if (withController && s.controller != null) {
+            t.setString("controller", s.controller.toString());
+            t.setString("controllerName", s.controllerName == null ? "" : s.controllerName);
+        }
         return t;
     }
 
@@ -111,6 +115,7 @@ public final class ScreenNbt {
         s.locked = t.getBoolean("locked");
         s.mode = mode(t.getString("mode"));
         s.controller = uuid(t.getString("controller"));
+        s.controllerName = s.controller == null ? "" : TextSanitizer.clean(t.getString("controllerName"), MAX_NAME);
         return s;
     }
 

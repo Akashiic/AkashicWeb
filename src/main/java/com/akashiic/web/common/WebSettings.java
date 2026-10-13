@@ -34,8 +34,10 @@ public final class WebSettings {
     public final int maxFriends;
 
     // limits
-    public final int actionsPerSecond, pointerPerSecond, keysPerSecond, mediaSamplesPerSecond, clockPingsPerSecond;
-    public final double interactRange, pointerReach, pointerMaxAngleDeg;
+    public final int actionsPerSecond, mediaSamplesPerSecond, clockPingsPerSecond;
+    public final double interactRange;
+    /** Largest angle between the player's look and the screen when taking or keeping control (D-016). */
+    public final double controlMaxAngleDeg;
     public final int mediaClockHz;
     public final int controllerIdleSeconds;
 
@@ -68,13 +70,10 @@ public final class WebSettings {
         defaultResolutionH = clamp(b.defaultResolutionH, ScreenGeometry.MIN_RESOLUTION, maxResolutionH);
         maxFriends = clamp(b.maxFriends, 0, 64);
         actionsPerSecond = clamp(b.actionsPerSecond, 1, 100);
-        pointerPerSecond = clamp(b.pointerPerSecond, 1, 200);
-        keysPerSecond = clamp(b.keysPerSecond, 1, 200);
         mediaSamplesPerSecond = clamp(b.mediaSamplesPerSecond, 1, 40);
         clockPingsPerSecond = clamp(b.clockPingsPerSecond, 1, 40);
         interactRange = Math.max(2, Math.min(256, b.interactRange));
-        pointerReach = Math.max(2, Math.min(256, b.pointerReach));
-        pointerMaxAngleDeg = Math.max(5, Math.min(180, b.pointerMaxAngleDeg));
+        controlMaxAngleDeg = Math.max(5, Math.min(90, b.controlMaxAngleDeg));
         mediaClockHz = clamp(b.mediaClockHz, 1, 10);
         controllerIdleSeconds = clamp(b.controllerIdleSeconds, 5, 3600);
         adminUuids = Collections.unmodifiableSet(new LinkedHashSet<>(b.adminUuids));
@@ -151,15 +150,12 @@ public final class WebSettings {
         public long maxResolutionPixels = 1920L * 1080L;
         public int maxFriends = 32;
         public int actionsPerSecond = 4;
-        public int pointerPerSecond = 60;
-        public int keysPerSecond = 40;
         public int mediaSamplesPerSecond = 8;
         public int clockPingsPerSecond = 8;
         public double interactRange = 24;
-        public double pointerReach = 24;
-        public double pointerMaxAngleDeg = 75;
+        public double controlMaxAngleDeg = 45;
         public int mediaClockHz = 4;
-        public int controllerIdleSeconds = 120;
+        public int controllerIdleSeconds = 60;
         public List<UUID> adminUuids = new ArrayList<>();
         public boolean opsAreAdmins = true;
         public boolean killSwitch = false;

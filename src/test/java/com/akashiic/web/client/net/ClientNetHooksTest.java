@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
@@ -70,7 +71,14 @@ class ClientNetHooksTest {
 
     @Test
     void packetsHopToTheClientThreadBeforeTouchingScreens() {
-        hooks.onHello(Protocol.MAJOR, Protocol.MINOR, false, SitePolicy.blocklist(Collections.<String>emptyList()), 1);
+        UUID me = new UUID(3, 4);
+        hooks.onHello(
+            Protocol.MAJOR,
+            Protocol.MINOR,
+            false,
+            SitePolicy.blocklist(Collections.<String>emptyList()),
+            1,
+            me);
         ScreenState s = new ScreenState();
         s.key = new ScreenKey(0, 1, 2, 3, 3);
         s.widthBlocks = 2;
@@ -89,6 +97,11 @@ class ClientNetHooksTest {
         assertTrue(
             screens.session()
                 .helloReceived());
+        assertEquals(
+            me,
+            screens.session()
+                .playerUuid(),
+            "the server-side UUID reaches the session");
         assertEquals(
             1,
             screens.all()
@@ -137,8 +150,7 @@ class ClientNetHooksTest {
         hooks.onScreenState(null);
         hooks.onScreenRemoved(null);
         hooks.onUrl(null, "x", 1);
-        hooks.onInput(null, 1, null);
-        hooks.onMediaClock(null, 1, 1, 1, false, 1);
+        hooks.onMediaClock(null, 1, 1, 1, false, 1, true, 500);
         assertTrue(queue.isEmpty());
     }
 }

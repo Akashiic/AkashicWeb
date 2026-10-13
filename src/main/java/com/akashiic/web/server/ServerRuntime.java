@@ -15,6 +15,7 @@ import com.akashiic.web.common.WebSettings;
 import com.akashiic.web.common.block.TileEntityScreen;
 import com.akashiic.web.common.net.S2CMediaClock;
 import com.akashiic.web.server.command.CommandSupport;
+import com.akashiic.web.server.net.ServerPackets;
 
 /**
  * Server-side singletons and the per-tick work: drain the action queue, broadcast media clocks at 2-4 Hz and release
@@ -60,12 +61,32 @@ public final class ServerRuntime {
 
     /** The persistent screen index (overworld map storage), or an empty detached one before the overworld exists. */
     public static ScreenIndex index() {
+        ScreenIndexData data = data();
+        return data == null ? new ScreenIndex() : data.index;
+    }
+
+    /** Players who logged in here, for friend names; an empty detached map before the overworld exists. */
+    public static KnownPlayers knownPlayers() {
+        ScreenIndexData data = data();
+        return data == null ? new KnownPlayers() : data.players;
+    }
+
+    /** Login: remember the player's name for friend lists (and forget players long gone). Main thread. */
+    public static void playerSeen(EntityPlayerMP p) {
+        ScreenIndexData data = data();
+        if (data == null) return;
+        long now = System.currentTimeMillis(); // wall time: kept across restarts, not a protocol time
+        boolean changed = data.players.expire(now);
+        if (data.players.seen(p.getUniqueID(), p.getCommandSenderName(), now) || changed) data.markDirty();
+    }
+
+    private static ScreenIndexData data() {
         if (indexData == null) {
             World overworld = DimensionManager.getWorld(0);
-            if (overworld == null) return new ScreenIndex();
+            if (overworld == null) return null;
             indexData = ScreenIndexData.get(overworld);
         }
-        return indexData.index;
+        return indexData;
     }
 
     public static void indexChanged() {
@@ -80,7 +101,7 @@ public final class ServerRuntime {
         ticks++;
         WebSettings cfg = WebConfig.get();
         if (ticks % cfg.mediaClockIntervalTicks() == 0) broadcastClocks(cfg);
-        if (ticks % 20 == 0) releaseIdleControllers(cfg);
+        if (ticks % 20 == 0) releaseLostControllers(cfg);
     }
 
     private static void broadcastClocks(WebSettings cfg) {
@@ -97,35 +118,51 @@ public final class ServerRuntime {
                     session.clock.positionAt(now),
                     session.clock.rate(),
                     session.clock.paused(),
-                    now));
+                    now,
+                    session.clock.live(),
+                    session.clock.liveLagMs()));
         }
     }
 
     /**
-     * The controller lock is released when its holder logged out, changed dimension, walked far away or sent no input
-     * for {@code controllerIdleSeconds}; the media clock keeps running from its last anchor.
+     * Lets go of controller locks whose holder logged out, changed dimension, walked out of reach, lost the right to
+     * control or went idle ({@link ControlLock}); the media clock keeps running from its last anchor.
      */
-    private static void releaseIdleControllers(WebSettings cfg) {
+    private static void releaseLostControllers(WebSettings cfg) {
         long now = ServerClock.nowMs();
         for (ScreenState s : LOADED.faces()) {
             if (s.controller == null) continue;
             EntityPlayerMP p = ScreenWorld.online(s.controller);
             ScreenSession session = session(s);
-            String why = null;
-            if (p == null) why = "offline";
-            else if (p.dimension != s.key.dim) why = "dimension";
-            else {
+            boolean sameDimension = p != null && p.dimension == s.key.dim;
+            double distance = Double.POSITIVE_INFINITY;
+            if (sameDimension) {
                 double[] eye = ScreenWorld.eye(p);
-                if (HitMath.distanceToScreen(s, eye[0], eye[1], eye[2]) > cfg.interactRange * 2) why = "far";
-                else if (now - session.lastInputMs > cfg.controllerIdleSeconds * 1000L) why = "idle";
+                distance = HitMath.distanceToScreen(s, eye[0], eye[1], eye[2]);
             }
-            if (why != null) ScreenActions.releaseControl(s, why);
+            ControlLock.Release release = ControlLock.check(
+                p != null,
+                sameDimension,
+                distance,
+                cfg.interactRange,
+                sameDimension && ScreenActions.controllerMayStay(s, cfg),
+                now,
+                session.lastKeepaliveMs,
+                session.lastPlayingMs,
+                cfg.controllerIdleSeconds);
+            if (release != ControlLock.Release.NONE) {
+                ScreenActions.releaseControl(
+                    s,
+                    release.name()
+                        .toLowerCase(java.util.Locale.ROOT));
+            }
         }
     }
 
     /** Server stopped: forget everything (a new world may load next). */
     public static void stop() {
         QUEUE.clear();
+        ServerPackets.clear();
         LIMITS.clear();
         THROTTLE.clear();
         DIAGNOSTICS.clear();

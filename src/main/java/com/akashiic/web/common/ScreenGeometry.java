@@ -39,6 +39,22 @@ public final class ScreenGeometry {
     }
 
     /**
+     * How far from the origin block a screen still renders: {@code base} blocks beyond its farthest corner. Vanilla's
+     * tile entity renderer measures the distance from the origin block's centre, so a fixed 128 culled a whole 64x64
+     * admin screen for a viewer near its far edge (review finding); the diagonal of the largest face, plus the origin
+     * block itself, is added. {@code faces} may contain nulls.
+     */
+    public static double renderDistance(double base, Iterable<ScreenState> faces) {
+        double diagonal = 0;
+        for (ScreenState s : faces) {
+            if (s == null) continue;
+            double w = Math.max(1, s.widthBlocks), h = Math.max(1, s.heightBlocks);
+            diagonal = Math.max(diagonal, Math.sqrt(w * w + h * h));
+        }
+        return base + diagonal + 1;
+    }
+
+    /**
      * Default page size for a new screen: the drawable area's aspect ratio (page orientation, so swapped for 90/270),
      * fitted inside maxW x maxH (720p by default, ADR-004), never below {@link #MIN_RESOLUTION}.
      */

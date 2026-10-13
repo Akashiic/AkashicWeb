@@ -10,17 +10,21 @@ import com.akashiic.web.common.WebSettings;
 import com.mojang.authlib.GameProfile;
 
 /**
- * Who is a screen admin (ADR-010): a server operator (if {@code opsAreAdmins}), a player holding the Bukkit node
- * {@code akashicweb.admin} (Crucible + LuckPerms, by reflection on the main thread), or a UUID in the config list.
+ * Who is a screen admin (ADR-010): a server operator (if {@code opsAreAdmins}), a player explicitly granted the Bukkit
+ * node {@code akashicweb.admin} (Crucible + LuckPerms, by reflection on the main thread; Bukkit's op default for
+ * unregistered nodes does not count, see {@link BukkitBridge}), or a UUID in the config list.
  * FakePlayers never are. Re-checked on every action and inside every command, because Crucible bypasses
  * canCommandSenderUseCommand for mod commands.
  */
 public final class Admins {
 
     public static final String NODE_ADMIN = "akashicweb.admin";
-    /** Crucible group node of /webadmin; holding it also grants the command. */
-    public static final String NODE_WEBADMIN = "akashicweb.webadmin";
-    public static final String NODE_WEB = "akashicweb.web";
+    /** Crucible command group: it builds each command's node as group + "." + command name. */
+    public static final String NODE_GROUP = "akashicweb";
+    /** Crucible node of /webadmin; holding it also grants the command. */
+    public static final String NODE_WEBADMIN = NODE_GROUP + ".webadmin";
+    /** Crucible node of /web (Bukkit's default for it is ops only: grant it to the default group). */
+    public static final String NODE_WEB = NODE_GROUP + ".web";
 
     private Admins() {}
 

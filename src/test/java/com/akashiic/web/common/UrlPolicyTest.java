@@ -114,6 +114,28 @@ class UrlPolicyTest {
         assertThrows(UrlPolicy.PolicyException.class, () -> UrlPolicy.parseLiteral("foo.0x"));
     }
 
+    /** Review finding: IPv6 forms that embed an internal IPv4 address passed the check (matters in BLOCKLIST mode). */
+    @Test
+    void ipv6FormsThatEmbedAnInternalIpv4AreRefused() {
+        for (String u : new String[] { "http://[::127.0.0.1]/", "http://[::ffff:0:7f00:1]/",
+            "http://[64:ff9b::7f00:1]/", "http://[64:ff9b::192.168.0.1]/", "http://[2002:c0a8:101::1]/",
+            "http://[2002:7f00:1::]/", "http://[64:ff9b:1::1]/", "http://[2001:0:5ef5:79fd:0:59d:a0e5:ba1]/" }) {
+            assertEquals(ReasonCode.URL_INTERNAL, reason(u), u);
+        }
+        // The same translation prefixes with a public IPv4 inside stay usable.
+        assertEquals(ReasonCode.OK, reason("http://[64:ff9b::808:808]/"));
+        assertEquals(ReasonCode.OK, reason("http://[2002:808:808::1]/"));
+        assertEquals(ReasonCode.OK, reason("http://[2606:4700:4700::1111]/"));
+    }
+
+    /** Review finding: '§' (Minecraft formatting) survived into stored URLs and from there into chat. */
+    @Test
+    void theSectionSignIsPercentEncoded() {
+        assertEquals("https://a.com/x%C2%A7cy", TextSanitizer.cleanUrl("https://a.com/x§cy", 64));
+        assertEquals("https://a.com/", TextSanitizer.cleanUrl("https://a.com/§", 17), "never past the cap");
+        assertEquals(ReasonCode.URL_INVALID, reason("https://a§b.com/"), "not a host name");
+    }
+
     @Test
     void isInternalCopiedRules() throws Exception {
         assertTrue(UrlPolicy.isInternal(InetAddress.getByAddress(new byte[] { 10, 1, 2, 3 })));

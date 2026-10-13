@@ -62,6 +62,34 @@ public final class ScreenIndex {
     }
 
     private final Map<ScreenKey, Entry> entries = new LinkedHashMap<>();
+    /**
+     * The newest epoch issued by this server, so a screen formed or merged at a key always starts above every epoch a
+     * client may still hold for that key (review finding: a merge could reuse a smaller screen's key with a lower
+     * epoch, and clients that kept the old one then ignored every URL of the new one).
+     */
+    private int epochHighWater;
+
+    /**
+     * An epoch newer than every epoch issued so far and than every absorbed screen's (epochs compare wrap-aware, as
+     * the client does), recorded as the new high-water mark. For a new or merged screen.
+     */
+    public int nextEpoch(Iterable<ScreenState> absorbed) {
+        int next = epochHighWater;
+        for (ScreenState s : absorbed) if (s.epoch - next > 0) next = s.epoch;
+        epochHighWater = next + 1;
+        return epochHighWater;
+    }
+
+    /** Raises the high-water mark to an epoch that is in use (a URL change, a screen loaded from disk). */
+    public boolean noteEpoch(int epoch) {
+        if (epoch - epochHighWater <= 0) return false;
+        epochHighWater = epoch;
+        return true;
+    }
+
+    public int epochHighWater() {
+        return epochHighWater;
+    }
 
     /** Adds or replaces. Returns true if anything changed (so the caller marks the save data dirty). */
     public boolean put(Entry e) {
@@ -123,5 +151,6 @@ public final class ScreenIndex {
 
     public void clear() {
         entries.clear();
+        epochHighWater = 0;
     }
 }

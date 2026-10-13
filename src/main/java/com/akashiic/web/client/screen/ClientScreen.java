@@ -42,6 +42,8 @@ public final class ClientScreen {
     long lastSyncEvalMs;
     SyncDecision lastDecision = SyncDecision.WAITING;
     boolean wasController;
+    /** Last C2SControl take sent for this screen (D-016 keepalive while the controller interacts). */
+    long lastTakeMs;
 
     // Page
     PageState page = PageState.EMPTY;

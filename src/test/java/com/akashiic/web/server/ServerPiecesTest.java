@@ -63,6 +63,53 @@ class ServerPiecesTest {
         assertEquals(ServerActionQueue.MAX_PER_TICK, q.drain());
     }
 
+    /** Review finding: one flooding player could use the whole queue and starve everyone, heals included. */
+    @Test
+    void onePlayerCannotTakeMoreThanItsShare() {
+        ServerActionQueue q = new ServerActionQueue();
+        UUID flooder = UUID.randomUUID(), other = UUID.randomUUID();
+        for (int i = 0; i < ServerActionQueue.MAX_PER_PLAYER; i++) assertTrue(q.offer(flooder, () -> {}));
+        assertFalse(q.offer(flooder, () -> {}), "the flooder's own cap");
+        assertEquals(ServerActionQueue.MAX_PER_PLAYER, q.pending(flooder));
+        assertTrue(q.offer(other, () -> {}), "everyone else is unaffected");
+        q.drain();
+        assertEquals(0, q.pending(flooder));
+        assertTrue(q.offer(flooder, () -> {}), "room again after the tick");
+    }
+
+    @Test
+    void playersTogetherNeverUseTheSystemReserve() {
+        ServerActionQueue q = new ServerActionQueue();
+        int playerSlots = ServerActionQueue.MAX_PENDING - ServerActionQueue.SYSTEM_RESERVE;
+        for (int p = 0; q.offer(new UUID(7, p), () -> {}); p++) {
+            // one task per player, so only the shared limit stops them
+        }
+        assertEquals(playerSlots, q.pending(), "player tasks stop at the reserve");
+        for (int i = 0; i < ServerActionQueue.SYSTEM_RESERVE; i++) assertTrue(q.offer(() -> {}), "heal " + i);
+        assertFalse(q.offer(() -> {}), "and the queue is still bounded");
+    }
+
+    /** Review finding: a heal refused by a full queue stayed "pending" forever, so that screen was never healed. */
+    @Test
+    void aRefusedHealCanBeScheduledAgain() {
+        ServerRuntime.stop();
+        try {
+            while (ServerRuntime.QUEUE.offer(() -> {})) {
+                // fill it with server tasks
+            }
+            ScreenKey key = new ScreenKey(0, 10, 64, 10, 2);
+            ScreenLifecycle.scheduleHeal(key);
+            assertFalse(ScreenLifecycle.healPending(key), "not left pending when the queue refused it");
+            ServerRuntime.QUEUE.clear();
+            ScreenLifecycle.scheduleHeal(key);
+            assertEquals(1, ServerRuntime.QUEUE.pending());
+            assertTrue(ScreenLifecycle.healPending(key));
+        } finally {
+            ScreenLifecycle.clear();
+            ServerRuntime.stop();
+        }
+    }
+
     @Test
     void rateLimitsAreSeparatePerKind() {
         AtomicLong now = new AtomicLong();
@@ -72,10 +119,10 @@ class ServerPiecesTest {
         int urls = 0;
         while (l.tryAcquire(p, ActionLimits.Kind.URL, cfg)) urls++;
         assertEquals(cfg.actionsPerSecond * 2, urls);
-        assertTrue(l.tryAcquire(p, ActionLimits.Kind.POINTER, cfg), "pointer bucket unaffected");
-        int pointers = 1;
-        while (l.tryAcquire(p, ActionLimits.Kind.POINTER, cfg)) pointers++;
-        assertEquals(cfg.pointerPerSecond * 2, pointers);
+        assertTrue(l.tryAcquire(p, ActionLimits.Kind.MEDIA, cfg), "media bucket unaffected");
+        int samples = 1;
+        while (l.tryAcquire(p, ActionLimits.Kind.MEDIA, cfg)) samples++;
+        assertEquals(cfg.mediaSamplesPerSecond * 2, samples);
         l.forget(p);
         assertTrue(l.tryAcquire(p, ActionLimits.Kind.URL, cfg));
     }

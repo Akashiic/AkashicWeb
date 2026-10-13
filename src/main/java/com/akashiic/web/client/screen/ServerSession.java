@@ -1,5 +1,7 @@
 package com.akashiic.web.client.screen;
 
+import java.util.UUID;
+
 import com.akashiic.web.common.SitePolicy;
 import com.akashiic.web.protocol.Protocol;
 
@@ -18,14 +20,21 @@ public final class ServerSession {
     private int protoMajor;
     private int protoMinor;
     private SitePolicy policy;
+    private UUID playerUuid;
 
     public void onHello(int protoMajor, int protoMinor, boolean killSwitch, SitePolicy policy) {
+        onHello(protoMajor, protoMinor, killSwitch, policy, null);
+    }
+
+    /** @param playerUuid this player's UUID as the server knows it (S2CHello, D-016); null from an older server */
+    public void onHello(int protoMajor, int protoMinor, boolean killSwitch, SitePolicy policy, UUID playerUuid) {
         this.helloReceived = true;
         this.protoMajor = protoMajor;
         this.protoMinor = protoMinor;
         this.protocolOk = Protocol.compatible(protoMajor);
         this.killSwitch = killSwitch;
         this.policy = policy;
+        this.playerUuid = playerUuid;
     }
 
     public void reset() {
@@ -33,6 +42,12 @@ public final class ServerSession {
         killSwitch = false;
         protocolOk = true;
         policy = null;
+        playerUuid = null;
+    }
+
+    /** The server-side UUID of the local player, or null until a hello carried it. */
+    public UUID playerUuid() {
+        return playerUuid;
     }
 
     public boolean allowsBrowsers() {

@@ -192,7 +192,12 @@ public final class UrlPolicy {
         return value;
     }
 
-    /** Copied from AkashicFM UrlPolicy.isInternal (unchanged rules). */
+    /**
+     * Copied from AkashicFM UrlPolicy.isInternal, plus IPv6 rules added here (review finding): Teredo, documentation,
+     * discard and local-use NAT64 prefixes are refused whole, and the IPv6 forms that carry an IPv4 address
+     * ({@link #embeddedIpv4}) are judged by that address. host/src/policy.js has the same additions except Teredo and
+     * the IPv4-translated form, which only this side refuses.
+     */
     public static boolean isInternal(InetAddress a) {
         if (a.isAnyLocalAddress() || a.isLoopbackAddress()
             || a.isLinkLocalAddress()
@@ -211,17 +216,48 @@ public final class UrlPolicy {
         } else if (a instanceof Inet6Address) {
             int b0 = b[0] & 0xFF;
             if ((b0 & 0xFE) == 0xFC) return true; // fc00::/7 (ULA)
-            boolean v4mapped = true;
-            for (int i = 0; i < 10; i++) if (b[i] != 0) v4mapped = false;
-            if (v4mapped && (b[10] & 0xFF) == 0xFF && (b[11] & 0xFF) == 0xFF) {
+            if (b0 == 0x20 && b[1] == 0x01 && b[2] == 0 && b[3] == 0) return true; // 2001::/32 Teredo: refused whole
+            if (b0 == 0x20 && b[1] == 0x01 && (b[2] & 0xFF) == 0x0D && (b[3] & 0xFF) == 0xB8) return true; // docs
+            if (b0 == 0x01 && b[1] == 0x00 && zero(b, 2, 8)) return true; // 100::/64 discard (as host/src/policy.js)
+            if (b0 == 0x00 && b[1] == 0x64 && (b[2] & 0xFF) == 0xFF && (b[3] & 0xFF) == 0x9B && b[4] == 0 && b[5] == 1)
+                return true; // 64:ff9b:1::/48, local-use NAT64 (RFC 8215): a translator inside the site
+            byte[] v4 = embeddedIpv4(b);
+            if (v4 != null) {
                 try {
-                    return isInternal(InetAddress.getByAddress(new byte[] { b[12], b[13], b[14], b[15] }));
+                    return isInternal(InetAddress.getByAddress(v4));
                 } catch (UnknownHostException e) {
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    /**
+     * The IPv4 address carried inside an IPv6 one, for the forms that route to it (review finding: these passed the
+     * internal check): IPv4-mapped ::ffff:0:0/96 (Java usually hands those over as Inet4Address already),
+     * IPv4-compatible ::/96, IPv4-translated ::ffff:0:0:0/96, NAT64 64:ff9b::/96 and 6to4 2002::/16. Null otherwise.
+     * Added to the rules copied from AkashicFM.
+     */
+    static byte[] embeddedIpv4(byte[] b) {
+        if (b.length != 16) return null;
+        if (zero(b, 0, 10) && (b[10] & 0xFF) == 0xFF && (b[11] & 0xFF) == 0xFF) return tail(b); // ::ffff:a.b.c.d
+        if (zero(b, 0, 12)) return tail(b); // ::a.b.c.d (:: and ::1 are caught before as any-local and loopback)
+        if (zero(b, 0, 8) && (b[8] & 0xFF) == 0xFF && (b[9] & 0xFF) == 0xFF && zero(b, 10, 12)) return tail(b);
+        if (b[0] == 0x00 && b[1] == 0x64 && (b[2] & 0xFF) == 0xFF && (b[3] & 0xFF) == 0x9B && zero(b, 4, 12)) {
+            return tail(b); // 64:ff9b::a.b.c.d
+        }
+        if (b[0] == 0x20 && b[1] == 0x02) return new byte[] { b[2], b[3], b[4], b[5] }; // 2002:aabb:ccdd::/48
+        return null;
+    }
+
+    private static boolean zero(byte[] b, int from, int to) {
+        for (int i = from; i < to; i++) if (b[i] != 0) return false;
+        return true;
+    }
+
+    private static byte[] tail(byte[] b) {
+        return new byte[] { b[12], b[13], b[14], b[15] };
     }
 
     /** Policy refusal with a reason code and a short, stable detail ("scheme", "port", the host...). */

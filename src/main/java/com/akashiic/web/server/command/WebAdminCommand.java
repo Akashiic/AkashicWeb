@@ -160,10 +160,11 @@ public final class WebAdminCommand extends CommandSupport {
         if (args[1].equalsIgnoreCase("on")) on = true;
         else if (args[1].equalsIgnoreCase("off")) on = false;
         else throw new WrongUsageException(USAGE);
-        WebConfig.setKillSwitch(on);
-        audit(sender, "admin kill switch", on ? "on" : "off");
+        boolean saved = WebConfig.setKillSwitch(on);
+        audit(sender, "admin kill switch", (on ? "on" : "off") + (saved ? "" : " (this run only: config unreadable)"));
         ScreenSync.helloAll();
         reply(sender, on ? "akashicweb.cmd.kill.on" : "akashicweb.cmd.kill.off");
+        if (!saved) error(sender, "akashicweb.cmd.kill.not_saved", String.valueOf(WebConfig.problem()));
     }
 
     private void policy(ICommandSender sender, String[] args) {
@@ -199,6 +200,7 @@ public final class WebAdminCommand extends CommandSupport {
     private void status(ICommandSender sender, WebSettings cfg) {
         CommandText.header(sender, "akashicweb.cmd.status.header", Protocol.MAJOR + "." + Protocol.MINOR);
         reply(sender, "akashicweb.cmd.status.kill", cfg.killSwitch ? "ON" : "off");
+        if (WebConfig.problem() != null) error(sender, "akashicweb.cmd.status.config", WebConfig.problem());
         reply(
             sender,
             "akashicweb.cmd.status.policy",

@@ -8,6 +8,10 @@ import io.netty.buffer.ByteBuf;
  * packet would otherwise surface as a pipeline exception (and on the server, possibly a kick for a harmless client
  * bug). Instead {@link #malformed} is set and the handler drops the message and records {@code BAD_PACKET}. This is
  * the documented boundary for decode errors; nothing else is swallowed.
+ * <p>
+ * Client-to-server packets decode exactly: a trailing byte is malformed, the server never guesses. Server-to-client
+ * packets extend {@link S2CMessage}, which skips trailing bytes so a newer server of the same protocol major can append
+ * fields (docs/PROTOCOL.md, forward compatibility).
  */
 public abstract class AkwMessage implements IMessage {
 
@@ -18,7 +22,10 @@ public abstract class AkwMessage implements IMessage {
     public final void fromBytes(ByteBuf buf) {
         try {
             read(buf);
-            if (buf.isReadable()) malformed = buf.readableBytes() + " trailing bytes";
+            if (buf.isReadable()) {
+                if (toleratesTrailingBytes()) buf.skipBytes(buf.readableBytes());
+                else malformed = buf.readableBytes() + " trailing bytes";
+            }
         } catch (CodecException | IndexOutOfBoundsException | IllegalArgumentException e) {
             malformed = e.toString();
         }
@@ -32,6 +39,11 @@ public abstract class AkwMessage implements IMessage {
     protected abstract void read(ByteBuf buf);
 
     protected abstract void write(ByteBuf buf);
+
+    /** False for client-to-server packets (strict); {@link S2CMessage} returns true. */
+    protected boolean toleratesTrailingBytes() {
+        return false;
+    }
 
     public boolean ok() {
         return malformed == null;

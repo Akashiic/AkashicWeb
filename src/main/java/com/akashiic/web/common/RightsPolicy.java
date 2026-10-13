@@ -72,8 +72,9 @@ public final class RightsPolicy {
     }
 
     /**
-     * Whether a pointer/key packet from this player is accepted. On SHARED and CAST screens only the controller's
-     * input counts; on PRIVATE screens anyone with CLICK_TYPE drives their own browser.
+     * Whether this player's input may drive their own browser on the screen. Since D-016 input never reaches the
+     * server; this is the rule the client applies locally: on SHARED and CAST screens only the controller's input
+     * counts; on PRIVATE screens anyone with CLICK_TYPE drives their own browser.
      */
     public static ReasonCode canInput(ScreenState s, UUID player, boolean admin) {
         ReasonCode r = denial(s, player, admin, Rights.CLICK_TYPE);

@@ -8,6 +8,7 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.event.world.BlockEvent;
 import net.minecraftforge.event.world.ChunkEvent;
+import net.minecraftforge.event.world.ExplosionEvent;
 import net.minecraftforge.event.world.WorldEvent;
 
 import com.akashiic.web.common.ModContent;
@@ -15,6 +16,7 @@ import com.akashiic.web.common.ReasonCode;
 import com.akashiic.web.common.ScreenState;
 import com.akashiic.web.common.WebConfig;
 import com.akashiic.web.common.WebSettings;
+import com.akashiic.web.server.net.ServerPackets;
 
 import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
@@ -35,6 +37,7 @@ public final class ServerEvents {
     @SubscribeEvent
     public void onLogin(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.player instanceof EntityPlayerMP && !(event.player instanceof FakePlayer)) {
+            ServerRuntime.playerSeen((EntityPlayerMP) event.player);
             ScreenSync.hello((EntityPlayerMP) event.player);
         }
     }
@@ -43,10 +46,20 @@ public final class ServerEvents {
     public void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.player == null) return;
         UUID id = event.player.getUniqueID();
-        ScreenActions.releaseAll(id);
+        ScreenActions.releaseAll(id, "logout");
         ServerRuntime.LIMITS.forget(id);
         ServerRuntime.THROTTLE.forget(id);
         ServerRuntime.DIAGNOSTICS.forget(id);
+        ServerRuntime.QUEUE.forget(id);
+        ServerPackets.forget(id);
+    }
+
+    /** A lock is only ever taken in the player's own dimension, so a dimension change ends every lock it holds. */
+    @SubscribeEvent
+    public void onDimensionChange(PlayerEvent.PlayerChangedDimensionEvent event) {
+        if (event.player != null && !(event.player instanceof FakePlayer)) {
+            ScreenActions.releaseAll(event.player.getUniqueID(), "dimension");
+        }
     }
 
     /**
@@ -74,6 +87,16 @@ public final class ServerEvents {
             }
             return;
         }
+    }
+
+    /**
+     * Explosions never break a protected screen ({@link ScreenProtection}). Detonate has the final block list, whatever
+     * the exploder (TNT, creepers, wither skulls that ignore resistance, modded blasts on vanilla's Explosion).
+     */
+    @SubscribeEvent
+    public void onExplosion(ExplosionEvent.Detonate event) {
+        if (event.world == null || event.world.isRemote) return;
+        ScreenProtection.spare(event.world, event.getAffectedBlocks());
     }
 
     @SubscribeEvent

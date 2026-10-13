@@ -50,8 +50,38 @@ class MediaClockTest {
         MediaClock c = new MediaClock(0);
         c.apply(sample(0, 100, 1f, false, 1000), 0, 1000);
         MediaSample ad = new MediaSample(0, 5, 1f, false, true, false, 0, 2000);
-        assertEquals(MediaClock.Result.IGNORED_AD, c.apply(ad, 0, 2000));
+        assertEquals(MediaClock.Result.HELD_FOR_AD, c.apply(ad, 0, 2000));
         assertEquals(101, c.positionAt(2000), 1e-9);
+    }
+
+    /** D-016: the clock holds while the controller's ad shows and resumes from its next sample of the content. */
+    @Test
+    void theClockHoldsDuringTheControllersAdAndResumesFromTheNextContentSample() {
+        MediaClock c = new MediaClock(0);
+        c.apply(sample(0, 100, 1f, false, 1000), 0, 1000);
+        c.apply(new MediaSample(0, 3, 1f, false, true, false, 0, 1500), 0, 1500);
+        assertTrue(c.heldForAd());
+        assertTrue(c.paused(), "followers are told to stand still");
+        assertEquals(100.5, c.positionAt(1500), 1e-9);
+        assertEquals(100.5, c.positionAt(31_500), 1e-9, "thirty seconds of ad later, the content has not moved");
+        c.apply(new MediaSample(0, 25, 1f, false, true, false, 0, 30_000), 0, 30_000);
+        assertEquals(100.5, c.positionAt(30_000), 1e-9, "more ad samples keep the hold where it started");
+        assertEquals(MediaClock.Result.APPLIED, c.apply(sample(0, 100.6, 1f, false, 31_000), 0, 31_000));
+        assertFalse(c.heldForAd());
+        assertFalse(c.paused());
+        assertEquals(101.6, c.positionAt(32_000), 1e-9, "running again from the content sample");
+    }
+
+    @Test
+    void anAdBeforeAnyContentHoldsNothing() {
+        MediaClock c = new MediaClock(0);
+        assertEquals(
+            MediaClock.Result.HELD_FOR_AD,
+            c.apply(new MediaSample(0, 4, 1f, false, true, false, 0, 1000), 0, 1000));
+        assertFalse(c.valid(), "a pre-roll ad says nothing about the content");
+        assertFalse(c.heldForAd());
+        c.apply(sample(0, 0, 1f, false, 6000), 0, 6000);
+        assertEquals(1, c.positionAt(7000), 1e-9);
     }
 
     @Test
@@ -84,6 +114,17 @@ class MediaClockTest {
         // A sample for the new page re-anchors even if its stamp is older than the old anchor.
         assertEquals(MediaClock.Result.APPLIED, c.apply(sample(1, 0, 1f, false, 4000), 1, 4100));
         assertEquals(1, c.positionAt(5000), 1e-9);
+    }
+
+    /** D-016: S2CMediaClock carries the controller's distance behind the live edge, 0 for VOD. */
+    @Test
+    void liveLagIsReportedInMillisecondsForLiveStreamsOnly() {
+        MediaClock c = new MediaClock(0);
+        c.apply(new MediaSample(0, 100, 1f, false, false, true, 2.5, 1000), 0, 1000);
+        assertTrue(c.live());
+        assertEquals(2500, c.liveLagMs());
+        c.apply(new MediaSample(0, 101, 1f, false, false, false, 7, 2000), 0, 2000);
+        assertEquals(0, c.liveLagMs(), "VOD");
     }
 
     @Test

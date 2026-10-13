@@ -8,7 +8,7 @@ import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
 
 /** S2C 2: the screen's URL changed (new epoch). Sent to every player tracking the screen's chunk. */
-public final class S2CUrl extends AkwMessage {
+public final class S2CUrl extends S2CMessage {
 
     public ScreenKey key;
     public String url;

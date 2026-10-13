@@ -7,15 +7,12 @@ import java.util.Map;
 import com.akashiic.web.common.ScreenKey;
 import com.akashiic.web.common.net.MediaSample;
 import com.akashiic.web.common.net.RightsChange;
-import com.akashiic.web.common.net.ScreenInput;
 import com.akashiic.web.common.net.ServerBound;
 
 /** A ServerBound that records what the client would send. */
 public final class RecordingServer implements ServerBound {
 
     final List<String> sent = new ArrayList<>();
-    final List<ScreenInput> pointers = new ArrayList<>();
-    final List<ScreenInput> keys = new ArrayList<>();
     final List<MediaSample> samples = new ArrayList<>();
 
     @Override
@@ -26,18 +23,6 @@ public final class RecordingServer implements ServerBound {
     @Override
     public void nav(ScreenKey key, int epoch, String action) {
         sent.add("nav " + epoch + " " + action);
-    }
-
-    @Override
-    public void pointer(ScreenKey key, ScreenInput input) {
-        pointers.add(input);
-        sent.add("pointer " + input.kind);
-    }
-
-    @Override
-    public void key(ScreenKey key, ScreenInput input) {
-        keys.add(input);
-        sent.add("key " + input.kind);
     }
 
     @Override

@@ -19,6 +19,11 @@ import com.akashiic.web.common.net.RightsChange;
 /**
  * Applies a C2SRights request to a screen, all or nothing: every part is validated first (rights for each part, name
  * resolution, limits), and the screen changes only if all of it is acceptable. Pure; name lookup is injected.
+ * <p>
+ * Names are resolved last and only as needed: after every rights check, never for a name already on the friend list,
+ * and not at all when the list is full and the request only adds. The server's resolver is a map read
+ * ({@link KnownPlayers} and online players), never a network lookup (review finding: Mojang lookups froze the main
+ * thread), and the codec allows at most four names per list.
  */
 public final class RightsEditor {
 
@@ -87,9 +92,23 @@ public final class RightsEditor {
             return Outcome.refuse(ReasonCode.NO_PERMISSION, "otherRights");
         }
 
+        // A full list that only grows needs no lookup to be refused.
+        if (c.removeFriends.isEmpty() && s.friends.size() >= cfg.maxFriends) {
+            for (String name : c.addFriends) {
+                if (friendByName(s, name) == null) {
+                    return Outcome.refuse(ReasonCode.TOO_MANY_FRIENDS, String.valueOf(cfg.maxFriends));
+                }
+            }
+        }
+
         // Friends: resolve every name before touching anything.
         Map<UUID, String> add = new LinkedHashMap<>();
         for (String name : c.addFriends) {
+            UUID known = friendByName(s, name);
+            if (known != null) {
+                add.put(known, s.friendNames.get(known)); // already a friend: nothing to look up
+                continue;
+            }
             Profile p = resolver.apply(name);
             if (p == null) return Outcome.refuse(ReasonCode.UNKNOWN_PLAYER, name);
             if (!p.id.equals(s.owner)) add.put(p.id, p.name);
@@ -107,7 +126,8 @@ public final class RightsEditor {
         int friendsAfter = s.friends.size();
         for (UUID id : add.keySet()) if (!s.friends.contains(id) && !remove.contains(id)) friendsAfter++;
         for (UUID id : remove) if (s.friends.contains(id) && !add.containsKey(id)) friendsAfter--;
-        if (friendsAfter > cfg.maxFriends)
+        // Only a growing list is refused: after maxFriends was lowered, the owner can still remove friends.
+        if (friendsAfter > cfg.maxFriends && friendsAfter > s.friends.size())
             return Outcome.refuse(ReasonCode.TOO_MANY_FRIENDS, String.valueOf(cfg.maxFriends));
 
         // Geometry: a rotation between landscape and portrait swaps the page size unless a new size is given.

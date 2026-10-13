@@ -250,21 +250,57 @@ class ClientScreensTest {
             "the rest of the record is still taken");
     }
 
+    /** D-016: input goes straight to our own browser, never to the server, and only while we hold the lock. */
     @Test
-    void relayedInputReachesOnlyTheCurrentEpoch() {
+    void inputGoesStraightToOurOwnBrowserWhileWeAreTheController() {
         hello();
         ScreenState s = screen(0, 2, 2, "https://a.example/", 4);
+        s.controller = OTHER;
         screens.onScreenState(s);
         tick();
-        screens.onInput(s.key, 4, ScreenInput.pointer(ScreenInput.Kind.DOWN, 0.5f, 0.5f, 0, 1, 0));
-        assertEquals(1, host.inputs.size());
+        ClientScreen cs = first();
+        assertTrue(screens.type(cs, ScreenInput.key(true, "a", 0)), "the owner may type");
+        assertTrue(host.inputs.isEmpty(), "someone else holds the lock: nothing reaches our browser");
+
+        ScreenState mine = screen(0, 2, 2, "https://a.example/", 4);
+        mine.controller = ME;
+        screens.onScreenState(mine);
+        now[0] += ClientScreens.KEEPALIVE_MS;
+        assertTrue(screens.click(cs, 0.5, 0.5, ScreenInput.BUTTON_LEFT, 0));
+        assertEquals(2, host.inputs.size(), "down and up, applied locally at once");
         InputEvent e = host.inputs.get(0);
         assertEquals(640, e.x);
         assertEquals(360, e.y);
-        screens.onInput(s.key, 3, ScreenInput.pointer(ScreenInput.Kind.DOWN, 0.5f, 0.5f, 0, 1, 0));
-        assertEquals(1, host.inputs.size(), "stale epoch");
-        screens.onInput(s.key, 4, ScreenInput.key(true, "x", ScreenInput.MOD_CTRL));
-        assertEquals(1, host.inputs.size(), "cut is never applied");
+        assertEquals(1, server.count("control true"), "the first local input is also the lock keepalive");
+        screens.type(cs, ScreenInput.key(true, "x", ScreenInput.MOD_CTRL));
+        assertEquals(2, host.inputs.size(), "cut is never applied");
+        screens.type(cs, ScreenInput.chars("ç"));
+        assertEquals(3, host.inputs.size());
+        assertEquals(1, server.count("control true"), "keepalive at most every " + ClientScreens.KEEPALIVE_MS + " ms");
+        now[0] += ClientScreens.KEEPALIVE_MS;
+        screens.wheel(cs, 0.5, 0.5, 1f, 0);
+        assertEquals(4, host.inputs.size());
+        assertEquals(2, server.count("control true"));
+        assertFalse(
+            server.sent.stream()
+                .anyMatch(m -> m.startsWith("pointer") || m.startsWith("key")));
+    }
+
+    /** The server-side UUID from S2CHello decides who the controller is (offline-mode and proxied servers). */
+    @Test
+    void theHelloUuidIdentifiesUsAsTheController() {
+        UUID serverSide = new UUID(77, 77);
+        screens.onHello(Protocol.MAJOR, Protocol.MINOR, false, POLICY, serverSide);
+        ScreenState s = screen(0, 2, 2, "https://a.example/", 1);
+        s.controller = serverSide;
+        screens.onScreenState(s);
+        tick();
+        assertTrue(screens.isController(first()), "the session UUID (ME) differs, the hello's UUID matches");
+        assertEquals(serverSide, screens.player());
+        screens.onDisconnect();
+        assertNull(
+            screens.session()
+                .playerUuid());
     }
 
     @Test
@@ -377,16 +413,20 @@ class ClientScreensTest {
         tick();
         ClientScreen cs = first();
         assertFalse(screens.click(cs, 0.5, 0.5, ScreenInput.BUTTON_LEFT, 0), "visitors only watch");
-        assertTrue(server.pointers.isEmpty());
+        assertEquals(0, server.count("control"));
+        assertTrue(host.inputs.isEmpty());
         ScreenState mine = screen(0, 2, 2, "https://a.example/", 1);
         screens.onScreenState(mine);
         assertTrue(screens.click(cs, 0.25, 0.75, ScreenInput.BUTTON_LEFT, 0));
-        assertEquals("control true", server.sent.get(server.sent.size() - 3));
-        assertEquals(ScreenInput.Kind.DOWN, server.pointers.get(0).kind);
-        assertEquals(ScreenInput.Kind.UP, server.pointers.get(1).kind);
-        assertEquals(0.25f, server.pointers.get(0).u, 1e-6);
+        assertEquals("control true", server.sent.get(server.sent.size() - 1), "a free screen is taken first");
+        assertTrue(host.inputs.isEmpty(), "not applied before the server grants the lock");
+        mine.controller = ME;
+        screens.onScreenState(mine);
         screens.click(cs, 0.25, 0.75, ScreenInput.BUTTON_LEFT, 0);
-        assertEquals(2, server.pointers.get(2).clickCount, "double click");
+        assertEquals(InputEvent.Type.MOUSE_DOWN, host.inputs.get(0).type);
+        assertEquals(InputEvent.Type.MOUSE_UP, host.inputs.get(1).type);
+        assertEquals(320, host.inputs.get(0).x);
+        assertEquals(2, host.inputs.get(0).clickCount, "double click");
         assertTrue(screens.can(cs, Rights.CHANGE_URL));
     }
 

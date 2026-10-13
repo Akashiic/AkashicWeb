@@ -3,9 +3,11 @@ package com.akashiic.web.common.block;
 import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
 import net.minecraft.creativetab.CreativeTabs;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
 import net.minecraftforge.common.util.FakePlayer;
 
@@ -15,15 +17,17 @@ import com.akashiic.web.common.HitMath;
 import com.akashiic.web.common.ScreenState;
 import com.akashiic.web.common.net.ClientHooks;
 import com.akashiic.web.server.ScreenLifecycle;
+import com.akashiic.web.server.ScreenProtection;
 
 /**
  * The screen block. Placed like any block (so region plugins and block limiters apply, ADR-010); a flat rectangle of
  * them becomes a screen when a player right-clicks one face with an empty hand. Metadata bit 0 marks the origin
  * block, the only one with a tile entity (Web Displays' layout: one tile per screen, not one per block).
  * <p>
- * Right-clicking a formed screen only opens M5's GUI on the client; all screen input travels in our own validated
- * packets (Crucible fires PlayerInteractEvent before onBlockActivated, so region plugins can veto this click, but never
- * see C2SPointer). Breaking, neighbour changes and chunk loads re-validate the affected screens one tick later.
+ * Right-clicking a formed screen only opens M5's GUI on the client (Crucible fires PlayerInteractEvent before
+ * onBlockActivated, so region plugins can veto this click); page input then stays on the client (D-016). Breaking,
+ * neighbour changes and chunk loads re-validate the affected screens one tick later; explosions, the wither and the
+ * dragon do not break a protected screen ({@link ScreenProtection}).
  * Derived from Web Displays by montoyo (public domain), BlockScreen.
  */
 public final class BlockScreen extends Block {
@@ -88,6 +92,16 @@ public final class BlockScreen extends Block {
         if (!(player instanceof EntityPlayerMP) || player instanceof FakePlayer) return false;
         ScreenLifecycle.onActivated((EntityPlayerMP) player, world, x, y, z, face);
         return true;
+    }
+
+    /**
+     * The wither and the ender dragon break blocks through this check, not through BreakEvent: a protected screen
+     * stays ({@link ScreenProtection}; explosions are handled in {@code ServerEvents.onExplosion}).
+     */
+    @Override
+    public boolean canEntityDestroy(IBlockAccess world, int x, int y, int z, Entity entity) {
+        if (world instanceof World && ScreenProtection.shielded((World) world, x, y, z)) return false;
+        return super.canEntityDestroy(world, x, y, z, entity);
     }
 
     @Override

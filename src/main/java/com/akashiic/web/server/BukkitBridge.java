@@ -1,5 +1,6 @@
 package com.akashiic.web.server;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.UUID;
 
@@ -13,8 +14,17 @@ import com.akashiic.web.AkashicWeb;
  * answers "unknown". Must be called on the main thread (Bukkit's API is not thread-safe in general).
  * <p>
  * Lookup order: the CraftBukkit entity behind the Forge player ({@code Entity.getBukkitEntity()}, added by
- * Cauldron-family servers such as Crucible), then {@code Bukkit.getPlayer(UUID)}. If reflection fails once, the bridge
- * logs it and switches itself off for the rest of the session instead of failing on every check.
+ * Cauldron-family servers such as Crucible), then {@code Bukkit.getPlayer(UUID)}. If reflection itself fails (a
+ * method is missing, inaccessible or has another type), the bridge logs it and switches itself off for the rest of
+ * the session instead of failing on every check. An exception thrown by Bukkit or the permission plugin inside the
+ * call (LuckPerms during {@code /lp reload}, for example) only makes that one answer unknown, logged at most once a
+ * minute; the bridge stays on (review finding: one such exception used to remove every LuckPerms-only admin until
+ * restart).
+ * <p>
+ * Only an explicit grant counts ({@code isPermissionSet(node) && hasPermission(node)}). Our nodes are not registered
+ * with Bukkit, and Bukkit's default for an unregistered node is "ops have it", which LuckPerms falls back to for
+ * nodes it has no value for; asking hasPermission alone made every op a screen admin even with
+ * {@code opsAreAdmins = false} (review finding).
  */
 public final class BukkitBridge {
 
@@ -32,6 +42,12 @@ public final class BukkitBridge {
     private static Method getBukkitEntity;
     private static Method bukkitGetPlayer;
     private static Method hasPermission;
+    private static Method isPermissionSet;
+
+    /** Answers lost to exceptions inside Bukkit since the last log line, and when that line was written. */
+    private static long transientFailures;
+    private static long lastTransientLogNs;
+    static final long TRANSIENT_LOG_INTERVAL_NS = 60_000_000_000L;
 
     private BukkitBridge() {}
 
@@ -41,8 +57,9 @@ public final class BukkitBridge {
     }
 
     /**
-     * {@code Boolean.TRUE}/{@code FALSE} from Bukkit, or null when it cannot answer (absent, failed, not on the main
-     * thread, player not known to Bukkit). Note Bukkit's default for an unregistered node is "ops only".
+     * {@code Boolean.TRUE} when Bukkit says the player was explicitly granted the node, {@code FALSE} when not, or
+     * null when it cannot answer (absent, failed, not on the main thread, player not known to Bukkit, or the call threw
+     * inside Bukkit).
      */
     public static synchronized Boolean hasPermission(EntityPlayerMP player, String node) {
         probe();
@@ -51,11 +68,44 @@ public final class BukkitBridge {
         try {
             Object bukkit = bukkitPlayer(player);
             if (bukkit == null) return null;
-            return (Boolean) hasPermission.invoke(bukkit, node);
+            return explicitGrant(bukkit, isPermissionSet, hasPermission, node);
         } catch (ReflectiveOperationException | ClassCastException | IllegalArgumentException e) {
-            fail(e);
-            return null;
+            return failed(e);
         }
+    }
+
+    /** Set and true: a node the player holds by a grant, never by Bukkit's op default for unregistered nodes. */
+    static Boolean explicitGrant(Object permissible, Method isSet, Method has, String node)
+        throws IllegalAccessException, InvocationTargetException {
+        if (!Boolean.TRUE.equals(isSet.invoke(permissible, node))) return Boolean.FALSE;
+        return Boolean.TRUE.equals(has.invoke(permissible, node));
+    }
+
+    /**
+     * A failed call: an exception thrown inside Bukkit or its permission plugin ({@link InvocationTargetException})
+     * loses this answer only; anything else means our reflection does not fit this server, and the bridge goes off.
+     * Returns null, the "cannot answer" value.
+     */
+    static Boolean failed(Exception e) {
+        if (e instanceof InvocationTargetException) {
+            transientFailure(e.getCause() == null ? e : e.getCause());
+        } else {
+            fail(e);
+        }
+        return null;
+    }
+
+    private static void transientFailure(Throwable cause) {
+        transientFailures++;
+        long now = System.nanoTime();
+        if (lastTransientLogNs != 0 && now - lastTransientLogNs < TRANSIENT_LOG_INTERVAL_NS) return;
+        lastTransientLogNs = now;
+        AkashicWeb.LOG.warn(
+            "AkashicWeb: Bukkit permission check threw ({}); {} answer(s) unknown since the last report, the bridge"
+                + " stays on",
+            cause.toString(),
+            transientFailures);
+        transientFailures = 0;
     }
 
     private static Object bukkitPlayer(EntityPlayerMP player) throws ReflectiveOperationException {
@@ -84,6 +134,7 @@ public final class BukkitBridge {
         try {
             Class<?> permissible = Class.forName("org.bukkit.permissions.Permissible", false, cl);
             hasPermission = permissible.getMethod("hasPermission", String.class);
+            isPermissionSet = permissible.getMethod("isPermissionSet", String.class);
             getBukkitEntity = findNoArg(EntityPlayerMP.class, "getBukkitEntity");
             try {
                 bukkitGetPlayer = bukkit.getMethod("getPlayer", UUID.class);
@@ -127,5 +178,8 @@ public final class BukkitBridge {
         getBukkitEntity = null;
         bukkitGetPlayer = null;
         hasPermission = null;
+        isPermissionSet = null;
+        transientFailures = 0;
+        lastTransientLogNs = 0;
     }
 }

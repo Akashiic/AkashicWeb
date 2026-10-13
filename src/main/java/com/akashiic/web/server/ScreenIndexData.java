@@ -10,17 +10,20 @@ import net.minecraft.world.WorldSavedData;
 import com.akashiic.web.common.BlockSide;
 import com.akashiic.web.common.ScreenKey;
 import com.akashiic.web.common.TextSanitizer;
+import com.akashiic.web.common.net.NetCodec;
 
 /**
- * Saves the {@link ScreenIndex} in {@code data/akashicweb_screens.dat} of the overworld (the map storage every
- * dimension shares in 1.7.10). The index is a cache of what the tile entities say, so a lost or damaged file only
- * costs accuracy of {@code /webadmin list} and the per-player limit until chunks load again.
+ * Saves the {@link ScreenIndex} and the {@link KnownPlayers} in {@code data/akashicweb_screens.dat} of the overworld
+ * (the map storage every dimension shares in 1.7.10). The index is a cache of what the tile entities say, so a lost
+ * or damaged file only costs accuracy of {@code /webadmin list} and the per-player limit until chunks load again; the
+ * known players come back as they log in.
  */
 public final class ScreenIndexData extends WorldSavedData {
 
     public static final String NAME = "akashicweb_screens";
 
     public final ScreenIndex index = new ScreenIndex();
+    public final KnownPlayers players = new KnownPlayers();
 
     /** Called by MapStorage through reflection. */
     public ScreenIndexData(String name) {
@@ -45,6 +48,8 @@ public final class ScreenIndexData extends WorldSavedData {
             ScreenIndex.Entry e = read(list.getCompoundTagAt(i));
             if (e != null) index.put(e);
         }
+        readPlayers(tag, players);
+        index.noteEpoch(tag.getInteger("epochHighWater"));
     }
 
     @Override
@@ -52,6 +57,36 @@ public final class ScreenIndexData extends WorldSavedData {
         NBTTagList list = new NBTTagList();
         for (ScreenIndex.Entry e : index.all()) list.appendTag(write(e));
         tag.setTag("screens", list);
+        writePlayers(tag, players);
+        tag.setInteger("epochHighWater", index.epochHighWater());
+    }
+
+    static void writePlayers(NBTTagCompound tag, KnownPlayers players) {
+        NBTTagList list = new NBTTagList();
+        for (KnownPlayers.Entry e : players.all()) {
+            NBTTagCompound t = new NBTTagCompound();
+            t.setString("id", e.id.toString());
+            t.setString("name", e.name);
+            t.setLong("seen", e.seenMs);
+            list.appendTag(t);
+        }
+        tag.setTag("players", list);
+    }
+
+    /** Damaged entries are skipped; names are re-validated like names on the wire. */
+    static void readPlayers(NBTTagCompound tag, KnownPlayers players) {
+        players.clear();
+        NBTTagList list = tag.getTagList("players", 10);
+        for (int i = 0; i < list.tagCount(); i++) {
+            NBTTagCompound t = list.getCompoundTagAt(i);
+            String name = t.getString("name");
+            if (!NetCodec.isPlayerName(name)) continue;
+            try {
+                players.seen(UUID.fromString(t.getString("id")), name, t.getLong("seen"));
+            } catch (IllegalArgumentException e) {
+                // a damaged id: that player is simply unknown until they log in again
+            }
+        }
     }
 
     static NBTTagCompound write(ScreenIndex.Entry e) {

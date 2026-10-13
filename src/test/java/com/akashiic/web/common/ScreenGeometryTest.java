@@ -32,6 +32,26 @@ class ScreenGeometryTest {
         assertArrayEquals(new double[] { 5 - M, 5 - M, 5 - M, 6 + M, 6 + M, 6 + M }, none, 1e-9);
     }
 
+    /**
+     * Review finding: the renderer measures from the origin block, so a fixed 128 blocks culled a whole 64x64 screen
+     * for a viewer near its far corner, about 90 blocks from the origin.
+     */
+    @Test
+    void bigScreensRenderFromAsFarBeyondTheirFarCorner() {
+        ScreenState big = TestScreens.state(BlockSide.NORTH, 0, 64, 0, 64, 64, 0);
+        double d = ScreenGeometry.renderDistance(128, Arrays.asList(null, big));
+        double farCorner = Math.sqrt(64 * 64 + 64 * 64);
+        assertTrue(d >= 128 + farCorner, "a viewer 128 blocks beyond the far corner still sees it: " + d);
+        ScreenState small = TestScreens.state(BlockSide.NORTH, 0, 64, 0, 2, 2, 0);
+        assertEquals(
+            128 + farCorner + 1,
+            ScreenGeometry.renderDistance(128, Arrays.asList(small, big, null)),
+            1e-9,
+            "the largest face decides");
+        assertEquals(128 + Math.sqrt(8) + 1, ScreenGeometry.renderDistance(128, Arrays.asList(small)), 1e-9);
+        assertEquals(129, ScreenGeometry.renderDistance(128, Collections.<ScreenState>emptyList()), 1e-9);
+    }
+
     @Test
     void defaultResolutionFollowsTheFaceAspect() {
         int[] wide = ScreenGeometry.defaultResolution(16, 9, 0, 1280, 720);
