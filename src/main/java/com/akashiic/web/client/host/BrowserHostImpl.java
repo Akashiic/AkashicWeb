@@ -241,6 +241,12 @@ public final class BrowserHostImpl implements BrowserHost {
     }
 
     @Override
+    public String lastFailureDetail() {
+        String d = supervisor.lastFailureDetail();
+        return d == null ? "" : d;
+    }
+
+    @Override
     public List<String> diagnostics() {
         List<String> out = new ArrayList<>(supervisor.diagnostics());
         out.add("host log dir: " + config.logDir.getAbsolutePath());

@@ -88,6 +88,7 @@ class HostSupervisorTest {
                 1,
                 h.supervisor()
                     .launches());
+            assertEquals("", h.lastFailureDetail(), "no failure yet");
             assertTrue(
                 h.diagnostics()
                     .stream()
@@ -679,6 +680,7 @@ class HostSupervisorTest {
             String detail = h.supervisor()
                 .lastFailureDetail();
             assertTrue(detail.contains("forbidden switch") && detail.contains("exit code 65"), detail);
+            assertEquals(detail, h.lastFailureDetail(), "BrowserHost.lastFailureDetail is the supervisor's");
             Thread.sleep(300);
             assertEquals(
                 1,

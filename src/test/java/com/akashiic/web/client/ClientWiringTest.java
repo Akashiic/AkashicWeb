@@ -92,6 +92,23 @@ class ClientWiringTest {
         assertEquals(Arrays.asList("reenable"), host.calls);
     }
 
+    /**
+     * The installer gets the host's last failure detail, the launch error itself, not the whole diagnostics (status,
+     * paths and per-screen lines, where an unrelated "error=NNNN" could be misread as a Windows block).
+     */
+    @Test
+    void aLaunchFailureVerifiesTheEngineWithTheHostsLastFailureDetail() {
+        FakeLocator locator = new FakeLocator();
+        locator.state = READY;
+        ClientWiring w = new ClientWiring(locator, new File("/games/forbidden"));
+        StubHost host = new StubHost();
+        host.detail = "LAUNCH_FAILED: java.io.IOException: Cannot run program \"AkashicWebHost.exe\": "
+            + "CreateProcess error=225, Operation did not complete successfully";
+        host.status = HostStatus.disabled(ReasonCode.HOST_LAUNCH_FAILED);
+        w.tick(locator.state, host);
+        assertEquals(Arrays.asList("verify " + host.detail), locator.calls);
+    }
+
     @Test
     void watcherRules() {
         ServiceWatcher sw = new ServiceWatcher();
@@ -134,11 +151,20 @@ class ClientWiringTest {
             "no verify of an engine that is not READY");
     }
 
-    /** A BrowserHost that records reenable() and reports a launch error in its diagnostics. */
-    static final class StubHost implements BrowserHost {
+    /**
+     * A BrowserHost that records reenable() and reports a launch error in its diagnostics, and {@link #detail} as its
+     * last failure detail ("" by default, so the diagnostics are the fallback).
+     */
+    static class StubHost implements BrowserHost {
 
         final List<String> calls = new ArrayList<>();
         HostStatus status = HostStatus.READY;
+        String detail = "";
+
+        @Override
+        public String lastFailureDetail() {
+            return detail;
+        }
 
         @Override
         public HostStatus status() {

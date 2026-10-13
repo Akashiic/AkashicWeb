@@ -43,5 +43,6 @@
 
 ### Changed (2026-10-13, W3-0 integration follow-ups)
 - The host supervisor reads the host's exit code: 65 (forbidden switch) disables with `HOST_FORBIDDEN_SWITCH`, 64 (bad argument) disables with `HOST_LAUNCH_FAILED`, 67 is `HOST_CONNECT_FAILED`, 66 `HOST_HANDSHAKE`, 68/69 `HOST_PROTOCOL_ERROR` (68 before WELCOME: `HOST_HANDSHAKE`); it waits at most 500 ms on its own thread for the code of a host whose connection dropped. Evidence: BUILD / AUTOMATED (Linux), `HostSupervisorTest` with fake hosts.
+- `BrowserHost.lastFailureDetail()` (default ""); the engine check after a failed launch now gets that detail (the launch error text) instead of all of `/web doctor`'s host lines.
 
 No release yet.

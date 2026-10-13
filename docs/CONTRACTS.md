@@ -78,6 +78,7 @@ Callback threads (wave 2): host messages arrive on the reader thread, `onStatus`
 Wave-2 additions to the M2 contract:
 - `BrowserHost.shutdown()` blocks for up to about 3.5 s; call it at game exit only. The other methods never block.
 - New default methods: `BrowserHost.reenable()`, `BrowserHost.diagnostics()` and `FrameRing.requeue(FrameSlot)`, which returns a slot that was taken but not uploaded so its damage is kept.
+- W3-0: default method `BrowserHost.lastFailureDetail()` ("" when none): the launch error text, exit code or protocol problem of the last host failure. `ClientWiring` passes it to `EngineLocator.verifyAfterLoadFailure(String)` (the diagnostics only when it is empty).
 - `FrameSlot.MAX_DIMENSION = 4096`; the constructor rejects sizes below 0 or above it.
 - `HostProtocol.read()` throws `EOFException` when a stream is cut inside the magic bytes.
 - URLs are checked locally before they leave the JVM (see PROTOCOL.md section 1). The policy is deny-all until `policy()` is called. An empty URL gives a blank page.
