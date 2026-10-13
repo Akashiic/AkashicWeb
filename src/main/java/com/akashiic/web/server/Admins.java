@@ -10,8 +10,9 @@ import com.akashiic.web.common.WebSettings;
 import com.mojang.authlib.GameProfile;
 
 /**
- * Who is a screen admin (ADR-010): a server operator (if {@code opsAreAdmins}), a player holding the Bukkit node
- * {@code akashicweb.admin} (Crucible + LuckPerms, by reflection on the main thread), or a UUID in the config list.
+ * Who is a screen admin (ADR-010): a server operator (if {@code opsAreAdmins}), a player explicitly granted the Bukkit
+ * node {@code akashicweb.admin} (Crucible + LuckPerms, by reflection on the main thread; Bukkit's op default for
+ * unregistered nodes does not count, see {@link BukkitBridge}), or a UUID in the config list.
  * FakePlayers never are. Re-checked on every action and inside every command, because Crucible bypasses
  * canCommandSenderUseCommand for mod commands.
  */
