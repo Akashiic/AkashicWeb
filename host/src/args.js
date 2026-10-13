@@ -71,18 +71,64 @@ function parseArgs(argv) {
   };
 }
 
-// Switches that open a debugging channel into the host or weaken the web sandbox. Java never passes
-// them; if one is present the launch was tampered with, so the host refuses to run.
+// Two rules, chosen by main.js from app.isPackaged:
+//
+// PACKAGED (the renamed AkashicWebHost(.exe) running from resources/app of an installed engine, i.e.
+// every player's host): an ALLOWLIST. Java passes nothing but --akw-* switches, so any other argument
+// (a Chromium switch, a Node option, a positional argument) means the launch was tampered with and the
+// host refuses to run. A denylist cannot keep up with Chromium's switches (--host-resolver-rules,
+// --proxy-server, --ignore-certificate-errors, --renderer-cmd-prefix, ...).
+//
+// UNPACKAGED (`electron <dir>`: development and the integration test, which needs --no-sandbox as root,
+// --host-resolver-rules and --proxy-server): a DENYLIST of the switches that open a debugging channel,
+// launch other code or switch web security off.
+const AKW_SWITCH_RE = /^--akw-[a-z0-9-]+(=[\s\S]*)?$/;
 const FORBIDDEN_EVERYWHERE = [
   'remote-debugging-port', 'remote-debugging-pipe', 'remote-debugging-address', 'remote-allow-origins',
   'inspect', 'inspect-brk', 'inspect-port', 'inspect-publish-uid', 'debug', 'debug-brk',
   'disable-web-security', 'allow-file-access-from-files', 'user-data-dir', 'load-extension',
+  'ignore-certificate-errors', 'ignore-certificate-errors-spki-list', 'disable-site-isolation-trials',
+  'unsafely-treat-insecure-origin-as-secure', 'renderer-cmd-prefix', 'gpu-launcher', 'utility-cmd-prefix',
+  'browser-subprocess-path', 'js-flags',
 ];
-// The renderer sandbox is a hard requirement on Windows (ADR-013). Linux tier 2 and the Linux test
-// harness may need --no-sandbox when running as root, so it is only forbidden on win32.
+// The renderer sandbox is a hard requirement on Windows (ADR-013). The Linux test harness needs
+// --no-sandbox when running as root, so in unpackaged mode it is only forbidden on win32.
 const FORBIDDEN_ON_WINDOWS = ['no-sandbox', 'disable-gpu-sandbox', 'no-zygote'];
+// Environment variables that make Electron/Node log to stdout/stderr without a cap or change how the
+// app runs. Java builds the host environment without any NODE_*/ELECTRON_* variable (ADR-001
+// amendment), so in a packaged host their presence is a broken or tampered launch.
+const FORBIDDEN_ENV_PACKAGED = ['ELECTRON_ENABLE_LOGGING', 'ELECTRON_LOG_FILE', 'ELECTRON_ENABLE_STACK_DUMPING',
+  'ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS', 'NODE_DEBUG'];
 
-/** Returns the forbidden switch names present in argv (empty when the command line is clean). */
+/** Name of a switch argument ("--x=1" -> "x"), for logs that must not echo values. */
+function switchName(raw) {
+  const m = /^(?:--|-|\/)([A-Za-z0-9_-]+)/.exec(raw);
+  return m ? m[1] : '<argument>';
+}
+
+/**
+ * Arguments the host must refuse, as names safe to log. `args` is process.argv without argv[0] (the
+ * executable) plus process.execArgv; options: packaged, platform.
+ */
+function findDisallowedArgs(args, options) {
+  const opts = options || {};
+  if (!opts.packaged) return findForbiddenSwitches(args, opts.platform);
+  const found = [];
+  for (const raw of args) {
+    if (typeof raw === 'string' && AKW_SWITCH_RE.test(raw)) continue;
+    const name = typeof raw === 'string' ? switchName(raw) : '<argument>';
+    if (!found.includes(name)) found.push(name);
+  }
+  return found;
+}
+
+/** Names of forbidden environment variables (packaged hosts only). */
+function findForbiddenEnv(env, packaged) {
+  if (!packaged || !env) return [];
+  return FORBIDDEN_ENV_PACKAGED.filter(k => Object.prototype.hasOwnProperty.call(env, k));
+}
+
+/** Returns the forbidden switch names present in argv (unpackaged denylist rule). */
 function findForbiddenSwitches(argv, platform) {
   const names = FORBIDDEN_EVERYWHERE.concat(platform === 'win32' ? FORBIDDEN_ON_WINDOWS : []);
   const win = platform === 'win32';
@@ -98,4 +144,4 @@ function findForbiddenSwitches(argv, platform) {
   return found;
 }
 
-module.exports = { EXIT, ArgError, parseArgs, findForbiddenSwitches };
+module.exports = { EXIT, ArgError, parseArgs, findForbiddenSwitches, findDisallowedArgs, findForbiddenEnv };

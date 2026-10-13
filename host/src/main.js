@@ -18,7 +18,7 @@ const crypto = require('crypto');
 const { app, Menu } = require('electron');
 const pkg = require('../package.json');
 const P = require('./protocol');
-const { EXIT, parseArgs, findForbiddenSwitches } = require('./args');
+const { EXIT, parseArgs, findDisallowedArgs, findForbiddenEnv } = require('./args');
 const { readToken } = require('./token');
 const { createLogger } = require('./log');
 const { Link } = require('./link');
@@ -73,11 +73,16 @@ process.on('uncaughtException', err => {
 process.on('unhandledRejection', err => log.warn('unhandled rejection', err));
 for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => shutdown('signal-' + sig, EXIT.OK));
 
-const forbidden = args ? findForbiddenSwitches(process.argv.concat(process.execArgv || []), process.platform) : [];
+// Packaged (renamed, installed) hosts accept only --akw-* arguments; unpackaged test runs use a denylist.
+const forbidden = args
+  ? findDisallowedArgs(process.argv.slice(1).concat(process.execArgv || []), { packaged: app.isPackaged, platform: process.platform })
+    .concat(findForbiddenEnv(process.env, app.isPackaged))
+  : [];
 const allowFile = !!(args && args.testAllowFile && !app.isPackaged);
 
 if (args && forbidden.length > 0) {
-  log.error('refusing to run with forbidden switches: ' + forbidden.join(', '));
+  log.error('refusing to run with forbidden ' + (app.isPackaged ? 'arguments (packaged host: only --akw-* is accepted)' : 'switches')
+    + ': ' + forbidden.join(', '));
   app.exit(EXIT.FORBIDDEN_SWITCH);
 } else if (args && configureApp()) {
   main().catch(err => {
