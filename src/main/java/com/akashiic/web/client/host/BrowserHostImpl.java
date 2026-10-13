@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -256,11 +257,20 @@ public final class BrowserHostImpl implements BrowserHost {
     private void rejectUrl(int screenId, String url) {
         LOG.warn("AkashicWeb: refusing to send a non-http(s) or malformed URL to the host (screen {})", screenId);
         String json = JsonWriter.object("kind", "blocked-url", "detail", "scheme");
+        deliver("event", l -> l.onEvent(screenId, json));
+    }
+
+    /**
+     * Calls every listener, each isolated: whatever one throws (a RuntimeException, or an Error such as a
+     * NoClassDefFoundError from game code) is logged and the others still run, and neither the reader thread nor the
+     * supervisor thread is taken down by it.
+     */
+    private void deliver(String what, Consumer<HostListener> call) {
         for (HostListener l : listeners) {
             try {
-                l.onEvent(screenId, json);
-            } catch (RuntimeException e) {
-                LOG.error("AkashicWeb: host listener failed", e);
+                call.accept(l);
+            } catch (Throwable t) {
+                LOG.error("AkashicWeb: host listener failed (" + what + ")", t);
             }
         }
     }
@@ -295,13 +305,7 @@ public final class BrowserHostImpl implements BrowserHost {
 
         @Override
         public void onStatus(HostStatus status) {
-            for (HostListener l : listeners) {
-                try {
-                    l.onStatus(status);
-                } catch (RuntimeException e) {
-                    LOG.error("AkashicWeb: host listener failed", e);
-                }
-            }
+            deliver("status", l -> l.onStatus(status));
         }
     }
 
@@ -317,46 +321,22 @@ public final class BrowserHostImpl implements BrowserHost {
         @Override
         public void onPcm(int screenId, PcmChunk c) {
             if (!screens.containsKey(screenId)) return;
-            for (HostListener l : listeners) {
-                try {
-                    l.onPcm(screenId, c.ptsMicros, c.sampleRate, c.channels, c.interleaved, c.frames);
-                } catch (RuntimeException e) {
-                    LOG.error("AkashicWeb: host PCM listener failed", e);
-                }
-            }
+            deliver("pcm", l -> l.onPcm(screenId, c.ptsMicros, c.sampleRate, c.channels, c.interleaved, c.frames));
         }
 
         @Override
         public void onState(int screenId, String json) {
-            for (HostListener l : listeners) {
-                try {
-                    l.onState(screenId, json);
-                } catch (RuntimeException e) {
-                    LOG.error("AkashicWeb: host listener failed", e);
-                }
-            }
+            deliver("state", l -> l.onState(screenId, json));
         }
 
         @Override
         public void onMedia(int screenId, String json) {
-            for (HostListener l : listeners) {
-                try {
-                    l.onMedia(screenId, json);
-                } catch (RuntimeException e) {
-                    LOG.error("AkashicWeb: host listener failed", e);
-                }
-            }
+            deliver("media", l -> l.onMedia(screenId, json));
         }
 
         @Override
         public void onEvent(int screenId, String json) {
-            for (HostListener l : listeners) {
-                try {
-                    l.onEvent(screenId, json);
-                } catch (RuntimeException e) {
-                    LOG.error("AkashicWeb: host listener failed", e);
-                }
-            }
+            deliver("event", l -> l.onEvent(screenId, json));
         }
     }
 }

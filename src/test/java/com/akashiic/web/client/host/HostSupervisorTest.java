@@ -11,6 +11,7 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -396,6 +397,125 @@ class HostSupervisorTest {
         ProcessControl pc = ProcessControl.forThisPlatform();
         await("host process gone", 10_000, () -> pc.imageName(pid) == null);
         assertNull(h.frames(1));
+    }
+
+    /**
+     * Review finding (high), at the supervisor: an Error escaping into the reader thread (here from the inbound
+     * handler, bypassing BrowserHostImpl's listener isolation) used to kill the reader without closing the connection:
+     * READY forever, frozen frames, no relaunch. Now the run ends visibly and the host is relaunched.
+     */
+    @Test
+    void anErrorOnTheReaderThreadEndsTheRunAndTheHostIsRelaunched() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "ok");
+        AtomicInteger states = new AtomicInteger();
+        HostConnection.Inbound inbound = new NullInbound() {
+
+            @Override
+            public void onState(int screenId, String json) {
+                if (states.incrementAndGet() == 1) throw new NoClassDefFoundError("simulated linkage error on STATE");
+            }
+        };
+        HostSupervisor s = new HostSupervisor(
+            f.config()
+                .build(),
+            f.clock,
+            ProcessControl.forThisPlatform(),
+            inbound,
+            new Callbacks(f, false));
+        try {
+            s.start();
+            await("relaunch after the reader died", 60_000, () -> s.launches() == 2 && s.status() == HostStatus.READY);
+            assertTrue(f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_EXITED), f.statuses.seen.toString());
+            await("STATE from the second host", 20_000, () -> states.get() >= 2);
+            assertEquals(Collections.singletonList(1000L), f.clock.sleeps());
+        } finally {
+            s.shutdown();
+        }
+    }
+
+    /**
+     * Review finding (medium): status listeners and the connect callback run on the supervisor thread. An Error from
+     * them (only RuntimeException was caught) killed that thread, leaving STARTING or READY with no host and no
+     * relaunch for the rest of the session.
+     */
+    @Test
+    void errorsFromStatusListenersAndCallbacksNeverStopTheSupervisor() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "ok");
+        Callbacks callbacks = new Callbacks(f, true);
+        HostSupervisor s = new HostSupervisor(
+            f.config()
+                .build(),
+            f.clock,
+            ProcessControl.forThisPlatform(),
+            new NullInbound(),
+            callbacks);
+        try {
+            s.start();
+            // First run: onConnected throws an AssertionError, so the run ends and the host is relaunched; every
+            // onStatus throws a NoClassDefFoundError, yet each status is still published.
+            await("READY on the second launch", 60_000, () -> s.status() == HostStatus.READY && s.launches() == 2);
+            assertTrue(f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_EXITED), f.statuses.seen.toString());
+            assertTrue(f.statuses.saw(HostStatus.Kind.READY, ReasonCode.OK));
+            // The supervisor still handles a host exit afterwards.
+            callbacks.connection.sendAction(1, "stop"); // the fake host "crashes" on stop
+            await("third launch", 60_000, () -> s.launches() == 3 && s.status() == HostStatus.READY);
+        } finally {
+            s.shutdown();
+        }
+    }
+
+    /** Inbound that ignores everything (frames discarded). */
+    static class NullInbound implements HostConnection.Inbound {
+
+        @Override
+        public FramePipeline framesFor(int screenId) {
+            return null;
+        }
+
+        @Override
+        public void onPcm(int screenId, PcmChunk chunk) {}
+
+        @Override
+        public void onState(int screenId, String json) {}
+
+        @Override
+        public void onMedia(int screenId, String json) {}
+
+        @Override
+        public void onEvent(int screenId, String json) {}
+    }
+
+    /** Sends WELCOME and one CREATE per connection; optionally throws Errors like a broken game listener would. */
+    static final class Callbacks implements HostSupervisor.Callbacks {
+
+        final FakeHostFixture f;
+        final boolean hostile;
+        final AtomicInteger connects = new AtomicInteger();
+        volatile HostConnection connection;
+
+        Callbacks(FakeHostFixture f, boolean hostile) {
+            this.f = f;
+            this.hostile = hostile;
+        }
+
+        @Override
+        public void onConnected(HostConnection c, HelloInfo hello) {
+            if (hostile && connects.incrementAndGet() == 1) throw new AssertionError("simulated callback failure");
+            c.sendWelcome(null, "pt-BR", null);
+            c.sendCreate(
+                1,
+                new CreateSpec(16, 16, 30, "about:blank", CreateSpec.Session.SHARED, CreateSpec.Audio.OS, 0f));
+            connection = c;
+        }
+
+        @Override
+        public void onDisconnected(HostConnection c) {}
+
+        @Override
+        public void onStatus(HostStatus status) {
+            f.statuses.onStatus(status);
+            if (hostile) throw new NoClassDefFoundError("simulated status listener failure");
+        }
     }
 
     private static List<String> lines(FakeHostFixture f) {

@@ -269,12 +269,24 @@ public final class HostSupervisor {
             }
             Thread.interrupted(); // drop an interrupt meant for a sleep that already ended
 
-            List<String> command = config.executable.command();
-            if (command == null || command.isEmpty()) {
-                disable(HostFailure.ENGINE_UNAVAILABLE, config.executable.unavailableReason(), "engine not ready");
+            List<String> command;
+            ReasonCode unavailable;
+            boolean noUserData;
+            try {
+                command = config.executable.command();
+                unavailable = command == null || command.isEmpty() ? config.executable.unavailableReason() : null;
+                noUserData = config.executable.userDataDir() == null;
+            } catch (Throwable t) {
+                // Boundary: the engine locator is another module's code; whatever it throws, keep supervising.
+                LOG.error("AkashicWeb: the engine locator failed", t);
+                disable(HostFailure.ENGINE_UNAVAILABLE, ReasonCode.ENGINE_ABSENT, "engine locator failed: " + t);
                 continue;
             }
-            if (config.executable.userDataDir() == null) {
+            if (command == null || command.isEmpty()) {
+                disable(HostFailure.ENGINE_UNAVAILABLE, unavailable, "engine not ready");
+                continue;
+            }
+            if (noUserData) {
                 disable(HostFailure.ENGINE_UNAVAILABLE, ReasonCode.ENGINE_ABSENT, "no user data directory");
                 continue;
             }
@@ -282,10 +294,12 @@ public final class HostSupervisor {
             RunResult r;
             try {
                 r = runOnce(command);
-            } catch (RuntimeException e) {
-                // Boundary: a bug in one run must not kill the supervisor and leave the game without a host forever.
-                LOG.error("AkashicWeb: host run failed unexpectedly", e);
-                r = new RunResult(HostFailure.PROTOCOL_ERROR, "internal: " + e, false);
+            } catch (Throwable t) {
+                // Boundary: a bug or an Error in one run (a callback's LinkageError, an OutOfMemoryError) must not kill
+                // the supervisor and leave the game without a host, or with a stale READY, for the rest of the session.
+                // runOnce's finally has already closed the connection and stopped the process.
+                LOG.error("AkashicWeb: host run failed unexpectedly", t);
+                r = new RunResult(HostFailure.INTERNAL_ERROR, "internal: " + t, false);
             }
             if (isStopping()) break;
 
@@ -578,9 +592,9 @@ public final class HostSupervisor {
         if (old != null && old.kind == s.kind && old.reason == s.reason) return;
         try {
             callbacks.onStatus(s);
-        } catch (RuntimeException e) {
-            // Boundary: a broken status listener must not stop the supervisor.
-            LOG.error("AkashicWeb: host status listener failed", e);
+        } catch (Throwable t) {
+            // Boundary: whatever a status listener throws, even an Error, the supervisor keeps supervising.
+            LOG.error("AkashicWeb: host status listener failed", t);
         }
     }
 
@@ -588,9 +602,9 @@ public final class HostSupervisor {
         try {
             int killed = new StaleHostSweeper(pidFile, processes, ourPid).sweep();
             if (killed > 0) LOG.info("AkashicWeb: ended {} browser host(s) left by an earlier session", killed);
-        } catch (RuntimeException e) {
+        } catch (Throwable t) {
             // Boundary: the sweep is best effort and must never keep the host from starting.
-            LOG.warn("AkashicWeb: stale host sweep failed: {}", e.toString());
+            LOG.warn("AkashicWeb: stale host sweep failed: {}", t.toString());
         }
     }
 

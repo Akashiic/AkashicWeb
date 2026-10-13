@@ -242,6 +242,72 @@ class BrowserHostImplTest {
                 .launches());
     }
 
+    /**
+     * Review findings (high, medium): listeners were isolated against RuntimeException only, so an Error from game
+     * code (NoClassDefFoundError, AssertionError, StackOverflowError) escaped into the reader or the supervisor
+     * thread. Each listener is now isolated against any Throwable: the others get every callback and nothing stops.
+     */
+    @Test
+    void listenerErrorsAreIsolatedFromTheOthersAndFromTheThreads() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "ok");
+        BrowserHostImpl h = new BrowserHostImpl(
+            f.config()
+                .build(),
+            f.clock,
+            ProcessControl.forThisPlatform());
+        h.addListener(new HostListener() {
+
+            @Override
+            public void onStatus(HostStatus status) {
+                throw new StackOverflowError("simulated");
+            }
+
+            @Override
+            public void onState(int screenId, String json) {
+                throw new NoClassDefFoundError("simulated");
+            }
+
+            @Override
+            public void onEvent(int screenId, String json) {
+                throw new AssertionError("simulated");
+            }
+
+            @Override
+            public void onPcm(int screenId, long ptsMicros, int sampleRate, int channels, short[] interleaved,
+                int frames) {
+                throw new NoClassDefFoundError("simulated");
+            }
+        });
+        Events ev = new Events();
+        h.addListener(ev);
+        h.addListener(f.statuses);
+        try {
+            h.start();
+            await("READY", 60_000, () -> h.status().kind == HostStatus.Kind.READY);
+            int id = h.createScreen(
+                new CreateSpec(32, 16, 30, "about:blank", CreateSpec.Session.SHARED, CreateSpec.Audio.OS, 0f));
+            await("STATE to the healthy listener", 20_000, () -> !ev.states.isEmpty());
+            await("PCM to the healthy listener", 20_000, () -> ev.pcm.get() != null);
+            h.navigate(id, "javascript:alert(1)"); // local blocked-url EVENT, delivered on this thread
+            assertEquals(1, ev.events.size());
+            assertEquals(HostStatus.Kind.READY, h.status().kind);
+            assertEquals(
+                1,
+                h.supervisor()
+                    .launches(),
+                "the connection survived every listener Error");
+            h.action(id, "stop"); // the fake host "crashes": the supervisor still relaunches
+            await(
+                "relaunch",
+                60_000,
+                () -> h.supervisor()
+                    .launches() == 2 && h.status().kind == HostStatus.Kind.READY);
+            assertTrue(f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_EXITED));
+        } finally {
+            h.shutdown();
+        }
+    }
+
     @Test
     void pointerCoordinatesAreClampedToThePage() {
         InputEvent e = new InputEvent(InputEvent.Type.MOUSE_DOWN, -3, 900, "right", 2, 0, 0, null, 0, null);
