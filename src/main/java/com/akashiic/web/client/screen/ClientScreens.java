@@ -999,6 +999,8 @@ public final class ClientScreens {
         int id = s.hostScreenId;
         if (id == 0) return;
         if (host != null) {
+            // The held slot goes back while the ring still exists: M2 drops a destroyed id's ring.
+            releaseHeldSlot(s, host);
             try {
                 host.audio(id, true, 0f);
                 host.destroyScreen(id);
@@ -1010,12 +1012,16 @@ public final class ClientScreens {
         forgetBrowser(s, host);
     }
 
+    private static void releaseHeldSlot(ClientScreen s, BrowserHost host) {
+        if (s.heldSlot == null || host == null) return;
+        FrameRing ring = host.frames(s.hostScreenId);
+        if (ring != null) ring.release(s.heldSlot);
+        s.heldSlot = null;
+    }
+
     private void forgetBrowser(ClientScreen s, BrowserHost host) {
         if (s.hostScreenId == 0) return;
-        if (s.heldSlot != null && host != null) {
-            FrameRing ring = host.frames(s.hostScreenId);
-            if (ring != null) ring.release(s.heldSlot);
-        }
+        releaseHeldSlot(s, host);
         s.heldSlot = null;
         byHostId.remove(s.hostScreenId);
         s.hostScreenId = 0;

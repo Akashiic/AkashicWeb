@@ -36,20 +36,36 @@ public final class FrameUploader {
     private final LongSupplier timeMs;
     private final Supplier<TextureTarget> textures;
     private final IntSupplier maxTextureSize;
-    private final UploadBudget budget = new UploadBudget(UploadBudget.DEFAULT_BYTES_PER_FRAME);
+    private final UploadBudget budget;
+    private final UploadScope scope;
+    private boolean scopeEntered;
     private final UploadStats stats = new UploadStats();
 
     /** The game's uploader: GL textures, GL_MAX_TEXTURE_SIZE from the driver. */
     public FrameUploader(ClientScreens screens, LongSupplier timeMs) {
-        this(screens, timeMs, ScreenTexture::new, ScreenTexture::maxTextureSize);
+        this(
+            screens,
+            timeMs,
+            ScreenTexture::new,
+            ScreenTexture::maxTextureSize,
+            UploadBudget.DEFAULT_BYTES_PER_FRAME,
+            new UploadScope.UnpackBuffer());
     }
 
     FrameUploader(ClientScreens screens, LongSupplier timeMs, Supplier<TextureTarget> textures,
         IntSupplier maxTextureSize) {
+        this(screens, timeMs, textures, maxTextureSize, UploadBudget.DEFAULT_BYTES_PER_FRAME, UploadScope.NONE);
+    }
+
+    /** Tests: a small budget forces the skip-and-carry paths with small pages; the scope stands in for GL state. */
+    FrameUploader(ClientScreens screens, LongSupplier timeMs, Supplier<TextureTarget> textures,
+        IntSupplier maxTextureSize, long budgetBytesPerFrame, UploadScope scope) {
         this.screens = screens;
         this.timeMs = timeMs;
         this.textures = textures;
         this.maxTextureSize = maxTextureSize;
+        this.budget = new UploadBudget(budgetBytesPerFrame);
+        this.scope = scope;
     }
 
     public UploadStats stats() {
@@ -65,7 +81,14 @@ public final class FrameUploader {
         for (ClientScreen s : screens.all()) {
             if (s.hostScreenId() != 0) entries.add(new UploadBudget.Entry<>(s, s.uploadPriority(), s.skippedFrames));
         }
-        for (ClientScreen s : UploadBudget.order(entries)) uploadOne(s, host);
+        try {
+            for (ClientScreen s : UploadBudget.order(entries)) uploadOne(s, host);
+        } finally {
+            if (scopeEntered) {
+                scopeEntered = false;
+                scope.end();
+            }
+        }
     }
 
     private void uploadOne(ClientScreen s, BrowserHost host) {
@@ -142,6 +165,10 @@ public final class FrameUploader {
         }
         long t0 = System.nanoTime();
         try {
+            if (!scopeEntered) {
+                scopeEntered = true; // set first: end() runs even if begin() throws half-way
+                scope.begin(); // once per frame, only when something is uploaded
+            }
             if (plan.kind == UploadPlan.Kind.ALLOCATE) {
                 if (s.texture == null) s.texture = textures.get();
                 s.texture.allocate(slot.width, slot.height);

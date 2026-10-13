@@ -466,9 +466,14 @@ class ClientScreensTest {
         hello();
         screens.onScreenState(screen(0, 2, 2, "https://a.example/", 1));
         tick();
+        host.calls.clear();
         host.status = HostStatus.down(ReasonCode.HOST_EXITED);
         tick();
         assertEquals(0, first().hostScreenId());
+        // Destroyed, not just forgotten: M2 replays every record it still holds (CREATE plus the last AUDIO), which
+        // would leave an orphan browser playing at its last volume (review mutation survivor).
+        int mute = host.indexOf("audio 1 muted");
+        assertTrue(mute >= 0 && host.indexOf("destroy 1") > mute, host.calls.toString());
         assertEquals(ReasonCode.HOST_EXITED.langKey(), screens.placeholder(first()).detailKey);
         assertEquals(1, host.created.size(), "nothing is created while the host is down");
         host.status = HostStatus.READY;
