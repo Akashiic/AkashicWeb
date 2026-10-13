@@ -55,6 +55,8 @@ public final class ClientScreen {
     long recreateAtMs;
     boolean reportedUrl;
     long lastUrlReportMs;
+    /** The page URL this controller reported last (C2SSetUrl), until the server's next URL arrives; null if none. */
+    String lastReportedUrl;
 
     /** prune() did not find the tile at its last pass, since {@link #missingSinceMs}. */
     boolean missing;

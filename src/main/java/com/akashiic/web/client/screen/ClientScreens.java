@@ -169,6 +169,10 @@ public final class ClientScreens {
         s.setState(state);
         if (state.epoch != old.epoch) newPage(s);
         BrowserHost host = access.started();
+        if (!hasPage(state.url)) {
+            noPage(s, host);
+            return;
+        }
         if (s.hostScreenId == 0 || host == null) {
             s.navigatedEpoch = state.epoch;
             return;
@@ -183,7 +187,7 @@ public final class ClientScreens {
             s.requestedW = size[0];
             s.requestedH = size[1];
         }
-        if (state.epoch != s.navigatedEpoch) navigate(s, host);
+        if (state.epoch != s.navigatedEpoch) followServerUrl(s, host);
     }
 
     /**
@@ -200,6 +204,11 @@ public final class ClientScreens {
         if (s != null) dispose(s);
     }
 
+    /**
+     * The server's URL and epoch (S2CUrl). An empty or non-web URL means "no page" (a fresh screen, or
+     * {@code /webadmin clear}): the browser is muted and destroyed and the picture dropped, so a cleared page stops
+     * playing on every client at once.
+     */
     public void onUrl(ScreenKey key, String url, int epoch) {
         ClientScreen s = screens.get(key);
         if (s == null || url == null || isOlder(epoch, s.state().epoch)) return;
@@ -209,8 +218,49 @@ public final class ClientScreens {
         if (!changed) return;
         newPage(s);
         BrowserHost host = access.started();
-        if (s.hostScreenId != 0 && host != null) navigate(s, host);
+        if (!hasPage(url)) noPage(s, host);
+        else if (s.hostScreenId != 0 && host != null) followServerUrl(s, host);
         else s.navigatedEpoch = epoch;
+    }
+
+    /**
+     * Brings our browser to the server's URL for a new epoch. S2CUrl goes to every tracker, the controller included,
+     * so the controller's own report comes back to it: navigating then would hard-reload the page it is already on
+     * (restarting the video every follower steers to), or pull it back from where it has moved on since. That echo
+     * is recognised as the URL we reported last and only adopted. A reload, back, forward, home or typed URL clears
+     * the remembered report first, so the same URL with a new epoch still navigates.
+     */
+    private void followServerUrl(ClientScreen s, BrowserHost host) {
+        String reported = s.lastReportedUrl;
+        s.lastReportedUrl = null;
+        if (reported != null && UrlConvergence.sameDocument(s.state().url, reported)) {
+            s.navigatedEpoch = s.state().epoch;
+            LOG.debug("AkashicWeb: {} epoch {} is our own report; not reloading", s.key, s.state().epoch);
+            return;
+        }
+        navigate(s, host);
+    }
+
+    /** True for a URL a browser should load (http or https); "" and anything else mean "no page". */
+    static boolean hasPage(String url) {
+        return url != null && UrlConvergence.isWeb(url);
+    }
+
+    /** Mute, destroy and drop the picture: the screen shows the "no address" card. */
+    private void noPage(ClientScreen s, BrowserHost host) {
+        destroyBrowser(s, host);
+        dropPicture(s);
+        s.clearFailure();
+        s.navigatedEpoch = s.state().epoch;
+    }
+
+    /** Client (GL) thread: packet work runs from ClientTaskQueue, drained at the tick and render-tick starts. */
+    private static void dropPicture(ClientScreen s) {
+        if (s.texture != null) s.texture.delete();
+        s.texture = null;
+        s.hasFrame = false;
+        s.carriedDamage = com.akashiic.web.client.render.Rect.EMPTY;
+        s.skippedFrames = 0;
     }
 
     public void onMediaClock(ScreenKey key, int epoch, double mediaTime, float rate, boolean paused,
@@ -506,21 +556,24 @@ public final class ClientScreens {
     }
 
     public void setUrl(ClientScreen s, String url) {
+        s.lastReportedUrl = null; // the echo of a typed URL must navigate, even to the page we reported last
         server.get()
             .setUrl(s.key, s.state().epoch, url);
     }
 
     /**
-     * Address bar navigation. The server validates and audits every action. Back, forward and stop have no
-     * server-to-client form in protocol v1, so the controller also applies them to its own browser at once; the
-     * resulting page is then reported like any controller navigation, and followers converge through the new epoch.
+     * Address bar navigation. The server validates and audits every action, and turns back, forward, home and reload
+     * into a URL change with a new epoch that reaches every viewer (S2CUrl), the controller included: applying back
+     * or forward locally as well would navigate the controller twice. Only "stop" (which the server ignores) is
+     * applied to our own browser, when we drive it.
      */
     public void nav(ClientScreen s, String action) {
+        s.lastReportedUrl = null; // a reload of the page we reported last must still reload
         server.get()
             .nav(s.key, s.state().epoch, action);
         BrowserHost host = access.started();
-        boolean local = "back".equals(action) || "forward".equals(action) || "stop".equals(action);
-        if (local && host != null && s.hostScreenId != 0 && isController(s)) host.action(s.hostScreenId, action);
+        if ("stop".equals(action) && host != null && s.hostScreenId != 0 && drivesPage(s))
+            host.action(s.hostScreenId, action);
     }
 
     public void control(ClientScreen s, boolean take) {
@@ -570,7 +623,8 @@ public final class ClientScreens {
     private Set<ScreenKey> grant() {
         List<BrowserBudget.Candidate<ScreenKey>> candidates = new ArrayList<>();
         for (ClientScreen s : screens.values()) {
-            if (s.geometry() == null || Double.isInfinite(s.distance)) continue;
+            // No page, no browser: a fresh or cleared screen must not spend a browser or a budget slot.
+            if (s.geometry() == null || Double.isInfinite(s.distance) || !hasPage(s.state().url)) continue;
             int dim = s.maxDimBlocks();
             candidates.add(
                 new BrowserBudget.Candidate<>(
@@ -697,6 +751,7 @@ public final class ClientScreens {
             s.reportedUrl)) return;
         s.reportedUrl = true;
         s.lastUrlReportMs = now;
+        s.lastReportedUrl = p.url;
         server.get()
             .setUrl(s.key, s.state().epoch, p.url);
     }
@@ -764,9 +819,7 @@ public final class ClientScreens {
 
     private void dispose(ClientScreen s) {
         destroyBrowser(s, access.started());
-        if (s.texture != null) s.texture.delete();
-        s.texture = null;
-        s.hasFrame = false;
+        dropPicture(s);
     }
 
     /** A new epoch: the clock, the reports and the crash history belong to the old page. */

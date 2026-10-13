@@ -14,6 +14,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import com.akashiic.web.client.gui.LangKeys;
 import com.akashiic.web.client.host.CreateSpec;
 import com.akashiic.web.client.host.HostStatus;
 import com.akashiic.web.client.host.InputEvent;
@@ -431,18 +432,148 @@ class ClientScreensTest {
     }
 
     @Test
-    void backAndForwardAlsoApplyLocallyOnTheController() {
+    void backAndForwardGoOnlyThroughTheServerSoTheControllerNavigatesOnce() {
         hello();
         ScreenState s = screen(0, 2, 2, "https://a.example/", 1);
         s.controller = ME;
         screens.onScreenState(s);
         tick();
+        host.calls.clear();
         screens.nav(first(), "back");
         assertEquals(1, server.count("nav 1 back"));
-        assertTrue(host.saw("action 1 back"));
+        assertFalse(host.saw("action 1 back"), "M4 turns back into a URL change for everyone");
+        screens.onUrl(s.key, "https://a.example/previous", 2); // the server's answer
+        assertEquals(Collections.singletonList("navigate 1 https://a.example/previous"), host.calls, "exactly once");
         screens.nav(first(), "reload");
-        assertEquals(1, server.count("nav 1 reload"));
+        assertEquals(1, server.count("nav 2 reload"));
         assertFalse(host.saw("action 1 reload"), "reload goes through the server for everyone");
+        screens.nav(first(), "stop");
+        assertTrue(host.saw("action 1 stop"), "the server ignores stop; the driver applies it");
+    }
+
+    /** Review high finding: the server echoes the controller's own URL report back to it with a new epoch. */
+    @Test
+    void theEchoOfOurOwnReportDoesNotReloadTheControllersPage() {
+        hello();
+        ScreenState s = screen(0, 2, 2, "https://www.youtube.com/", 1);
+        s.controller = ME;
+        screens.onScreenState(s);
+        tick();
+        int id = first().hostScreenId();
+        now[0] += UrlConvergence.NAVIGATE_SETTLE_MS;
+        screens.onHostState(id, new PageState("https://www.youtube.com/watch?v=abc", "", false, true, false, true));
+        assertEquals(1, server.count("setUrl 1 https://www.youtube.com/watch?v=abc"));
+        host.calls.clear();
+        screens.onUrl(s.key, "https://www.youtube.com/watch?v=abc", 2);
+        assertFalse(host.saw("navigate"), "the echo is adopted, not reloaded: " + host.calls);
+        assertEquals(2, first().state().epoch);
+        now[0] += 1_000;
+        screens.onHostState(id, new PageState("https://www.youtube.com/watch?v=abc", "", false, true, false, true));
+        assertEquals(1, server.count("setUrl"), "converged: nothing more to report");
+
+        // The page moved on (autoplay) before the echo of the previous report arrived: still no reload back.
+        now[0] += 1_000;
+        screens.onHostState(id, new PageState("https://www.youtube.com/watch?v=next", "", false, true, false, true));
+        assertEquals(1, server.count("setUrl 2 https://www.youtube.com/watch?v=next"));
+        screens.onHostState(id, new PageState("https://www.youtube.com/watch?v=third", "", false, true, false, true));
+        screens.onUrl(s.key, "https://www.youtube.com/watch?v=next", 3);
+        assertFalse(host.saw("navigate"), host.calls.toString());
+
+        // A reload of the same URL is a real navigation, even for the controller.
+        screens.nav(first(), "reload");
+        screens.onUrl(s.key, "https://www.youtube.com/watch?v=next", 4);
+        assertTrue(host.saw("navigate 1 https://www.youtube.com/watch?v=next"), host.calls.toString());
+    }
+
+    @Test
+    void followersAlwaysFollowTheServerUrl() {
+        hello();
+        ScreenState s = screen(0, 2, 2, "https://a.example/", 1);
+        s.controller = OTHER;
+        screens.onScreenState(s);
+        tick();
+        screens.onUrl(s.key, "https://a.example/next", 2);
+        assertTrue(host.saw("navigate 1 https://a.example/next"));
+        host.calls.clear();
+        ScreenState snapshot = screen(0, 2, 2, "https://a.example/again", 3);
+        snapshot.controller = OTHER;
+        screens.onScreenState(snapshot); // a description packet that overtook the S2CUrl
+        assertTrue(host.saw("navigate 1 https://a.example/again"));
+    }
+
+    /** Review high finding: {@code /webadmin clear} sets the URL to "" and must stop a page already playing. */
+    @Test
+    void anAdminClearStopsThePagePlayingOnEveryClient() {
+        hello();
+        ScreenState s = screen(0, 2, 2, "https://bad.example/offensive", 1);
+        screens.onScreenState(s);
+        tick();
+        ClientScreen cs = first();
+        RecordingPicture picture = new RecordingPicture();
+        cs.texture = picture;
+        cs.hasFrame = true;
+        host.calls.clear();
+        screens.onUrl(s.key, "", 2);
+        int mute = host.indexOf("audio 1 muted");
+        int destroy = host.indexOf("destroy 1");
+        assertTrue(mute >= 0 && destroy > mute, "muted first, then destroyed: " + host.calls);
+        assertFalse(host.saw("navigate"), "M2 refuses an empty URL and would keep the old page");
+        assertTrue(picture.deleted, "the last frame of the cleared page is not drawn any more");
+        assertFalse(cs.hasFrame);
+        assertEquals(LangKeys.NO_URL, screens.placeholder(cs).key);
+        tick();
+        tick();
+        assertEquals(1, host.created.size(), "no browser for a screen without a page");
+        screens.onUrl(s.key, "https://good.example/", 3);
+        tick();
+        assertEquals(2, host.created.size());
+        assertEquals("https://good.example/", host.created.get(1).url);
+    }
+
+    @Test
+    void aFreshScreenWithoutAnAddressGetsNoBrowser() {
+        hello();
+        screens.onScreenState(screen(0, 2, 2, "", 0));
+        tick();
+        assertTrue(host.created.isEmpty());
+        assertFalse(host.started, "nothing even starts the host");
+        assertEquals(LangKeys.NO_URL, screens.placeholder(first()).key);
+    }
+
+    /** A GL-free texture that records its deletion. */
+    static final class RecordingPicture implements com.akashiic.web.client.render.TextureTarget {
+
+        boolean deleted;
+
+        @Override
+        public int width() {
+            return 1;
+        }
+
+        @Override
+        public int height() {
+            return 1;
+        }
+
+        @Override
+        public boolean isAllocated() {
+            return !deleted;
+        }
+
+        @Override
+        public void allocate(int width, int height) {}
+
+        @Override
+        public void upload(java.nio.ByteBuffer canvas, int canvasW, int canvasH,
+            com.akashiic.web.client.render.Rect r) {}
+
+        @Override
+        public void bind() {}
+
+        @Override
+        public void delete() {
+            deleted = true;
+        }
     }
 
     @Test
