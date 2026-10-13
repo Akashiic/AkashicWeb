@@ -34,4 +34,7 @@
 - Integration fixes: one `ReasonCode` list (18 codes proposed by M1/M2/M3/M5 merged), every lang key in `en_US.lang` and `pt_BR.lang` (140 each), the client geometry now uses the server's `BlockSide` (the ceiling layout was mirrored), and the client destroys its browser ids when the host goes down so the host connection does not replay stale screens.
 - Evidence (Linux container only): `./gradlew build` green with 440 JUnit tests (2 env-gated skips); `node --test` 123 unit + 29 Electron 44.7.0 integration tests pass under Xvfb; all 321 classes in the jar are major 52; no natives in the jar. Not run: Windows, a Minecraft client, the Crucible server. Reviews of M1 and M2 found defects that wave 2 fixes; the M3, M4 and M5 reviews did not run (usage limit) and are part of wave 2.
 
+### Tested (2026-10-13)
+- Crucible boot with the mod and a first Linux dev-client run against it: the screen forms and draws, the address bar opens, `/web info` is right; three bugs found (placeholder text format, owner rights compared by client UUID, Crucible permission node naming). See `docs/evidence/2026-10-13-crucible-boot-and-dev-client.md`.
+
 No release yet.
