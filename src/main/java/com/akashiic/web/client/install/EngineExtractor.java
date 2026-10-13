@@ -117,7 +117,7 @@ final class EngineExtractor {
         throws InstallException {
         File parent = out.getParentFile();
         if (!parent.isDirectory() && !parent.mkdirs()) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot create folder for " + target);
+            throw new InstallException(InstallFailure.INSTALL_DIR_NOT_WRITABLE, "cannot create folder for " + target);
         }
         MessageDigest md = Sha256.newDigest();
         long size = 0;
@@ -177,7 +177,7 @@ final class EngineExtractor {
         if (lower.endsWith(".exe") || lower.endsWith(".dll")) {
             return new InstallException(InstallFailure.AV_BLOCKED, "cannot write " + target + ": " + ex, ex);
         }
-        return new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot write " + target + ": " + ex, ex);
+        return new InstallException(InstallFailure.INSTALL_DIR_NOT_WRITABLE, "cannot write " + target + ": " + ex, ex);
     }
 
     /** Java 8's ZipFile hides Unix modes, so the executables are known by name (EngineTarget#unixExecutables). */
@@ -185,7 +185,9 @@ final class EngineExtractor {
         for (String rel : t.unixExecutables) {
             File f = new File(staging, rel);
             if (f.isFile() && !f.setExecutable(true, false)) {
-                throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot mark " + rel + " executable");
+                throw new InstallException(
+                    InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+                    "cannot mark " + rel + " executable");
             }
         }
     }

@@ -123,7 +123,7 @@ final class EngineInstaller {
                 if (appDir.exists()) EngineStore.moveDir(appDir, retired);
                 EngineStore.moveDir(fresh, appDir);
             } catch (IOException e) {
-                throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "host app folder in use: " + e, e);
+                throw new InstallException(InstallFailure.ENGINE_IN_USE, "host app folder in use: " + e, e);
             }
             List<LocalManifest.Entry> all = new ArrayList<>(old.vendorEntries());
             all.addAll(appEntries);
@@ -142,7 +142,10 @@ final class EngineInstaller {
         try {
             m.write(dir);
         } catch (IOException e) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot write the engine manifest: " + e, e);
+            throw new InstallException(
+                InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+                "cannot write the engine manifest: " + e,
+                e);
         }
     }
 }

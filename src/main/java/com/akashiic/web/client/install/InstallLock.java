@@ -48,7 +48,10 @@ final class InstallLock implements AutoCloseable {
             return new InstallLock(raf, l);
         } catch (IOException | OverlappingFileLockException e) {
             closeQuietly(raf);
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot lock " + lockFile.getName(), e);
+            throw new InstallException(
+                InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+                "cannot lock " + lockFile.getName() + ": " + e,
+                e);
         }
     }
 

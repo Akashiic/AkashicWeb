@@ -75,7 +75,7 @@ final class FileOps {
 
     static void ensureDir(File dir) throws InstallException {
         if (!dir.isDirectory() && !dir.mkdirs()) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot create folder " + dir);
+            throw new InstallException(InstallFailure.INSTALL_DIR_NOT_WRITABLE, "cannot create folder " + dir);
         }
     }
 

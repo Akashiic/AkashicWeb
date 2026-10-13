@@ -275,6 +275,18 @@ class DownloaderTest {
     }
 
     @Test
+    void aPartFileThatCannotBeWrittenIsInstallDirNotWritable() throws Exception {
+        EngineTarget t = target(server.directUrl("e.zip"));
+        // A non-empty folder where the part file must go: it can be neither deleted nor opened, even by root.
+        assertTrue(new File(part(t), "blocker").mkdirs());
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> downloader(3).download(t, dir, ProgressListener.NONE));
+        assertEquals(InstallFailure.INSTALL_DIR_NOT_WRITABLE, e.failure);
+        assertTrue(sleeps.isEmpty(), "a folder problem is not retried like a network one");
+    }
+
+    @Test
     void plainHttpIsRefusedInProduction() {
         EngineTarget t = target(server.directUrl("e.zip"));
         HttpFetcher prod = HttpFetcher.production("1.0", new InstallerTls());

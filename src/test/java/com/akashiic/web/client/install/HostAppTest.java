@@ -89,6 +89,34 @@ class HostAppTest {
     }
 
     @Test
+    void aJarThatCannotBeReadIsAModJarProblemNotADownloadOne() {
+        HostApp.Source good = TestSupport.defaultHostApp();
+        HostApp.Source unreadable = rel -> rel.equals("src/main.js") ? new InputStream() {
+
+            @Override
+            public int read() throws java.io.IOException {
+                throw new java.io.IOException("zip entry corrupt");
+            }
+        } : good.open(rel);
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> HostApp.install(unreadable, new File(tmp, "a")));
+        assertEquals(InstallFailure.HASH_MISMATCH, e.failure);
+        assertTrue(e.detail.startsWith("mod jar"), e.detail);
+    }
+
+    @Test
+    void aFolderThatCannotBeWrittenIsInstallDirNotWritable() throws Exception {
+        File app = new File(tmp, "app");
+        // A folder where a file must go makes the write fail even for root (tests run as root here).
+        assertTrue(new File(app, "src/main.js").mkdirs());
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> HostApp.install(TestSupport.defaultHostApp(), app));
+        assertEquals(InstallFailure.INSTALL_DIR_NOT_WRITABLE, e.failure);
+    }
+
+    @Test
     void isCurrentDetectsANewerJar() throws Exception {
         File app = new File(tmp, "app");
         HostApp.install(TestSupport.defaultHostApp(), app);

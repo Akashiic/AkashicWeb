@@ -78,10 +78,23 @@ final class EngineStore {
         }
     }
 
+    /** Renames a folder on the same volume (a seam: tests make it fail like a folder held open on Windows). */
+    @FunctionalInterface
+    interface DirMover {
+
+        void move(File from, File to) throws IOException;
+    }
+
     final File root;
+    private final DirMover mover;
 
     EngineStore(File root) {
+        this(root, EngineStore::moveDir);
+    }
+
+    EngineStore(File root, DirMover mover) {
         this.root = root;
+        this.mover = mover;
     }
 
     File dirFor(EngineTarget t) {
@@ -99,24 +112,25 @@ final class EngineStore {
      * Atomically renames the staging folder to its final name. A previous folder of the same name (a broken install
      * being repaired) is first renamed into the trash. Renames are retried because Windows antivirus scanners hold
      * freshly written executables open; if the staging folder still cannot be renamed, that is reported as
-     * AV_BLOCKED, its usual cause.
+     * AV_BLOCKED, its usual cause. An old folder that cannot be moved aside is held open by another process, usually
+     * the host of another game instance: ENGINE_IN_USE.
      */
     void promote(File staging, File finalDir) throws InstallException {
         if (finalDir.exists()) {
             removeMarker(finalDir);
             File trash = new File(root, TRASH_PREFIX + finalDir.getName() + "-" + Long.toHexString(System.nanoTime()));
             try {
-                moveDir(finalDir, trash);
+                mover.move(finalDir, trash);
             } catch (IOException e) {
                 throw new InstallException(
-                    InstallFailure.DOWNLOAD_FAILED,
+                    InstallFailure.ENGINE_IN_USE,
                     "old engine folder is in use (close other game instances): " + e,
                     e);
             }
             FileOps.deleteTree(trash);
         }
         try {
-            moveDir(staging, finalDir);
+            mover.move(staging, finalDir);
         } catch (IOException e) {
             throw new InstallException(InstallFailure.AV_BLOCKED, "cannot finalize the engine folder: " + e, e);
         }
@@ -136,7 +150,10 @@ final class EngineStore {
                 .getBytes(StandardCharsets.ISO_8859_1);
             FileOps.writeAtomic(new File(dir, LocalManifest.MARKER), bytes);
         } catch (IOException e) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot write the install marker: " + e, e);
+            throw new InstallException(
+                InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+                "cannot write the install marker: " + e,
+                e);
         }
     }
 

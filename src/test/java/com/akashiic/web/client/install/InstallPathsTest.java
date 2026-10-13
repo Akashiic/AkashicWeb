@@ -94,12 +94,12 @@ class InstallPathsTest {
     }
 
     @Test
-    void nothingWritableIsDownloadFailed() {
+    void nothingWritableIsInstallDirNotWritable() {
         InstallException e = assertThrows(
             InstallException.class,
             () -> InstallPaths
                 .resolve(windows(env("LOCALAPPDATA", "C:\\a", "PROGRAMDATA", "C:\\b")).usable(f -> false)));
-        assertEquals(InstallFailure.DOWNLOAD_FAILED, e.failure);
+        assertEquals(InstallFailure.INSTALL_DIR_NOT_WRITABLE, e.failure);
     }
 
     @Test

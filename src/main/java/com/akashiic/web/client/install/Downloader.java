@@ -98,7 +98,10 @@ public final class Downloader {
                 try {
                     FileOps.move(part, done);
                 } catch (IOException e) {
-                    throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot rename " + part.getName(), e);
+                    throw new InstallException(
+                        InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+                        "cannot rename " + part.getName() + ": " + e,
+                        e);
                 }
                 delete(stateFile);
                 return done;
@@ -265,7 +268,10 @@ public final class Downloader {
         if (usableSpace.applyAsLong(dir) < remaining + WRITE_MARGIN) {
             return new InstallException(InstallFailure.DISK_FULL, "no space left for " + part.getName(), e);
         }
-        return new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot write " + part.getName() + ": " + e, e);
+        return new InstallException(
+            InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+            "cannot write " + part.getName() + ": " + e,
+            e);
     }
 
     private InstallException finalFailure(IOException last) {

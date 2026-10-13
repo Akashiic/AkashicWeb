@@ -202,6 +202,21 @@ class EngineLocatorImplTest {
     }
 
     @Test
+    void anUnwritableInstallFolderIsInstallDirNotWritable() throws Exception {
+        // A regular file where the AkashicWeb folder should be: no sub-folder can be created, even by root.
+        assertTrue(
+            base.getParentFile()
+                .isDirectory()
+                || base.getParentFile()
+                    .mkdirs());
+        assertTrue(base.createNewFile());
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.FAILED, l.state().kind);
+        assertEquals(ReasonCode.INSTALL_DIR_NOT_WRITABLE, l.state().reason);
+        assertEquals(0, server.requestCount());
+    }
+
+    @Test
     void lowDiskSpaceIsDiskFullBeforeAnyByte() {
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target).usableSpace(f -> 500L * 1024 * 1024));
         l.requestInstall();

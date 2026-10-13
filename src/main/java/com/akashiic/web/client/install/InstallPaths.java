@@ -102,7 +102,7 @@ public final class InstallPaths {
     /**
      * Picks the base folder. Never returns a path inside the game directory or a relative path.
      *
-     * @throws InstallException DOWNLOAD_FAILED when no candidate can be written
+     * @throws InstallException INSTALL_DIR_NOT_WRITABLE when no candidate can be written
      */
     public static InstallPaths resolve(Inputs in) throws InstallException {
         return in.windows ? resolveWindows(in) : resolveLinux(in);
@@ -141,7 +141,7 @@ public final class InstallPaths {
         // only because some native tools mishandle such paths. Untested on Windows (ADR-014 P1 cell).
         if (localUsable) return new InstallPaths(new File(localBase), new File(localBase), "LOCALAPPDATA (non-ASCII)");
         throw new InstallException(
-            InstallFailure.DOWNLOAD_FAILED,
+            InstallFailure.INSTALL_DIR_NOT_WRITABLE,
             "no writable install folder (LOCALAPPDATA=" + local + ", PROGRAMDATA=" + programData + ")");
     }
 
@@ -156,7 +156,9 @@ public final class InstallPaths {
         if (base != null && allowed(base, in) && in.usable.test(new File(base))) {
             return new InstallPaths(new File(base), new File(base), how);
         }
-        throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "no writable install folder (" + base + ")");
+        throw new InstallException(
+            InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+            "no writable install folder (" + base + ")");
     }
 
     /** Rejects the game dir (and so mods/), Documents and OneDrive. */
