@@ -1,3 +1,52 @@
 tasks.named("test").configure {
     useJUnitPlatform()
 }
+
+// M3 (engine installer): package the AkashicWebHost app into the jar (ADR-011 layer 2). host/src/** and
+// host/package.json are copied byte for byte to assets/akashicweb/host-app/, next to host-app.sha256
+// ("<sha256>  <path>" per line, sha256sum format, sorted, LF). The installer verifies every file against it before
+// writing it into the engine's resources/app/. Nothing else from host/ (tests, node_modules) is shipped.
+def hostAppOut = layout.buildDirectory.dir("generated/host-app")
+def packageHostApp = tasks.register("packageHostApp") {
+    group = "build"
+    description = "Copies the host app into the jar layout and writes its SHA-256 manifest."
+    def hostDir = file("host")
+    def hostSrc = file("host/src")
+    def packageJson = file("host/package.json")
+    inputs.dir(hostSrc).withPropertyName("hostSrc").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(packageJson).withPropertyName("hostPackageJson").withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.dir(hostAppOut).withPropertyName("hostAppOut")
+    doLast {
+        def root = hostAppOut.get().asFile
+        root.deleteDir()
+        def out = new File(root, "assets/akashicweb/host-app")
+        out.mkdirs()
+        def rels = []
+        hostSrc.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+            def rel = "src/" + hostSrc.toPath().relativize(f.toPath()).toString().replace(File.separatorChar, (char) '/')
+            // Skip editor and OS droppings; never ship hidden files.
+            if (rel.split("/").any { it.startsWith(".") } || rel.endsWith("~")) return
+            rels << rel
+        }
+        rels << "package.json"
+        rels.sort()
+        def manifest = new StringBuilder()
+        rels.each { rel ->
+            // The installer accepts only these characters (SafePath); fail the build early instead of in game.
+            if (!(rel ==~ /[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)*(\/[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)*)*/)) {
+                throw new GradleException("host app path not allowed in the jar: " + rel)
+            }
+            def src = new File(hostDir, rel)
+            def dst = new File(out, rel)
+            dst.parentFile.mkdirs()
+            java.nio.file.Files.copy(src.toPath(), dst.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            def md = java.security.MessageDigest.getInstance("SHA-256")
+            md.update(src.bytes)
+            manifest.append(md.digest().encodeHex().toString()).append("  ").append(rel).append("\n")
+        }
+        new File(out, "host-app.sha256").setBytes(manifest.toString().getBytes("UTF-8"))
+    }
+}
+tasks.named("processResources").configure {
+    from(packageHostApp)
+}
