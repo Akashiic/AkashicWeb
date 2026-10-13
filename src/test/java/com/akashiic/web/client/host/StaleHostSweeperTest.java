@@ -28,7 +28,7 @@ class StaleHostSweeperTest {
     File dir;
 
     /** In-memory processes: pid -> image. */
-    static final class FakeProcesses implements ProcessControl {
+    static class FakeProcesses implements ProcessControl {
 
         final Map<Long, String> running = new HashMap<>();
         final List<Long> killed = new ArrayList<>();
@@ -112,6 +112,71 @@ class StaleHostSweeperTest {
         assertEquals(13, left.get(0).pid);
     }
 
+    /**
+     * Review finding (low): an entry whose game PID was unknown (recorded as 0) used to be killed at once, so a second
+     * game instance sharing the folder could lose its live host. It is now kept unless older than a day.
+     */
+    @Test
+    void entriesOfAnUnknownGameAreKeptUnlessOlderThanADay() {
+        HostPidFile pids = new HostPidFile(new File(dir, "pids.txt"));
+        FakeProcesses p = new FakeProcesses();
+        long now = 10L * StaleHostSweeper.UNKNOWN_GAME_MAX_AGE_MILLIS;
+        p.running.put(20L, "AkashicWebHost.exe");
+        p.running.put(21L, "AkashicWebHost.exe");
+        pids.write(
+            Arrays.asList(
+                new HostPidFile.Entry(20, 0, now - 3_600_000L, "AkashicWebHost.exe"), // an hour old: keep
+                new HostPidFile.Entry(
+                    21,
+                    0,
+                    now - StaleHostSweeper.UNKNOWN_GAME_MAX_AGE_MILLIS - 1,
+                    "AkashicWebHost.exe")));
+        int killed = new StaleHostSweeper(pids, p, 500, StaleHostSweeper.BUDGET_MILLIS, () -> now).sweep();
+        assertEquals(1, killed);
+        assertEquals(Arrays.asList(21L), p.killed);
+        List<HostPidFile.Entry> left = pids.read();
+        assertEquals(1, left.size());
+        assertEquals(20, left.get(0).pid);
+    }
+
+    /**
+     * Review finding (low): the sweep runs before the first launch, and with 64 entries and a hanging tasklist (5 s per
+     * call) it could hold up the host for minutes. It now stops at its time budget and keeps the rest for next time.
+     */
+    @Test
+    void theSweepStopsAtItsTimeBudget() {
+        HostPidFile pids = new HostPidFile(new File(dir, "pids.txt"));
+        FakeProcesses slow = new FakeProcesses() {
+
+            @Override
+            public String imageName(long pid) {
+                try {
+                    Thread.sleep(150); // a slow tasklist
+                } catch (InterruptedException e) {
+                    Thread.currentThread()
+                        .interrupt();
+                }
+                return super.imageName(pid);
+            }
+        };
+        List<HostPidFile.Entry> entries = new ArrayList<>();
+        for (long pid = 100; pid < 110; pid++) {
+            slow.running.put(pid, "AkashicWebHost.exe");
+            entries.add(new HostPidFile.Entry(pid, 400, 0, "AkashicWebHost.exe")); // all orphans of a dead game
+        }
+        pids.write(entries);
+        long t0 = System.nanoTime();
+        int killed = new StaleHostSweeper(pids, slow, 1, 400, System::currentTimeMillis).sweep();
+        long tookMillis = (System.nanoTime() - t0) / 1_000_000L;
+        assertTrue(killed >= 1 && killed < 10, "killed " + killed);
+        assertTrue(tookMillis < 2_000, "took " + tookMillis + " ms");
+        assertEquals(
+            10 - killed,
+            pids.read()
+                .size(),
+            "the entries not reached stay recorded");
+    }
+
     @Test
     void failedKillsStayRecordedForTheNextSweep() {
         HostPidFile pids = new HostPidFile(new File(dir, "pids.txt"));
@@ -136,6 +201,27 @@ class StaleHostSweeperTest {
         assertFalse(StaleHostSweeper.sameImage("", "AkashicWebHost"));
         assertFalse(StaleHostSweeper.sameImage("java", "javaw"));
         assertFalse(StaleHostSweeper.sameImage(null, "x"));
+    }
+
+    /**
+     * Review finding (low): tasklist/taskkill (and ps/kill) were started by bare name, so on Windows a planted
+     * tasklist.exe in the instance folder would run first. They now come from %SystemRoot%\System32 and /bin or
+     * /usr/bin.
+     */
+    @Test
+    void systemToolsAreStartedByFullPath() {
+        assertEquals("D:\\Win\\System32\\tasklist.exe", WindowsProcessControl.systemTool("tasklist.exe", "D:\\Win\\"));
+        assertEquals("C:\\Windows\\System32\\taskkill.exe", WindowsProcessControl.systemTool("taskkill.exe", null));
+        assertEquals("C:\\Windows\\System32\\taskkill.exe", WindowsProcessControl.systemTool("taskkill.exe", "  "));
+        assertEquals("no-such-tool-akw", UnixProcessControl.tool("no-such-tool-akw"), "last resort only");
+        assumeFalse(
+            System.getProperty("os.name", "")
+                .toLowerCase(Locale.ROOT)
+                .startsWith("windows"));
+        for (String t : new String[] { "kill", "ps" }) {
+            String path = UnixProcessControl.tool(t);
+            assertTrue(path.equals("/bin/" + t) || path.equals("/usr/bin/" + t), path);
+        }
     }
 
     @Test
