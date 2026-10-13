@@ -34,11 +34,15 @@ import cpw.mods.fml.relauncher.SideOnly;
  */
 public final class TileEntityScreen extends TileEntity implements ScreenTile {
 
-    /** Render distance for big screens (vanilla's TESR default is 64 blocks). */
+    /**
+     * Render distance for big screens beyond their farthest corner (vanilla's TESR default is 64 blocks from the tile).
+     */
     static final double MAX_RENDER_DISTANCE = 128;
 
     private final ScreenState[] faces = new ScreenState[6];
     private AxisAlignedBB renderBox;
+    /** Squared render distance from the origin block; 0 until computed. Reset with {@link #renderBox}. */
+    private double renderDistanceSq;
     /** Client: removal already reported to M5 (invalidate and onChunkUnload may both run). */
     private boolean removalReported;
 
@@ -67,7 +71,7 @@ public final class TileEntityScreen extends TileEntity implements ScreenTile {
     public void putFace(ScreenState s) {
         s.key = keyFor(s.key.side);
         faces[s.key.side] = s;
-        renderBox = null;
+        boundsChanged();
         markDirty();
     }
 
@@ -75,7 +79,7 @@ public final class TileEntityScreen extends TileEntity implements ScreenTile {
         ScreenState old = screen(side);
         if (old != null) {
             faces[side] = null;
-            renderBox = null;
+            boundsChanged();
             markDirty();
         }
         return old;
@@ -117,7 +121,7 @@ public final class TileEntityScreen extends TileEntity implements ScreenTile {
     private void load(List<ScreenState> incoming) {
         for (int i = 0; i < faces.length; i++) faces[i] = null;
         for (ScreenState s : incoming) faces[s.key.side] = s;
-        renderBox = null;
+        boundsChanged();
     }
 
     // ---- sync ----
@@ -194,9 +198,23 @@ public final class TileEntityScreen extends TileEntity implements ScreenTile {
         return renderBox;
     }
 
+    /**
+     * Vanilla measures this from the origin block, so a big screen adds its own size ({@link
+     * ScreenGeometry#renderDistance}); cached because the renderer asks every frame.
+     */
     @Override
     @SideOnly(Side.CLIENT)
     public double getMaxRenderDistanceSquared() {
-        return MAX_RENDER_DISTANCE * MAX_RENDER_DISTANCE;
+        if (renderDistanceSq == 0) {
+            double d = ScreenGeometry.renderDistance(MAX_RENDER_DISTANCE, screens());
+            renderDistanceSq = d * d;
+        }
+        return renderDistanceSq;
+    }
+
+    /** The faces changed: render box and distance are computed again on next use. */
+    private void boundsChanged() {
+        renderBox = null;
+        renderDistanceSq = 0;
     }
 }
