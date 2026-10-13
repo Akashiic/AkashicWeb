@@ -154,8 +154,9 @@ public final class ScreenActions {
         ScreenState s = t.state;
         session.clock.reset(s.epoch);
         t.tile.markDirty();
-        if (ServerRuntime.index()
-            .put(ScreenIndex.Entry.of(s))) ServerRuntime.indexChanged();
+        ScreenIndex index = ServerRuntime.index();
+        boolean changed = index.noteEpoch(s.epoch);
+        if (index.put(ScreenIndex.Entry.of(s)) || changed) ServerRuntime.indexChanged();
         AuditLog.log(t.player.getCommandSenderName(), t.id, what, s.key + " epoch=" + s.epoch + " " + s.url);
         ScreenSync.sendUrl(s);
     }
@@ -338,8 +339,9 @@ public final class ScreenActions {
         NavLogic.clear(s, session.history);
         session.clock.reset(s.epoch);
         if (te != null) te.markDirty();
-        if (ServerRuntime.index()
-            .put(ScreenIndex.Entry.of(s))) ServerRuntime.indexChanged();
+        ScreenIndex index = ServerRuntime.index();
+        boolean changed = index.noteEpoch(s.epoch);
+        if (index.put(ScreenIndex.Entry.of(s)) || changed) ServerRuntime.indexChanged();
         AuditLog.log(actor, actorId, "admin clear", s.key + " epoch=" + s.epoch);
         ScreenSync.sendUrl(s);
     }

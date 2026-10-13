@@ -43,7 +43,12 @@ public final class ScreenLifecycle {
 
     public static void onTileLoaded(TileEntityScreen te) {
         ServerRuntime.LOADED.register(te);
-        for (ScreenState s : te.screens()) scheduleHeal(s.key);
+        for (ScreenState s : te.screens()) {
+            // A screen saved with a newer epoch than the index remembers (the index file was lost): keep it in step.
+            if (ServerRuntime.index()
+                .noteEpoch(s.epoch)) ServerRuntime.indexChanged();
+            scheduleHeal(s.key);
+        }
     }
 
     public static void onTileRemoved(TileEntityScreen te) {
@@ -177,7 +182,6 @@ public final class ScreenLifecycle {
             ScreenSync.tell(p, ReasonCode.SCREEN_LIMIT, String.valueOf(cfg.maxPerPlayer));
             return;
         }
-        ScreenState base = largest(inside);
         for (ScreenState s : inside) {
             TileEntityScreen old = ServerRuntime.LOADED.tile(s.key);
             if (old != null) dissolve(w, old, s.key.side, null, p.getCommandSenderName());
@@ -187,7 +191,16 @@ public final class ScreenLifecycle {
             ScreenSync.tell(p, ReasonCode.SCREEN_INVALID_SHAPE, plan.originX + " " + plan.originY + " " + plan.originZ);
             return;
         }
-        ScreenState s = newScreen(te.keyFor(clicked.side), plan.width, plan.height, p, cfg, base);
+        ScreenState s = newScreen(
+            te.keyFor(clicked.side),
+            plan.width,
+            plan.height,
+            p.getUniqueID(),
+            p.getCommandSenderName(),
+            p.rotationYaw,
+            cfg,
+            inside,
+            ServerRuntime.index());
         te.putFace(s);
         w.markBlockForUpdate(plan.originX, plan.originY, plan.originZ);
         ServerRuntime.LOADED.register(te);
@@ -229,21 +242,27 @@ public final class ScreenLifecycle {
         return fresh;
     }
 
-    /** A new face record; a merged screen keeps the URL, friends, rights and mode of the largest screen it absorbed. */
-    static ScreenState newScreen(ScreenKey key, int w, int h, EntityPlayerMP owner, WebSettings cfg, ScreenState base) {
+    /**
+     * A new face record. A merged screen keeps the URL, friends, rights and mode of the largest screen it absorbed.
+     * Its epoch comes from {@link ScreenIndex#nextEpoch}: above every epoch issued so far, so a client that still
+     * holds an older screen at the same key takes the new one's URLs (epochs only grow per key).
+     */
+    static ScreenState newScreen(ScreenKey key, int w, int h, UUID ownerId, String ownerName, float yaw,
+        WebSettings cfg, List<ScreenState> absorbed, ScreenIndex index) {
+        ScreenState base = largest(absorbed);
         ScreenState s = new ScreenState();
         s.key = key;
         s.widthBlocks = w;
         s.heightBlocks = h;
-        s.rotation = ScreenGeometry.initialRotation(BlockSide.fromSide(key.side), owner.rotationYaw);
+        s.rotation = ScreenGeometry.initialRotation(BlockSide.fromSide(key.side), yaw);
         int[] res = ScreenGeometry.defaultResolution(w, h, s.rotation, cfg.defaultResolutionW, cfg.defaultResolutionH);
         s.resolutionW = res[0];
         s.resolutionH = res[1];
-        s.owner = owner.getUniqueID();
-        s.ownerName = owner.getCommandSenderName();
+        s.owner = ownerId;
+        s.ownerName = ownerName;
+        s.epoch = index.nextEpoch(absorbed);
         if (base != null) {
             s.url = base.url;
-            s.epoch = base.epoch + 1;
             s.friends.addAll(base.friends);
             s.friendNames.putAll(base.friendNames);
             s.friendRights = base.friendRights;

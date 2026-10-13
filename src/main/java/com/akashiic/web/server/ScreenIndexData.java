@@ -49,6 +49,7 @@ public final class ScreenIndexData extends WorldSavedData {
             if (e != null) index.put(e);
         }
         readPlayers(tag, players);
+        index.noteEpoch(tag.getInteger("epochHighWater"));
     }
 
     @Override
@@ -57,6 +58,7 @@ public final class ScreenIndexData extends WorldSavedData {
         for (ScreenIndex.Entry e : index.all()) list.appendTag(write(e));
         tag.setTag("screens", list);
         writePlayers(tag, players);
+        tag.setInteger("epochHighWater", index.epochHighWater());
     }
 
     static void writePlayers(NBTTagCompound tag, KnownPlayers players) {
