@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -32,12 +31,10 @@ class InstallPathsTest {
     void asciiLocalAppDataIsUsedDirectly() throws Exception {
         InstallPaths p = InstallPaths.resolve(windows(env("LOCALAPPDATA", "C:\\Users\\gabriel\\AppData\\Local")));
         assertEquals("C:\\Users\\gabriel\\AppData\\Local\\AkashicWeb", p.base.getPath());
-        assertEquals(p.base, p.userBase);
         assertEquals("LOCALAPPDATA", p.how);
-        assertEquals(
-            1,
-            p.importDirs()
-                .size());
+        assertEquals("%LOCALAPPDATA%\\AkashicWeb", p.display);
+        assertEquals(new File(p.base, "import"), p.importDir());
+        assertEquals(new File(p.base, "profiles"), p.profilesDir());
     }
 
     @Test
@@ -49,7 +46,7 @@ class InstallPathsTest {
                 return "C:\\Users\\JOOCON~1\\AppData\\Local";
             }));
         assertEquals("C:\\Users\\JOOCON~1\\AppData\\Local\\AkashicWeb", p.base.getPath());
-        assertEquals(p.base, p.userBase);
+        assertEquals("%LOCALAPPDATA%\\AkashicWeb", p.display, "the same folder, as the player can type it");
         assertEquals(
             JOAO,
             asked.get(0)
@@ -58,48 +55,42 @@ class InstallPathsTest {
     }
 
     @Test
-    void nonAsciiWithoutShortNameFallsBackToProgramDataButKeepsProfilesPerUser() throws Exception {
+    void nonAsciiWithoutShortNameUsesTheNonAsciiFolderNeverProgramData() throws Exception {
+        // Review finding: ProgramData is writable by every local user, so it is never a fallback, even when set.
         InstallPaths p = InstallPaths.resolve(windows(env("LOCALAPPDATA", JOAO, "PROGRAMDATA", "C:\\ProgramData")));
-        assertEquals("C:\\ProgramData\\AkashicWeb", p.base.getPath());
-        assertEquals(JOAO + "\\AkashicWeb", p.userBase.getPath(), "cookies must not land in machine-wide ProgramData");
-        assertEquals("PROGRAMDATA", p.how);
-        assertEquals(
-            2,
-            p.importDirs()
-                .size(),
-            "the pt-BR guide's LOCALAPPDATA import folder is still scanned");
+        assertEquals(JOAO + "\\AkashicWeb", p.base.getPath());
+        assertEquals("LOCALAPPDATA (non-ASCII)", p.how);
+        assertEquals(new File(p.base, "profiles"), p.profilesDir(), "cookies stay in the player's own folder");
+        assertEquals("%LOCALAPPDATA%\\AkashicWeb", p.display);
     }
 
     @Test
     void shortPathThatIsStillNonAsciiIsIgnored() throws Exception {
         InstallPaths p = InstallPaths
             .resolve(windows(env("LOCALAPPDATA", JOAO, "PROGRAMDATA", "C:\\ProgramData")).shortPath(f -> JOAO));
-        assertEquals("C:\\ProgramData\\AkashicWeb", p.base.getPath());
-    }
-
-    @Test
-    void nonAsciiIsTheLastResort() throws Exception {
-        InstallPaths p = InstallPaths.resolve(windows(env("LOCALAPPDATA", JOAO)));
         assertEquals(JOAO + "\\AkashicWeb", p.base.getPath());
-        assertEquals("LOCALAPPDATA (non-ASCII)", p.how);
     }
 
     @Test
-    void unwritableLocalAppDataFallsBackToProgramData() throws Exception {
-        InstallPaths p = InstallPaths.resolve(
-            windows(env("LOCALAPPDATA", "C:\\Users\\a\\AppData\\Local", "PROGRAMDATA", "C:\\ProgramData")).usable(
-                f -> f.getPath()
-                    .startsWith("C:\\ProgramData")));
-        assertEquals("C:\\ProgramData\\AkashicWeb", p.base.getPath());
+    void anUnwritableLocalAppDataNeverFallsBackToProgramData() {
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> InstallPaths.resolve(
+                windows(env("LOCALAPPDATA", "C:\\Users\\a\\AppData\\Local", "PROGRAMDATA", "C:\\ProgramData")).usable(
+                    f -> f.getPath()
+                        .startsWith("C:\\ProgramData"))));
+        assertEquals(InstallFailure.INSTALL_DIR_NOT_WRITABLE, e.failure);
+        assertTrue(e.detail.contains("%LOCALAPPDATA%\\AkashicWeb is not writable"), e.detail);
+        assertFalse(e.detail.contains("C:\\Users"), "no expanded profile path in the detail: " + e.detail);
     }
 
     @Test
-    void nothingWritableIsDownloadFailed() {
+    void nothingWritableIsInstallDirNotWritable() {
         InstallException e = assertThrows(
             InstallException.class,
             () -> InstallPaths
                 .resolve(windows(env("LOCALAPPDATA", "C:\\a", "PROGRAMDATA", "C:\\b")).usable(f -> false)));
-        assertEquals(InstallFailure.DOWNLOAD_FAILED, e.failure);
+        assertEquals(InstallFailure.INSTALL_DIR_NOT_WRITABLE, e.failure);
     }
 
     @Test
@@ -125,10 +116,24 @@ class InstallPathsTest {
     }
 
     @Test
-    void oneDriveRedirectedLocalAppDataFallsBackToProgramData() throws Exception {
+    void oneDriveRedirectedLocalAppDataUsesTheUserProfileFolder() throws Exception {
         InstallPaths p = InstallPaths
             .resolve(windows(env("LOCALAPPDATA", "C:\\Users\\x\\OneDrive\\Local", "PROGRAMDATA", "C:\\ProgramData")));
-        assertEquals("C:\\ProgramData\\AkashicWeb", p.base.getPath());
+        assertEquals("C:\\Users\\x\\AppData\\Local\\AkashicWeb", p.base.getPath());
+        assertEquals("user profile", p.how);
+        assertEquals("%USERPROFILE%\\AppData\\Local\\AkashicWeb", p.display);
+    }
+
+    @Test
+    void oneDriveEverywhereIsInstallDirNotWritable() {
+        InstallPaths.Inputs in = new InstallPaths.Inputs(
+            true,
+            facts("Windows 11", "amd64", "64", env("LOCALAPPDATA", "C:\\Users\\x\\OneDrive\\Local")),
+            "C:\\Users\\x\\OneDrive",
+            GAME).usable(f -> true);
+        InstallException e = assertThrows(InstallException.class, () -> InstallPaths.resolve(in));
+        assertEquals(InstallFailure.INSTALL_DIR_NOT_WRITABLE, e.failure);
+        assertTrue(e.detail.contains("OneDrive"), e.detail);
     }
 
     @Test
@@ -167,12 +172,31 @@ class InstallPathsTest {
 
     @Test
     void layoutUnderTheBase(@TempDir File tmp) {
-        InstallPaths p = new InstallPaths(new File(tmp, "eng"), new File(tmp, "usr"), "test");
+        InstallPaths p = new InstallPaths(new File(tmp, "eng"), "test", "eng");
         assertEquals(new File(tmp, "eng/engine"), p.engineRoot());
         assertEquals(new File(tmp, "eng/download"), p.downloadDir());
         assertEquals(new File(tmp, "eng/install.lock"), p.lockFile());
-        assertEquals(new File(tmp, "usr/profiles"), p.profilesDir());
-        assertEquals(Arrays.asList(new File(tmp, "eng/import"), new File(tmp, "usr/import")), p.importDirs());
+        assertEquals(new File(tmp, "eng/profiles"), p.profilesDir());
+        assertEquals(new File(tmp, "eng/import"), p.importDir());
+    }
+
+    @Test
+    void redactionHidesTheExpandedProfilePath() throws Exception {
+        InstallPaths p = InstallPaths.resolve(windows(env("LOCALAPPDATA", JOAO)));
+        String raw = "java.nio.file.AccessDeniedException: " + JOAO
+            + "\\AkashicWeb\\engine\\x -> "
+            + JOAO
+            + "\\AkashicWeb\\engine\\.trash-x";
+        assertEquals(
+            "java.nio.file.AccessDeniedException: %LOCALAPPDATA%\\AkashicWeb\\engine\\x -> "
+                + "%LOCALAPPDATA%\\AkashicWeb\\engine\\.trash-x",
+            p.redact(raw));
+        assertEquals(
+            "%USERPROFILE%\\AppData\\Roaming\\.technic",
+            p.redact("C:\\Users\\x\\AppData\\Roaming\\.technic"),
+            "the user's home folder is hidden too");
+        // (On Windows the separator is a backslash too; on the test OS File appends its own.)
+        assertEquals("%LOCALAPPDATA%\\AkashicWeb" + File.separator + "import", p.display(p.importDir()));
     }
 
     @Test

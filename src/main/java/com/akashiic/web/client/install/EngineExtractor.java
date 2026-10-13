@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Enumeration;
@@ -24,7 +23,9 @@ import java.util.zip.ZipFile;
  * <li>locales other than en-US and pt-BR are not written;</li>
  * <li>{@code resources/default_app.asar} is not written, nor anything under {@code resources/app};</li>
  * <li>the vendor exe is written under its host name, byte for byte (renaming keeps its hash and signature state);</li>
- * <li>each written file is hashed while it is written, for the local manifest.</li>
+ * <li>each written file is hashed while it is written and must be exactly the pinned file
+ * ({@link EngineTarget#vendorFiles}); the zip's own hash was checked before, but by path, so a zip swapped between that
+ * check and this extraction (another local user, an import folder on a shared drive) is caught here.</li>
  * </ul>
  * The central directory is read through {@link ZipFile}, so a crafted local header cannot smuggle extra entries.
  */
@@ -46,8 +47,13 @@ final class EngineExtractor {
 
     /** The installed path for a zip entry, or null if the entry is not installed. Pure. */
     static String installedPath(String entryName, EngineTarget t) {
-        if (entryName.equals(t.vendorExecutable)) return t.hostExecutable;
-        if (entryName.equals(t.hostExecutable)) return null; // never let the archive shadow the renamed exe
+        return installedPath(entryName, t.vendorExecutable, t.hostExecutable);
+    }
+
+    /** As {@link #installedPath(String, EngineTarget)}, by executable names (for generating pins). Pure. */
+    static String installedPath(String entryName, String vendorExecutable, String hostExecutable) {
+        if (entryName.equals(vendorExecutable)) return hostExecutable;
+        if (entryName.equals(hostExecutable)) return null; // never let the archive shadow the renamed exe
         if (entryName.startsWith(EngineManifest.LOCALES_PREFIX)) {
             return EngineManifest.KEPT_LOCALES.contains(entryName) ? entryName : null;
         }
@@ -95,6 +101,10 @@ final class EngineExtractor {
                 sawExecutable |= target.equals(t.hostExecutable);
                 File out = SafePath.resolveInside(staging, target);
                 LocalManifest.Entry written = writeEntry(zf, e, out, target, result);
+                LocalManifest.Entry pin = t.vendorFiles.get(target);
+                if (pin == null || pin.size != written.size || !pin.sha256.equals(written.sha256)) {
+                    throw new InstallException(InstallFailure.HASH_MISMATCH, target + " is not the pinned file");
+                }
                 result.entries.add(written);
                 done += Math.max(0, e.getSize());
                 progress.onProgress(done, total);
@@ -109,6 +119,11 @@ final class EngineExtractor {
         if (!sawExecutable) {
             throw new InstallException(InstallFailure.HASH_MISMATCH, "archive has no " + t.vendorExecutable);
         }
+        if (result.entries.size() != t.vendorFiles.size()) {
+            throw new InstallException(
+                InstallFailure.HASH_MISMATCH,
+                "archive has " + result.entries.size() + " of the " + t.vendorFiles.size() + " pinned files");
+        }
         if (!t.windows) markExecutables(staging, t);
         return result;
     }
@@ -117,18 +132,18 @@ final class EngineExtractor {
         throws InstallException {
         File parent = out.getParentFile();
         if (!parent.isDirectory() && !parent.mkdirs()) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot create folder for " + target);
+            throw new InstallException(InstallFailure.INSTALL_DIR_NOT_WRITABLE, "cannot create folder for " + target);
         }
         MessageDigest md = Sha256.newDigest();
         long size = 0;
         try (InputStream in = zf.getInputStream(e)) {
-            OutputStream os;
+            FileOutputStream os;
             try {
                 os = new FileOutputStream(out);
             } catch (IOException ex) {
                 throw writeFailure(target, out, ex);
             }
-            try (OutputStream o = os) {
+            try (FileOutputStream o = os) {
                 byte[] buf = new byte[Sha256.BUFFER];
                 int n;
                 while ((n = in.read(buf)) != -1) {
@@ -144,6 +159,10 @@ final class EngineExtractor {
                         throw writeFailure(target, out, ex);
                     }
                 }
+                // On disk before the marker is written (review finding 9b): the start-up check compares sizes only,
+                // and a power loss could otherwise leave zero-filled files of the right size behind a valid marker.
+                o.getFD()
+                    .sync();
             } catch (InstallException ex) {
                 throw ex;
             } catch (IOException ex) {
@@ -177,7 +196,7 @@ final class EngineExtractor {
         if (lower.endsWith(".exe") || lower.endsWith(".dll")) {
             return new InstallException(InstallFailure.AV_BLOCKED, "cannot write " + target + ": " + ex, ex);
         }
-        return new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot write " + target + ": " + ex, ex);
+        return new InstallException(InstallFailure.INSTALL_DIR_NOT_WRITABLE, "cannot write " + target + ": " + ex, ex);
     }
 
     /** Java 8's ZipFile hides Unix modes, so the executables are known by name (EngineTarget#unixExecutables). */
@@ -185,7 +204,9 @@ final class EngineExtractor {
         for (String rel : t.unixExecutables) {
             File f = new File(staging, rel);
             if (f.isFile() && !f.setExecutable(true, false)) {
-                throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot mark " + rel + " executable");
+                throw new InstallException(
+                    InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+                    "cannot mark " + rel + " executable");
             }
         }
     }

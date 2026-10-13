@@ -5,7 +5,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -59,13 +58,13 @@ public final class HostApp {
     static byte[] manifestBytes(Source src) throws InstallException {
         try (InputStream in = src.open(MANIFEST)) {
             if (in == null) {
-                throw new InstallException(InstallFailure.HASH_MISMATCH, "host app missing from the mod jar");
+                throw new InstallException(InstallFailure.HASH_MISMATCH, "mod jar: host app missing");
             }
             return readCapped(in, 256 * 1024);
         } catch (InstallException e) {
             throw e;
         } catch (IOException e) {
-            throw new InstallException(InstallFailure.HASH_MISMATCH, "host app manifest unreadable: " + e, e);
+            throw new InstallException(InstallFailure.HASH_MISMATCH, "mod jar: host app manifest unreadable: " + e, e);
         }
     }
 
@@ -82,25 +81,29 @@ public final class HostApp {
                 .matches("[0-9a-f]{64}")
                 || line.charAt(64) != ' '
                 || (line.charAt(65) != ' ' && line.charAt(65) != '*')) {
-                throw new InstallException(InstallFailure.HASH_MISMATCH, "host app manifest line malformed");
+                throw new InstallException(InstallFailure.HASH_MISMATCH, "mod jar: host app manifest line malformed");
             }
             String path = line.substring(66);
-            if (!SafePath.isSafeRelative(path) || path.equals(MANIFEST) || !seen.add(path)) {
+            // Checked as installed (resources/app/<path>): the engine manifest applies the same rules to that form.
+            if (!SafePath.isSafeRelative(EngineManifest.APP_DIR + "/" + path) || path.equals(MANIFEST)
+                || !seen.add(path)) {
                 throw new InstallException(
                     InstallFailure.HASH_MISMATCH,
-                    "host app manifest path rejected: " + SafePath.printable(path));
+                    "mod jar: host app manifest path rejected: " + SafePath.printable(path));
             }
             files.add(new Pin(path, line.substring(0, 64)));
         }
         if (files.isEmpty() || files.size() > MAX_FILES) {
-            throw new InstallException(InstallFailure.HASH_MISMATCH, "host app manifest lists " + files.size());
+            throw new InstallException(
+                InstallFailure.HASH_MISMATCH,
+                "mod jar: host app manifest lists " + files.size());
         }
         boolean hasPackageJson = false;
         for (Pin f : files) {
             hasPackageJson |= f.path.equals("package.json");
         }
         if (!hasPackageJson) {
-            throw new InstallException(InstallFailure.HASH_MISMATCH, "host app has no package.json");
+            throw new InstallException(InstallFailure.HASH_MISMATCH, "mod jar: host app has no package.json");
         }
         return files;
     }
@@ -124,10 +127,34 @@ public final class HostApp {
         try {
             FileOps.writeAtomic(manifestFile, manifest);
         } catch (IOException e) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot write " + MANIFEST + ": " + e, e);
+            throw new InstallException(
+                InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+                "cannot write " + MANIFEST + ": " + e,
+                e);
         }
         out.add(new LocalManifest.Entry(prefix + MANIFEST, manifest.length, Sha256.of(manifest)));
         return Collections.unmodifiableList(out);
+    }
+
+    /**
+     * True when the installed app was made from this jar and the engine's local manifest lists exactly the jar's app
+     * files with the jar's hashes. With {@link LocalManifest#hostAppCheck} (the files on disk against the local
+     * manifest) this ties every app file to the jar, so a folder with a self-consistent but foreign app is refreshed.
+     */
+    static boolean isCurrent(Source src, File appDir, LocalManifest local) throws InstallException {
+        if (local == null || !isCurrent(src, appDir)) return false;
+        byte[] manifest = manifestBytes(src);
+        String prefix = EngineManifest.APP_DIR + "/";
+        java.util.Map<String, String> expected = new java.util.HashMap<>();
+        for (Pin p : parse(manifest)) expected.put(prefix + p.path, p.sha256);
+        expected.put(prefix + MANIFEST, Sha256.of(manifest));
+        int listed = 0;
+        for (LocalManifest.Entry e : local.entries) {
+            if (!LocalManifest.isHostApp(e.path)) continue;
+            listed++;
+            if (!e.sha256.equals(expected.get(e.path))) return false;
+        }
+        return listed == expected.size();
     }
 
     /** True when the installed app was made from exactly this jar's manifest. */
@@ -142,39 +169,77 @@ public final class HostApp {
         }
     }
 
+    /**
+     * Copies one file from the jar, hashing it on the way. A failure to read is the jar's fault (HASH_MISMATCH, "mod
+     * jar"); a failure to write is the install folder's (INSTALL_DIR_NOT_WRITABLE).
+     */
     private static long copyVerified(Source src, Pin f, File target) throws InstallException {
         File parent = target.getParentFile();
         if (!parent.isDirectory() && !parent.mkdirs()) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot create folder for " + f.path);
+            throw new InstallException(InstallFailure.INSTALL_DIR_NOT_WRITABLE, "cannot create folder for " + f.path);
         }
         MessageDigest md = Sha256.newDigest();
         long size = 0;
-        try (InputStream in = src.open(f.path)) {
-            if (in == null) {
-                throw new InstallException(InstallFailure.HASH_MISMATCH, "host app file missing from jar: " + f.path);
-            }
-            try (OutputStream o = new FileOutputStream(target)) {
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) != -1) {
-                    size += n;
-                    if (size > MAX_FILE_BYTES) {
-                        throw new InstallException(InstallFailure.HASH_MISMATCH, "host app file too large: " + f.path);
-                    }
-                    md.update(buf, 0, n);
-                    o.write(buf, 0, n);
+        InputStream in = openFromJar(src, f.path);
+        try (InputStream jar = in; FileOutputStream o = openForWrite(target, f.path)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = readFromJar(jar, buf, f.path)) != -1) {
+                size += n;
+                if (size > MAX_FILE_BYTES) {
+                    throw new InstallException(
+                        InstallFailure.HASH_MISMATCH,
+                        "mod jar: host app file too large: " + f.path);
                 }
+                md.update(buf, 0, n);
+                o.write(buf, 0, n);
             }
+            o.getFD()
+                .sync(); // on disk before the manifest and marker that vouch for it
         } catch (InstallException e) {
             throw e;
         } catch (IOException e) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot copy host app " + f.path + ": " + e, e);
+            throw new InstallException(
+                InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+                "cannot write host app " + f.path + ": " + e,
+                e);
         }
         String actual = Sha256.hex(md.digest());
         if (!actual.equals(f.sha256)) {
-            throw new InstallException(InstallFailure.HASH_MISMATCH, "host app file " + f.path + " does not match");
+            throw new InstallException(
+                InstallFailure.HASH_MISMATCH,
+                "mod jar: host app file " + f.path + " does not match");
         }
         return size;
+    }
+
+    private static InputStream openFromJar(Source src, String path) throws InstallException {
+        InputStream in;
+        try {
+            in = src.open(path);
+        } catch (IOException e) {
+            throw new InstallException(InstallFailure.HASH_MISMATCH, "mod jar: cannot read host app " + path, e);
+        }
+        if (in == null) {
+            throw new InstallException(InstallFailure.HASH_MISMATCH, "mod jar: host app file missing: " + path);
+        }
+        return in;
+    }
+
+    private static int readFromJar(InputStream in, byte[] buf, String path) throws InstallException {
+        try {
+            return in.read(buf);
+        } catch (IOException e) {
+            throw new InstallException(InstallFailure.HASH_MISMATCH, "mod jar: cannot read host app " + path, e);
+        }
+    }
+
+    private static FileOutputStream openForWrite(File target, String path) throws InstallException {
+        try {
+            return new FileOutputStream(target);
+        } catch (IOException e) {
+            throw new InstallException(InstallFailure.INSTALL_DIR_NOT_WRITABLE, "cannot write host app " + path, e);
+        }
     }
 
     private static byte[] readCapped(InputStream in, int cap) throws IOException {

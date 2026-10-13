@@ -73,7 +73,10 @@ final class DownloadState {
         try {
             FileOps.writeAtomic(f, json.getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot write " + f.getName() + ": " + e, e);
+            throw new InstallException(
+                InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+                "cannot write " + f.getName() + ": " + e,
+                e);
         }
     }
 }

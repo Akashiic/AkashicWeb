@@ -3,10 +3,11 @@ package com.akashiic.web.client.install;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 
 /** Small file helpers shared by the installer classes. */
 final class FileOps {
@@ -16,15 +17,19 @@ final class FileOps {
 
     private FileOps() {}
 
-    /** Writes via a temp file in the same folder and an atomic rename, so readers never see half a file. */
+    /**
+     * Writes via a temp file in the same folder and an atomic rename, so readers never see half a file. The bytes are
+     * on disk before the rename: after a power loss the name holds either the old content or the whole new one.
+     */
     static void writeAtomic(File target, byte[] bytes) throws IOException {
         File dir = target.getAbsoluteFile()
             .getParentFile();
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("cannot create " + dir);
         File tmp = new File(dir, target.getName() + ".tmp-" + Long.toHexString(System.nanoTime()));
-        try (OutputStream out = new FileOutputStream(tmp)) {
+        try (FileOutputStream out = new FileOutputStream(tmp)) {
             out.write(bytes);
-            out.flush();
+            out.getFD()
+                .sync();
         }
         try {
             move(tmp, target);
@@ -59,12 +64,20 @@ final class FileOps {
         throw last;
     }
 
-    /** Deletes a file or folder tree, best effort; returns false if something is left (in use on Windows). */
+    /**
+     * Deletes a file or folder tree, best effort; returns false if something is left (in use on Windows). A link is
+     * deleted as a link: the tree it points to is never ours.
+     */
     static boolean deleteTree(File f) {
-        if (f == null || !f.exists()) return true;
+        if (f == null) return true;
+        BasicFileAttributes a;
+        try {
+            a = Files.readAttributes(f.toPath(), BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException e) {
+            return !f.exists(); // gone already, or unreadable (then it stays and the caller hears about it)
+        }
         boolean ok = true;
-        // Never follow a symlinked folder: only its link is ours to delete.
-        if (f.isDirectory() && !Files.isSymbolicLink(f.toPath())) {
+        if (descend(a)) {
             File[] children = f.listFiles();
             if (children != null) {
                 for (File c : children) ok &= deleteTree(c);
@@ -73,9 +86,18 @@ final class FileOps {
         return f.delete() && ok;
     }
 
+    /**
+     * True only for a plain folder. Read without following links, a symbolic link is a link, and an NTFS junction or
+     * mount point is "other" (a reparse point) even though {@link File#isDirectory()} is true for it: descending into
+     * either would delete files outside our folder (another user could plant one there).
+     */
+    static boolean descend(BasicFileAttributes a) {
+        return a.isDirectory() && !a.isSymbolicLink() && !a.isOther();
+    }
+
     static void ensureDir(File dir) throws InstallException {
         if (!dir.isDirectory() && !dir.mkdirs()) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot create folder " + dir);
+            throw new InstallException(InstallFailure.INSTALL_DIR_NOT_WRITABLE, "cannot create folder " + dir);
         }
     }
 

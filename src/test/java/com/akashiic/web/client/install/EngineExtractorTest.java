@@ -191,4 +191,57 @@ class EngineExtractorTest {
         assertEquals("d3dcompiler_47.dll", EngineExtractor.installedPath("d3dcompiler_47.dll", t));
         assertEquals("AkashicWebHost", EngineExtractor.installedPath("electron", EngineManifest.LINUX_X64));
     }
+
+    /**
+     * Review finding (medium, 1c): the zip is hashed by path and reopened later, so another local user could swap it
+     * in between. Every written file must still be the pinned one.
+     */
+    @Test
+    void aZipSwappedAfterItsHashCheckIsCaughtFileByFile() throws Exception {
+        Map<String, byte[]> pinned = TestSupport.windowsLikeEntries(1);
+        File zip = writeZip(pinned);
+        EngineTarget t = winTarget(zip);
+        Map<String, byte[]> swapped = TestSupport.windowsLikeEntries(1);
+        swapped.put("ffmpeg.dll", TestSupport.random(20_000, 666)); // same name and size, other bytes
+        Files.write(zip.toPath(), TestSupport.zip(swapped));
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> extractor.extract(zip, t, new File(tmp, "staging"), ProgressListener.NONE));
+        assertEquals(InstallFailure.HASH_MISMATCH, e.failure);
+        assertTrue(e.detail.contains("ffmpeg.dll is not the pinned file"), e.detail);
+    }
+
+    @Test
+    void aZipMissingAPinnedFileIsRejected() throws Exception {
+        Map<String, byte[]> pinned = TestSupport.windowsLikeEntries(1);
+        File zip = writeZip(pinned);
+        EngineTarget t = winTarget(zip);
+        pinned.remove("resources.pak");
+        Files.write(zip.toPath(), TestSupport.zip(pinned));
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> extractor.extract(zip, t, new File(tmp, "staging"), ProgressListener.NONE));
+        assertEquals(InstallFailure.HASH_MISMATCH, e.failure);
+    }
+
+    /** The production pins were generated from the official zips; their counts and sizes must stay consistent. */
+    @Test
+    void productionPinsMatchTheKeptBytes() {
+        long win = 0;
+        for (LocalManifest.Entry e : EngineManifest.WIN32_X64.vendorFiles.values()) win += e.size;
+        long linux = 0;
+        for (LocalManifest.Entry e : EngineManifest.LINUX_X64.vendorFiles.values()) linux += e.size;
+        assertEquals(19, EngineManifest.WIN32_X64.vendorFiles.size());
+        assertEquals(18, EngineManifest.LINUX_X64.vendorFiles.size());
+        assertEquals(EngineManifest.WIN32_X64_KEPT_BYTES, win);
+        assertEquals(EngineManifest.LINUX_X64_KEPT_BYTES, linux);
+        for (EngineTarget t : new EngineTarget[] { EngineManifest.WIN32_X64, EngineManifest.LINUX_X64 }) {
+            for (String path : t.vendorFiles.keySet()) {
+                assertEquals(
+                    path,
+                    EngineExtractor.installedPath(path.equals(t.hostExecutable) ? t.vendorExecutable : path, t));
+                assertTrue(SafePath.isSafeRelative(path), path);
+            }
+        }
+    }
 }
