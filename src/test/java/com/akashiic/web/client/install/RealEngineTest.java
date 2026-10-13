@@ -68,7 +68,7 @@ class RealEngineTest {
             app,
             File::getUsableSpace,
             System::currentTimeMillis);
-        File engine = installer.installFromZip(zip, ProgressListener.NONE);
+        File engine = installer.installFromZip(zip, ProgressListener.NONE).dir;
         assertEquals(new File(paths.engineRoot(), t.dirName()), engine);
 
         File exe = new File(engine, t.hostExecutable);

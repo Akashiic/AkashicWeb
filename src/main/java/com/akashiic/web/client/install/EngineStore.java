@@ -136,7 +136,8 @@ final class EngineStore {
         }
     }
 
-    void writeMarker(File dir, LocalManifest m, String hostExecutable, long nowMs) throws InstallException {
+    /** Writes the marker and returns what it says, so callers never depend on reading it back. */
+    Marker writeMarker(File dir, LocalManifest m, String hostExecutable, long nowMs) throws InstallException {
         Properties p = new Properties();
         p.setProperty("engine", m.engineId);
         p.setProperty("zip-sha256", m.zipSha256);
@@ -155,6 +156,7 @@ final class EngineStore {
                 "cannot write the install marker: " + e,
                 e);
         }
+        return new Marker(m.engineId, m.zipSha256, m.digest(), hostExecutable, nowMs);
     }
 
     static Marker readMarker(File dir) {

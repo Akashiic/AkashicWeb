@@ -61,4 +61,22 @@ class EngineStoreTest {
             () -> new EngineStore(root).writeMarker(dir, m, "x", 1L));
         assertEquals(InstallFailure.INSTALL_DIR_NOT_WRITABLE, e.failure);
     }
+
+    /** Review finding (low, 9a): the marker comes back from writeMarker, never from re-reading the file. */
+    @Test
+    void writeMarkerReturnsWhatItWrote() throws Exception {
+        File d = dir("engine");
+        LocalManifest m = new LocalManifest(
+            "electron-44.7.0-linux-x64",
+            Sha256.ofUtf8("zip"),
+            java.util.Collections.singletonList(new LocalManifest.Entry("AkashicWebHost", 1, Sha256.ofUtf8("x"))));
+        EngineStore.Marker written = new EngineStore(root).writeMarker(d, m, "AkashicWebHost", 42L);
+        EngineStore.Marker read = EngineStore.readMarker(d);
+        assertEquals(read.engineId, written.engineId);
+        assertEquals(read.zipSha256, written.zipSha256);
+        assertEquals(read.manifestSha256, written.manifestSha256);
+        assertEquals(read.hostExecutable, written.hostExecutable);
+        assertEquals(read.installedMs, written.installedMs);
+        assertEquals(m.digest(), written.manifestSha256);
+    }
 }

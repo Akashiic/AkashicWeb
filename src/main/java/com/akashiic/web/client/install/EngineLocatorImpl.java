@@ -6,6 +6,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.ToLongFunction;
@@ -21,16 +22,23 @@ import com.akashiic.web.common.ReasonCode;
  *
  * <pre>
  * ABSENT --probe--> UNSUPPORTED(reason)            platform gate: nothing is ever downloaded
+ *               +-> FAILED(SAC_BLOCKED)            Smart App Control enforce (checked at every Windows start)
  *               +-> READY                          engine folder passes the quick check (host app refreshed)
- *               +-> FAILED(SAC_BLOCKED | reason)   Smart App Control enforce, damaged engine, no install folder
- *               +-> DOWNLOADING -> READY | FAILED  manual import found, or an earlier consented download resumes
+ *               +-> FAILED(reason)                 damaged engine, no install folder
+ *               +-> DOWNLOADING -> READY | FAILED  a zip in the import folder, or an install the player agreed to
+ *                                                  in an earlier session that did not finish (ConsentRecord)
  *               +-> CONSENT_NEEDED
  * CONSENT_NEEDED | FAILED --requestInstall()--> DOWNLOADING --> READY | FAILED
+ * any but UNSUPPORTED/DOWNLOADING --repair()--> (full re-hash) READY | DOWNLOADING --> READY | FAILED
+ * DOWNLOADING | CONSENT_NEEDED | FAILED --cancelInstall()--> CONSENT_NEEDED (partial download deleted)
  * READY --verifyAfterLoadFailure()--> READY (intact, repaired app, or rolled back) | FAILED
  * </pre>
  *
  * All file and network work runs on one background thread ({@code AkashicWeb-Engine-Installer}); the getters are
- * cheap, thread-safe reads of volatile fields, safe to call every frame from the render thread.
+ * cheap, thread-safe reads of volatile fields, safe to call every frame from the render thread. Nothing is downloaded
+ * without the player's consent: {@link #requestInstall()} or {@link #repair()} in this session, or a
+ * {@link ConsentRecord} for exactly this pin left by an install that was interrupted (the game closed) in an earlier
+ * one. A zip the player saved into the import folder is installed without asking: putting it there is their own act.
  */
 public final class EngineLocatorImpl implements EngineLocator {
 
@@ -40,6 +48,8 @@ public final class EngineLocatorImpl implements EngineLocator {
     private final Executor executor;
     private final AtomicBoolean started = new AtomicBoolean();
     private final AtomicBoolean installQueued = new AtomicBoolean();
+    /** Bumped by every {@link #cancelInstall()}; an install task started before a bump stops at its next check. */
+    private final AtomicInteger cancels = new AtomicInteger();
 
     private volatile EngineState state = new EngineState(EngineState.Kind.ABSENT, 0f, ReasonCode.ENGINE_ABSENT);
     private volatile String detail = "not probed yet";
@@ -50,6 +60,8 @@ public final class EngineLocatorImpl implements EngineLocator {
     private volatile EngineStore.Marker engineMarker;
     private volatile SmartAppControl.State sac = SmartAppControl.State.UNKNOWN;
     private volatile float lastProgress = -1f;
+    /** The download in progress, so {@link #cancelInstall()} can stop it from another thread. */
+    private volatile Downloader activeDownloader;
 
     private EngineLocatorImpl(Builder cfg) {
         this.cfg = cfg;
@@ -128,66 +140,148 @@ public final class EngineLocatorImpl implements EngineLocator {
     @Override
     public ConsentInfo consentInfo() {
         EngineTarget t = target;
-        InstallPaths p = paths;
-        return t == null ? null : ConsentInfo.of(t, p == null ? null : p.base);
+        return t == null ? null : ConsentInfo.of(t, paths);
     }
 
     @Override
     public void requestInstall() {
         EngineState.Kind k = state.kind;
         if (k == EngineState.Kind.UNSUPPORTED || k == EngineState.Kind.READY || k == EngineState.Kind.DOWNLOADING) {
-            LOG.info("Engine install not started: state is {}", state);
+            LOG.info("Engine install request ignored: state is {}", state);
             return;
         }
-        if (!installQueued.compareAndSet(false, true)) return; // a second click while queued
-        start(); // the probe runs first if nobody started it; the install task then re-checks the state
-        executor.execute(guarded("install", () -> {
+        queue("install", epoch -> installTask(false, epoch));
+    }
+
+    @Override
+    public void repair() {
+        EngineState.Kind k = state.kind;
+        if (k == EngineState.Kind.UNSUPPORTED || k == EngineState.Kind.DOWNLOADING) {
+            LOG.info("Engine repair request ignored: state is {}", state);
+            return;
+        }
+        queue("repair", epoch -> installTask(true, epoch));
+    }
+
+    @Override
+    public void cancelInstall() {
+        cancels.incrementAndGet();
+        Downloader d = activeDownloader;
+        if (d != null) d.cancel();
+        executor.execute(guarded("cancel", this::discardDownload));
+    }
+
+    @Override
+    public void verifyAfterLoadFailure() {
+        verifyAfterLoadFailure(null);
+    }
+
+    @Override
+    public void verifyAfterLoadFailure(String launchError) {
+        InstallFailure blocked = LaunchFailures.classify(launchError);
+        executor.execute(guarded("verify", () -> {
+            verify();
+            // The files are intact, yet Windows refused to start them: say so instead of letting the host relaunch.
+            if (blocked != null && state.kind == EngineState.Kind.READY) {
+                fail(EngineState.Kind.FAILED, blocked, LaunchFailures.describe(blocked, launchError));
+            }
+        }));
+    }
+
+    /** An install-like task, run once at a time; it gets the cancel epoch it was queued in. */
+    private interface Task {
+
+        void run(int epoch);
+    }
+
+    private void queue(String name, Task task) {
+        if (!installQueued.compareAndSet(false, true)) {
+            LOG.info("Engine {} request ignored: another one is already queued", name);
+            return;
+        }
+        final int epoch = cancels.get();
+        start(); // the probe runs first if nobody started it; the task then re-checks the state
+        executor.execute(guarded(name, () -> {
             try {
-                install(null);
+                task.run(epoch);
             } finally {
                 installQueued.set(false);
             }
         }));
     }
 
-    @Override
-    public void verifyAfterLoadFailure() {
-        executor.execute(guarded("verify", this::verify));
+    private boolean cancelled(int epoch) {
+        return cancels.get() != epoch;
     }
 
     // ---------------------------------------------------------------- tasks (installer thread only)
 
     private void probe() {
+        if (!prepare(true)) return;
+        // Every Windows start, also with an engine installed: evaluation mode can switch itself to enforce later.
+        if (windows() && sacBlocks()) return;
+        if (useInstalledEngine(false)) return;
+        File imported = ImportScanner.find(paths.importDir(), target);
+        if (imported != null) {
+            install(imported, false, cancels.get()); // the player saved the official zip there themselves
+            return;
+        }
+        if (ConsentRecord.matches(paths.downloadDir(), target)) {
+            LOG.info("Resuming the engine install agreed to in an earlier session");
+            install(null, false, cancels.get());
+            return;
+        }
+        set(new EngineState(EngineState.Kind.CONSENT_NEEDED, 0f, ReasonCode.ENGINE_ABSENT), "consent needed");
+    }
+
+    /**
+     * Decides platform, pinned target and install folder. Runs again when {@code force} is set or an earlier attempt
+     * failed (a folder that was not writable may be now), so a Repair or Install click is never a silent no-op.
+     *
+     * @return false when the state was settled as UNSUPPORTED or FAILED
+     */
+    private boolean prepare(boolean force) {
+        if (!force && decision != null && target != null && paths != null) return true;
         decision = PlatformGate.decide(cfg.facts);
         if (!decision.supported()) {
             fail(EngineState.Kind.UNSUPPORTED, decision.failure, decision.detail);
-            return;
+            return false;
         }
         target = cfg.targets.apply(decision.kind);
         try {
             paths = resolvePaths();
             FileOps.ensureDir(paths.importDir()); // so players can find the folder
         } catch (InstallException e) {
+            paths = null;
+            fail(EngineState.Kind.FAILED, e.failure, e.detail);
+            return false;
+        }
+        return true;
+    }
+
+    private void installTask(boolean repair, int epoch) {
+        if (!prepare(repair)) return;
+        if (windows() && sacBlocks()) return;
+        if (repair && useInstalledEngine(true) && state.kind == EngineState.Kind.READY) return;
+        if (cancelled(epoch)) return;
+        try {
+            // The player pressed Install (or Repair, shown with the same facts): remember it until the install ends.
+            ConsentRecord.write(paths.downloadDir(), target, cfg.clock.getAsLong());
+        } catch (InstallException e) {
             fail(EngineState.Kind.FAILED, e.failure, e.detail);
             return;
         }
-        if (useInstalledEngine()) return;
-        if (decision.kind == PlatformGate.Kind.WINDOWS_X64 && sacBlocks()) return;
-        File imported = ImportScanner.find(paths.importDir(), target);
-        boolean resumePending = new File(paths.downloadDir(), target.assetName + ".state.json").isFile();
-        if (imported != null || resumePending) {
-            // The player consented before (a partial download exists) or chose to import by hand.
-            install(imported);
-            return;
-        }
-        set(new EngineState(EngineState.Kind.CONSENT_NEEDED, 0f, ReasonCode.ENGINE_ABSENT), "consent needed");
+        install(null, repair, epoch);
     }
 
-    /** True when the state was settled from an existing engine folder (READY or FAILED). */
-    private boolean useInstalledEngine() {
+    /**
+     * True when the state was settled from an existing engine folder (READY or FAILED). {@code full} re-hashes every
+     * file (Repair); otherwise sizes only, plus the host app's hashes (a few KB).
+     */
+    private boolean useInstalledEngine(boolean full) {
         EngineStore store = new EngineStore(paths.engineRoot());
         File dir = store.dirFor(target);
-        EngineStore.Inspection in = EngineStore.inspect(dir, false);
+        EngineStore.Inspection in = EngineStore.inspect(dir, full);
         if (!in.installed()) return false;
         if (in.problem != null && !in.problem.hostAppOnly) {
             fail(EngineState.Kind.FAILED, in.problem.failure, "engine damaged: " + in.problem.detail);
@@ -197,12 +291,12 @@ public final class EngineLocatorImpl implements EngineLocator {
             File appDir = new File(dir, EngineManifest.APP_DIR);
             if (in.problem == null && HostApp.isCurrent(cfg.hostApp, appDir) && in.manifest.hostAppCheck(dir) == null) {
                 // The common start: nothing to write, so no lock (another instance may hold it for a long download).
-                ready(dir, in.marker, "installed");
+                ready(dir, in.marker, full ? "re-hashed: intact" : "installed");
                 return true;
             }
             try (InstallLock lock = InstallLock.acquire(paths.lockFile())) {
                 newInstaller().refreshHostApp(dir, in.marker);
-                EngineStore.Inspection again = EngineStore.inspect(dir, false);
+                EngineStore.Inspection again = EngineStore.inspect(dir, full);
                 if (!again.intact()) {
                     String why = again.problem != null ? again.problem.detail : "marker missing";
                     InstallFailure f = again.problem != null ? again.problem.failure : InstallFailure.HASH_MISMATCH;
@@ -217,6 +311,11 @@ public final class EngineLocatorImpl implements EngineLocator {
         return true;
     }
 
+    private boolean windows() {
+        PlatformGate.Decision d = decision;
+        return d != null && d.kind == PlatformGate.Kind.WINDOWS_X64;
+    }
+
     private boolean sacBlocks() {
         sac = cfg.sacProbe.apply(cfg.facts);
         if (sac == SmartAppControl.State.ENFORCE) {
@@ -226,33 +325,71 @@ public final class EngineLocatorImpl implements EngineLocator {
         return false;
     }
 
-    private void install(File importZip) {
+    /**
+     * Installs from {@code importZip}, or downloads. {@code replace}: the folder failed a full re-hash (Repair), so an
+     * engine that merely passes the quick check is not reused.
+     */
+    private void install(File importZip, boolean replace, int epoch) {
         EngineState.Kind k = state.kind;
         if (k == EngineState.Kind.READY || k == EngineState.Kind.UNSUPPORTED || target == null || paths == null) {
             return;
         }
         set(new EngineState(EngineState.Kind.DOWNLOADING, 0f, ReasonCode.OK), "installing " + target.engineId());
         try (InstallLock lock = InstallLock.acquire(paths.lockFile())) {
+            if (cancelled(epoch)) return; // the cancel task that follows settles the state and the files
             EngineStore store = new EngineStore(paths.engineRoot());
             store.cleanStaging();
             // Another game instance may have finished the same install while we waited for the lock.
             EngineStore.Inspection done = EngineStore.inspect(store.dirFor(target), false);
-            if (done.intact()) {
+            if (done.intact() && !replace) {
+                ConsentRecord.delete(paths.downloadDir(), target);
                 ready(done.dir, done.marker, "installed by another instance");
                 return;
             }
-            if (decision.kind == PlatformGate.Kind.WINDOWS_X64 && sacBlocks()) return;
+            if (windows() && sacBlocks()) return;
             File zip = importZip != null ? importZip : ImportScanner.find(paths.importDir(), target);
-            File dir = newInstaller().install(zip, this::progress);
-            ready(dir, EngineStore.readMarker(dir), zip != null ? "installed from import" : "downloaded and installed");
+            EngineInstaller installer = newInstaller();
+            activeDownloader = installer.downloader();
+            if (cancelled(epoch)) return;
+            EngineInstaller.Installed r = installer.install(zip, this::progress);
+            ConsentRecord.delete(paths.downloadDir(), target);
+            ready(r.dir, r.marker, zip != null ? "installed from import" : "downloaded and installed");
         } catch (InstallException e) {
+            if (cancelled(epoch)) return; // stopped by the player, not a failure
+            // A failed install asks again at the next start; the partial download stays for a resume after a "yes".
+            ConsentRecord.delete(paths.downloadDir(), target);
             fail(EngineState.Kind.FAILED, e.failure, e.detail);
+        } finally {
+            activeDownloader = null;
+        }
+    }
+
+    /** After {@link #cancelInstall()}: forget the consent and the partial download, under the install lock. */
+    private void discardDownload() {
+        InstallPaths p = paths;
+        EngineTarget t = target;
+        if (p != null && t != null) {
+            try (InstallLock lock = InstallLock.acquire(p.lockFile())) {
+                File dl = p.downloadDir();
+                ConsentRecord.delete(dl, t);
+                for (String suffix : new String[] { ".part", ".state.json", "" }) {
+                    File f = new File(dl, t.assetName + suffix);
+                    if (f.exists() && !f.delete()) LOG.warn("Could not delete {}", f.getName());
+                }
+            } catch (InstallException e) {
+                LOG.warn("Cancelled install: leftovers not removed ({})", e.detail);
+            }
+        }
+        // Only a stopped install changes the state: "Not now" on a FAILED screen must not hide the failure's reason.
+        if (state.kind == EngineState.Kind.DOWNLOADING) {
+            set(new EngineState(EngineState.Kind.CONSENT_NEEDED, 0f, ReasonCode.ENGINE_ABSENT), "install cancelled");
         }
     }
 
     private void verify() {
         File dir = engineDir;
         if (dir == null || paths == null) return;
+        if (windows() && sacBlocks()) return;
         EngineStore.Inspection full = EngineStore.inspect(dir, true);
         if (full.intact()) {
             LOG.info("Engine {} re-hashed after a load failure: intact", dir.getName());

@@ -38,16 +38,33 @@ final class EngineInstaller {
         this.clock = clock;
     }
 
+    /** A finished install: the engine folder and the marker just written into it. */
+    static final class Installed {
+
+        final File dir;
+        final EngineStore.Marker marker;
+
+        Installed(File dir, EngineStore.Marker marker) {
+            this.dir = dir;
+            this.marker = marker;
+        }
+    }
+
     EngineStore store() {
         return store;
+    }
+
+    /** The downloader this install uses, so a cancel from another thread can stop it. */
+    Downloader downloader() {
+        return downloader;
     }
 
     /**
      * Installs from {@code importZip} when given (already verified by {@link ImportScanner}), else downloads.
      *
-     * @return the engine folder, verified
+     * @return the engine folder, verified, and its marker
      */
-    File install(File importZip, ProgressListener.FractionSink progress) throws InstallException {
+    Installed install(File importZip, ProgressListener.FractionSink progress) throws InstallException {
         FileOps.ensureDir(paths.base);
         requireFreeSpace();
         File zip = importZip;
@@ -56,10 +73,10 @@ final class EngineInstaller {
             zip = downloader.download(target, paths.downloadDir(), ProgressListener.scaled(progress, 0f, 0.85f));
             downloaded = true;
         }
-        File dir = installFromZip(zip, ProgressListener.scaled(progress, downloaded ? 0.85f : 0f, 1f));
+        Installed done = installFromZip(zip, ProgressListener.scaled(progress, downloaded ? 0.85f : 0f, 1f));
         // The downloaded zip is ours and 158 MB; an imported one belongs to the player and stays.
         if (downloaded && !zip.delete()) LOG.warn("Could not delete {}", zip.getName());
-        return dir;
+        return done;
     }
 
     private void requireFreeSpace() throws InstallException {
@@ -72,7 +89,7 @@ final class EngineInstaller {
         }
     }
 
-    File installFromZip(File zip, ProgressListener progress) throws InstallException {
+    Installed installFromZip(File zip, ProgressListener progress) throws InstallException {
         File staging = store.newStaging(target);
         try {
             EngineExtractor.Result r = new EngineExtractor(usableSpace).extract(zip, target, staging, progress);
@@ -82,7 +99,7 @@ final class EngineInstaller {
             writeManifest(manifest, staging);
             File dir = store.dirFor(target);
             store.promote(staging, dir);
-            store.writeMarker(dir, manifest, target.hostExecutable, clock.getAsLong());
+            EngineStore.Marker marker = store.writeMarker(dir, manifest, target.hostExecutable, clock.getAsLong());
             // Full re-hash right after install (ADR-011). Bytes we just wrote and hashed cannot legitimately differ,
             // so a missing or changed file here is an on-write antivirus action.
             LocalManifest.Problem p = manifest.fullCheck(dir, target.hostExecutable);
@@ -98,7 +115,7 @@ final class EngineInstaller {
                 r.skipped,
                 r.bytesWritten);
             store.prune(dir);
-            return dir;
+            return new Installed(dir, marker);
         } finally {
             if (staging.exists() && !FileOps.deleteTree(staging)) LOG.warn("Staging folder left: {}", staging);
         }

@@ -246,21 +246,232 @@ class EngineLocatorImplTest {
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
     }
 
-    @Test
-    void interruptedDownloadResumesOnNextStartWithoutAskingAgain() throws Exception {
+    /** What a previous session left: half the file and its resume record. */
+    private File leavePartialDownload() throws Exception {
         File downloads = new File(base, "download");
         downloads.mkdirs();
-        // What a previous session left: half the file plus its state record (consent was given then).
         byte[] half = java.util.Arrays.copyOf(zip, zip.length / 2);
         Files.write(new File(downloads, target.assetName + ".part").toPath(), half);
-        File state = new File(downloads, target.assetName + ".state.json");
-        new DownloadState(target.url, "\"v1\"", target.size).write(state);
+        new DownloadState(target.url, "\"v1\"", target.size)
+            .write(new File(downloads, target.assetName + ".state.json"));
+        return downloads;
+    }
+
+    @Test
+    void anInstallInterruptedByClosingTheGameResumesAtTheNextStart() throws Exception {
+        File downloads = leavePartialDownload();
+        ConsentRecord.write(downloads, target, 1L); // the player pressed Install in that session
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
         assertEquals(
             "bytes=" + (zip.length / 2) + "-",
             server.entityRequests()
                 .get(0).range);
+        assertFalse(
+            ConsentRecord.file(downloads, target)
+                .exists(),
+            "consent is spent once the install is done");
+    }
+
+    /**
+     * Review finding (medium, 4, probe 'stateonly'): a resume file alone (planted, stale, or left by another
+     * instance) is not consent. Nothing is fetched until the player agrees; then the partial download resumes.
+     */
+    @Test
+    void aResumeFileAloneIsNotConsent() throws Exception {
+        leavePartialDownload();
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.CONSENT_NEEDED, l.state().kind, l.detail());
+        assertEquals(0, server.requestCount());
+        l.requestInstall();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertEquals(
+            "bytes=" + (zip.length / 2) + "-",
+            server.entityRequests()
+                .get(0).range,
+            "after the yes, the kept half is reused");
+    }
+
+    @Test
+    void consentForAnotherPinOrUrlIsNotConsent() throws Exception {
+        File downloads = leavePartialDownload();
+        EngineTarget otherUrl = new EngineTarget(
+            target.platform,
+            target.version,
+            target.assetName,
+            "https://mirror.invalid/" + target.assetName,
+            target.size,
+            target.sha256,
+            target.vendorExecutable,
+            target.hostExecutable,
+            target.windows,
+            target.unixExecutables);
+        ConsentRecord.write(downloads, otherUrl, 1L);
+        assertEquals(
+            EngineState.Kind.CONSENT_NEEDED,
+            started(builder(TestSupport.linuxDesktop(), target)).state().kind);
+        Files.write(
+            ConsentRecord.file(downloads, target)
+                .toPath(),
+            ("sha256=" + Sha256.ofUtf8("other zip") + "\nurl=" + target.url + "\n").getBytes(StandardCharsets.UTF_8));
+        assertEquals(
+            EngineState.Kind.CONSENT_NEEDED,
+            started(builder(TestSupport.linuxDesktop(), target)).state().kind);
+        assertEquals(0, server.requestCount());
+    }
+
+    /** Review finding (medium, 4): a failed install no longer re-downloads in the background at every start. */
+    @Test
+    void aFailedInstallAsksAgainAtTheNextStart() {
+        server.persistentStatus = 503;
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        l.requestInstall();
+        assertEquals(ReasonCode.DOWNLOAD_FAILED, l.state().reason);
+        int requests = server.requestCount();
+        EngineLocatorImpl next = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.CONSENT_NEEDED, next.state().kind, next.detail());
+        assertEquals(requests, server.requestCount(), "no background download without a new yes");
+    }
+
+    /** Review finding (medium, 4): the player can stop a download; everything it left is removed. */
+    @Test
+    void cancelStopsTheDownloadAndForgetsIt() throws Exception {
+        server.gateAt = zip.length / 2;
+        EngineLocatorImpl l = builder(TestSupport.linuxDesktop(), target).executor(null)
+            .build();
+        l.start();
+        l.requestInstall();
+        assertTrue(server.reached.await(20, TimeUnit.SECONDS), "download never reached the middle");
+        l.cancelInstall();
+        server.release.countDown();
+        long deadline = System.currentTimeMillis() + 20_000;
+        while (l.state().kind != EngineState.Kind.CONSENT_NEEDED && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        assertEquals(EngineState.Kind.CONSENT_NEEDED, l.state().kind, l.detail());
+        File downloads = new File(base, "download");
+        assertEquals(
+            0,
+            downloads.list().length,
+            "part, resume record and consent record are gone: " + java.util.Arrays.toString(downloads.list()));
+        assertFalse(engineDir().exists());
+        EngineLocatorImpl next = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.CONSENT_NEEDED, next.state().kind);
+    }
+
+    @Test
+    void notNowOnAFailureKeepsTheReason() {
+        server.persistentStatus = 404;
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        l.requestInstall();
+        l.cancelInstall();
+        assertEquals(EngineState.Kind.FAILED, l.state().kind);
+        assertEquals(ReasonCode.DOWNLOAD_FAILED, l.state().reason);
+    }
+
+    /** Review finding (low, 8): a failed probe is run again by the next Install click. */
+    @Test
+    void installAfterAFailedProbeProbesAgain() throws Exception {
+        assertTrue(
+            base.getParentFile()
+                .isDirectory()
+                || base.getParentFile()
+                    .mkdirs());
+        assertTrue(base.createNewFile()); // not a folder: nothing can be created inside
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(ReasonCode.INSTALL_DIR_NOT_WRITABLE, l.state().reason);
+        assertTrue(base.delete()); // the player fixed it
+        l.requestInstall();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+    }
+
+    @Test
+    void repairReinstallsDamageOnlyAFullRehashFinds() throws Exception {
+        installed();
+        File ffmpeg = new File(engineDir(), "libffmpeg.so");
+        byte[] bytes = Files.readAllBytes(ffmpeg.toPath());
+        bytes[10] ^= 1; // same size: the start-up check cannot see it
+        Files.write(ffmpeg.toPath(), bytes);
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.READY, l.state().kind);
+        int requests = server.requestCount();
+        l.repair();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertTrue(server.requestCount() > requests, "the engine was downloaded again");
+        assertTrue(
+            EngineStore.inspect(engineDir(), true)
+                .intact());
+    }
+
+    @Test
+    void repairOfAnIntactEngineDownloadsNothing() {
+        installed();
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        int requests = server.requestCount();
+        l.repair();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertTrue(
+            l.detail()
+                .contains("intact"),
+            l.detail());
+        assertEquals(requests, server.requestCount());
+    }
+
+    /** Review finding (low, 6): Smart App Control is read at every Windows start and after a load failure. */
+    @Test
+    void smartAppControlIsCheckedEvenWithAnEngineInstalled() throws Exception {
+        byte[] winZip = TestSupport.zip(TestSupport.windowsLikeEntries(9));
+        server.body = winZip;
+        EngineTarget win = TestSupport.target("win32-x64", target.url, winZip, true);
+        java.util.concurrent.atomic.AtomicReference<SmartAppControl.State> sacState = new java.util.concurrent.atomic.AtomicReference<>(
+            SmartAppControl.State.EVALUATION);
+        EngineLocatorImpl l = started(builder(TestSupport.windows10(), win).sacProbe(f -> sacState.get()));
+        l.requestInstall();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+
+        sacState.set(SmartAppControl.State.ENFORCE); // evaluation mode switched itself to enforce
+        l.verifyAfterLoadFailure();
+        assertEquals(ReasonCode.SAC_BLOCKED, l.state().reason, l.detail());
+        assertNull(l.hostExecutable());
+
+        EngineLocatorImpl next = started(builder(TestSupport.windows10(), win).sacProbe(f -> sacState.get()));
+        assertEquals(EngineState.Kind.FAILED, next.state().kind);
+        assertEquals(ReasonCode.SAC_BLOCKED, next.state().reason);
+    }
+
+    /** Review finding (high, 0, M2 part): a Windows refusal in the launch error names the real cause. */
+    @Test
+    void aWindowsRefusalInTheLaunchErrorBecomesItsReason() {
+        EngineLocatorImpl l = installed();
+        l.verifyAfterLoadFailure("java.io.IOException: Cannot run program \"x\": CreateProcess error=4551, An App...");
+        assertEquals(EngineState.Kind.FAILED, l.state().kind);
+        assertEquals(ReasonCode.SAC_BLOCKED, l.state().reason);
+        assertTrue(
+            l.detail()
+                .contains("error=4551"),
+            l.detail());
+
+        EngineLocatorImpl av = started(builder(TestSupport.linuxDesktop(), target));
+        av.verifyAfterLoadFailure("CreateProcess error=225, Operation did not complete successfully");
+        assertEquals(ReasonCode.AV_BLOCKED, av.state().reason);
+
+        EngineLocatorImpl other = started(builder(TestSupport.linuxDesktop(), target));
+        other.verifyAfterLoadFailure("exited before connecting");
+        assertEquals(EngineState.Kind.READY, other.state().kind, "an intact engine with an unknown error stays READY");
+    }
+
+    @Test
+    void consentInfoCarriesWhatTheConsentScreenAndImportHintNeed() {
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        ConsentInfo info = l.consentInfo();
+        assertEquals(target.assetName, info.zipName);
+        assertEquals(target.url, info.downloadUrl);
+        assertEquals(new File(base, "import"), info.importDir);
+        assertTrue(info.importDir.isDirectory(), "created so the player can find it");
+        assertEquals(base, info.installDir);
+        assertEquals(base.getPath(), info.installDirDisplay);
+        assertTrue(info.importDirDisplay.endsWith("import"), info.importDirDisplay);
+        assertTrue(info.diskBytes > 0 && info.requiredFreeBytes >= info.downloadBytes);
     }
 
     @Test
