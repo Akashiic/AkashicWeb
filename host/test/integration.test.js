@@ -599,7 +599,7 @@ test('public site through a loopback proxy: preload (volume, MEDIA while loading
     const last = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1).pop();
     assert.strictEqual(last.json.url, 'http://public.akw.test/', 'not blanked');
     // This WELCOME carries no userAgent: the host keeps its stock Chrome UA (never Electron's).
-    assert.deepStrictEqual([...site.userAgents], [STOCK_UA.replace('Windows NT 10.0; Win64; x64', 'X11; Linux x86_64')]);
+    assert.deepStrictEqual([...site.userAgents], [require('../src/messages').stockChromeUserAgent(process.platform, '152')]);
   });
 
   await t.test('a name that does not resolve behind a proxy is refused as dns-via-proxy', async () => {
