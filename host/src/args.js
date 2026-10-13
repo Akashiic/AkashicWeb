@@ -49,8 +49,10 @@ function positiveInt(raw, max) {
 function parseArgs(argv) {
   const port = positiveInt(argValue(argv, 'akw-port'), 65535);
   if (port == null) throw new ArgError('bad-port', argValue(argv, 'akw-port') || 'missing');
-  const parentPid = positiveInt(argValue(argv, 'akw-parent-pid'), 0x7fffffff);
-  if (parentPid == null) throw new ArgError('bad-parent-pid', argValue(argv, 'akw-parent-pid') || 'missing');
+  // 0 means "unknown" (the game could not read its own PID): the host then skips the parent poll.
+  const rawPid = argValue(argv, 'akw-parent-pid');
+  const parentPid = rawPid === '0' ? 0 : positiveInt(rawPid, 0x7fffffff);
+  if (parentPid == null) throw new ArgError('bad-parent-pid', rawPid || 'missing');
   const userData = argValue(argv, 'akw-user-data');
   if (!userData || !path.isAbsolute(userData)) throw new ArgError('bad-user-data', userData || 'missing');
   const logFile = argValue(argv, 'akw-log');

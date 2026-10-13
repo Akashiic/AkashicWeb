@@ -25,6 +25,13 @@ test('optional flags', () => {
   assert.strictEqual(parseArgs(base.slice(0, 4)).logFile, null);
 });
 
+test('--akw-parent-pid=0 means "unknown" (the parent poll is skipped), not an error', () => {
+  const a = parseArgs(base.map(s => (s.startsWith('--akw-parent-pid=') ? '--akw-parent-pid=0' : s)));
+  assert.strictEqual(a.parentPid, 0);
+  assert.throws(() => parseArgs(base.map(s => (s.startsWith('--akw-parent-pid=') ? '--akw-parent-pid=00' : s))), /bad-parent-pid/);
+  assert.throws(() => parseArgs(base.map(s => (s.startsWith('--akw-parent-pid=') ? '--akw-parent-pid=-1' : s))), /bad-parent-pid/);
+});
+
 test('rejects missing or invalid values with a code', () => {
   const without = name => base.filter(s => !s.startsWith('--' + name + '='));
   for (const [argv, code] of [

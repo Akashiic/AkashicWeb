@@ -1,4 +1,8 @@
 'use strict';
+// First statement on purpose: the AKW_TOKEN fallback is copied and removed from the environment before
+// any other code runs, so no child process that Chromium starts later can inherit it (token.js).
+const ENV_TOKEN = require('./token').takeEnvToken(process.env);
+
 // AkashicWebHost: the out-of-process browser of the AkashicWeb mod (ADR-001/002). It runs inside the
 // official, unmodified Electron build from resources/app/, renders every in-world screen offscreen
 // and talks to exactly one Minecraft client over one loopback TCP connection (docs/PROTOCOL.md).
@@ -133,8 +137,7 @@ async function main() {
   log.info('AkashicWebHost ' + pkg.version + ' electron ' + process.versions.electron + ' chrome ' + process.versions.chrome
     + ' ' + process.platform + '-' + process.arch + (args.gpu ? ' gpu' : ' software') + (allowFile ? ' TEST-allow-file' : ''));
   watchParent();
-  const tokenResult = await readToken(stdinOrNull(), process.env);
-  delete process.env.AKW_TOKEN; // renderers and helpers inherit the environment; the token stays here
+  const tokenResult = await readToken(stdinOrNull(), { AKW_TOKEN: ENV_TOKEN });
   if (!tokenResult) {
     log.error('no valid token on stdin or in AKW_TOKEN');
     return shutdown('no-token', EXIT.NO_TOKEN);
@@ -240,6 +243,8 @@ function wire(socket, token) {
 
   link.send(P.T.HELLO, 0, {
     token,
+    // The game's stale-host sweep needs the host's own PID; Java 8 on Windows cannot read a child's PID.
+    pid: process.pid,
     protoMajor: P.PROTO_MAJOR,
     protoMinor: P.PROTO_MINOR,
     hostVersion: pkg.version,
@@ -310,6 +315,11 @@ function stdinOrNull() {
 }
 
 function watchParent() {
+  if (args.parentPid === 0) {
+    // 0 = the game could not tell its own PID: rely on socket EOF alone.
+    log.info('parent PID unknown: parent poll disabled');
+    return;
+  }
   const check = () => {
     try {
       process.kill(args.parentPid, 0);

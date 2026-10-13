@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { PassThrough } = require('stream');
-const { readToken, isValidToken } = require('../src/token');
+const { readToken, isValidToken, takeEnvToken } = require('../src/token');
 
 const TOKEN = '0123456789abcdef0123456789ABCDEF';
 
@@ -61,4 +61,22 @@ test('an endless line is cut at 256 bytes', async () => {
   const p = readToken(s, {}, 1000);
   s.write('a'.repeat(300));
   assert.strictEqual(await p, null);
+});
+
+test('takeEnvToken copies AKW_TOKEN and removes it from the environment in one synchronous step', () => {
+  const env = { AKW_TOKEN: TOKEN, PATH: '/bin' };
+  assert.strictEqual(takeEnvToken(env), TOKEN);
+  assert.deepStrictEqual(env, { PATH: '/bin' }, 'gone before anything else can read or inherit it');
+  assert.strictEqual(takeEnvToken(env), null);
+  assert.strictEqual(takeEnvToken(null), null);
+});
+
+test('main.js takes the environment token before it loads anything else', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  const code = src.split('\n').filter(l => l.trim() && !l.trim().startsWith('//'));
+  assert.strictEqual(code[0], "'use strict';");
+  assert.match(code[1], /takeEnvToken\(process\.env\)/, 'second statement of main.js');
+  assert.ok(!/delete process\.env\.AKW_TOKEN/.test(src), 'no late delete after awaiting stdin');
 });

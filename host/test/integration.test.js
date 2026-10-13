@@ -84,6 +84,12 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     assert.strictEqual(hello.json.engine, 'electron');
     assert.match(hello.json.engineVersion, /^44\./);
     assert.match(hello.json.chromeVersion, /^152\./);
+    // HELLO.pid is the host's own browser process (the stale-host sweep needs it on Java 8/Windows).
+    assert.ok(Number.isInteger(hello.json.pid) && hello.json.pid > 0, 'pid ' + hello.json.pid);
+    if (process.platform === 'linux') {
+      const cmd = fs.readFileSync('/proc/' + hello.json.pid + '/cmdline', 'latin1');
+      assert.ok(cmd.includes('--akw-port=' + port) && !cmd.includes('--type='), 'HELLO.pid is the browser process');
+    }
   });
 
   game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: ['blocked.example'] }, locale: 'pt-BR', userAgent: STOCK_UA });
@@ -429,6 +435,24 @@ test('lifecycle: parent PID gone, missing token, forbidden switch', { skip: SKIP
       assert.ok(bye && bye.json.reason === 'parent-gone', 'BYE parent-gone');
     } finally {
       parent.kill('SIGKILL');
+      await game.close();
+    }
+  });
+
+  await t.test('--akw-parent-pid=0 (unknown) runs without the parent poll and quits on QUIT', async () => {
+    const game = new Game();
+    const port = await game.listen();
+    try {
+      game.spawnHost(port, { parentPid: 0 });
+      await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO with parent pid 0');
+      game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: null, locale: 'pt-BR' });
+      await sleep(2500); // longer than one poll period
+      assert.strictEqual(game.child.exitCode, null, 'still running');
+      assert.match(game.hostLog(), /parent poll disabled/);
+      game.send(P.T.QUIT, 0, null);
+      const exit = await Promise.race([game.exited, sleep(10000).then(() => null)]);
+      assert.ok(exit && exit.code === 0, 'QUIT exit ' + JSON.stringify(exit));
+    } finally {
       await game.close();
     }
   });
