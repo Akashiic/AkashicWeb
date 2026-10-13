@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
@@ -318,6 +319,23 @@ class NetCodecTest {
         NetCodec.writeVarInt(longName, name.length);
         longName.writeBytes(name);
         assertTrue(threw(() -> NetCodec.readString(longName, 32)));
+    }
+
+    /**
+     * Review finding: with the byte cap removed this file still passed, because the character check after decoding
+     * refused the same strings. Refused on the length alone means the payload was neither copied nor decoded.
+     */
+    @Test
+    void theByteCapIsCheckedBeforeThePayloadIsRead() {
+        ByteBuf b = Unpooled.buffer();
+        byte[] payload = new byte[32 * 3 + 1];
+        Arrays.fill(payload, (byte) 'a');
+        NetCodec.writeVarInt(b, payload.length);
+        int afterLength = b.writerIndex();
+        b.writeBytes(payload); // all of it readable: only the cap can refuse it before reading
+        CodecException e = assertThrows(CodecException.class, () -> NetCodec.readString(b, 32));
+        assertEquals(afterLength, b.readerIndex(), "nothing read past the length");
+        assertEquals("string of 97 bytes", e.getMessage());
     }
 
     @Test
