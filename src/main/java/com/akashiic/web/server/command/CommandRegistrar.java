@@ -2,9 +2,9 @@ package com.akashiic.web.server.command;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.function.Consumer;
 
 import net.minecraft.command.ICommand;
-import net.minecraft.command.ICommandManager;
 
 import com.akashiic.web.AkashicWeb;
 import com.akashiic.web.server.Admins;
@@ -13,30 +13,38 @@ import cpw.mods.fml.common.event.FMLServerStartingEvent;
 
 /**
  * Registers /web and /webadmin. On Crucible (Cauldron family) the command handler has
- * {@code registerCommand(String group, ICommand)}, which gates the command behind a Bukkit node named after the group,
- * so we pass the stable nodes {@code akashicweb.web} and {@code akashicweb.webadmin}. Without it (plain Forge) the
- * standard {@code registerServerCommand} is used. Found by reflection: no compile dependency on Crucible (ADR-010).
- * The exact Crucible signature is INFERRED from its patches and must be confirmed by the Crucible boot test.
+ * {@code registerCommand(String group, ICommand)}, which gates the command behind the Bukkit node
+ * {@code <group>.<command name>}, so we pass the group {@link Admins#NODE_GROUP} and get the stable nodes
+ * {@code akashicweb.web} and {@code akashicweb.webadmin}. LIVE-OBSERVED on Crucible staging-67b53034 (lead's boot log,
+ * 2026-10-13): passing the full node as the group gave {@code akashicweb.web.web}, which no grant matched. Without the
+ * method (plain Forge) the standard {@code registerServerCommand} is used. Found by reflection: no compile dependency
+ * on Crucible (ADR-010).
  */
 public final class CommandRegistrar {
 
     private CommandRegistrar() {}
 
     public static void register(FMLServerStartingEvent event) {
-        String a = register(event, new WebCommand(), Admins.NODE_WEB);
-        String b = register(event, new WebAdminCommand(), Admins.NODE_WEBADMIN);
+        Object manager = event.getServer()
+            .getCommandManager();
+        String a = register(manager, new WebCommand(), event::registerServerCommand);
+        String b = register(manager, new WebAdminCommand(), event::registerServerCommand);
         WebAdminCommand.registration = a.equals(b) ? a : a + "/" + b;
     }
 
-    private static String register(FMLServerStartingEvent event, ICommand command, String node) {
-        ICommandManager manager = event.getServer()
-            .getCommandManager();
+    /**
+     * Registers one command through the grouped Crucible method when the manager has it, else through
+     * {@code fallback}. Returns how: "group" or "forge".
+     */
+    static String register(Object manager, ICommand command, Consumer<ICommand> fallback) {
         Method grouped = groupedRegister(manager.getClass());
         if (grouped != null) {
             try {
-                grouped.invoke(manager, node, command);
-                AkashicWeb.LOG
-                    .info("AkashicWeb: /{} registered with permission node {}", command.getCommandName(), node);
+                grouped.invoke(manager, Admins.NODE_GROUP, command);
+                AkashicWeb.LOG.info(
+                    "AkashicWeb: /{} registered with Bukkit permission node {}",
+                    command.getCommandName(),
+                    node(command));
                 return "group";
             } catch (IllegalAccessException | InvocationTargetException | IllegalArgumentException e) {
                 AkashicWeb.LOG.warn(
@@ -45,8 +53,13 @@ public final class CommandRegistrar {
                     e.toString());
             }
         }
-        event.registerServerCommand(command);
+        fallback.accept(command);
         return "forge";
+    }
+
+    /** The node Crucible builds for a command registered in our group: group + "." + command name. */
+    static String node(ICommand command) {
+        return Admins.NODE_GROUP + "." + command.getCommandName();
     }
 
     /** The Crucible overload (public, searched through superclasses by getMethod), or null on plain Forge. */

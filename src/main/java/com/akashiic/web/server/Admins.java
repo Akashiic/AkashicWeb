@@ -18,9 +18,12 @@ import com.mojang.authlib.GameProfile;
 public final class Admins {
 
     public static final String NODE_ADMIN = "akashicweb.admin";
-    /** Crucible group node of /webadmin; holding it also grants the command. */
-    public static final String NODE_WEBADMIN = "akashicweb.webadmin";
-    public static final String NODE_WEB = "akashicweb.web";
+    /** Crucible command group: it builds each command's node as group + "." + command name. */
+    public static final String NODE_GROUP = "akashicweb";
+    /** Crucible node of /webadmin; holding it also grants the command. */
+    public static final String NODE_WEBADMIN = NODE_GROUP + ".webadmin";
+    /** Crucible node of /web (Bukkit's default for it is ops only: grant it to the default group). */
+    public static final String NODE_WEB = NODE_GROUP + ".web";
 
     private Admins() {}
 
