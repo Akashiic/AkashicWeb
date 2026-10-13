@@ -190,9 +190,10 @@ Exit codes (stable, `src/args.js` `EXIT`):
   - every document response (main frame and iframes) gets a CSP `sandbox` **without `allow-modals`**, so
     Blink ignores `print()` (and `alert`/`confirm`/`prompt`) in the document and in every frame it creates,
     fresh `about:blank` iframes included. Kept: scripts, same origin (cookies, storage), forms, popups,
-    pointer lock, presentation, orientation lock, top navigation after user activation, storage access.
-    Lost: setting `document.domain` throws, plugins. Measured on local pages only: YouTube/Twitch
-    compatibility is unverified and must be checked live;
+    pointer lock, presentation, orientation lock, top navigation after user activation, storage access,
+    downloads (so they still reach `will-download`, which cancels them and sends `download-cancelled`;
+    without it Blink drops them silently). Lost: setting `document.domain` throws, plugins. Measured on
+    local pages only: YouTube/Twitch compatibility is unverified and must be checked live;
   - service worker scripts are refused (a worker could serve documents that never get the header);
   - the preload installs a guard in the page's main world before any page script, in every frame where it
     runs: `print()`, `showOpenFilePicker`/`showSaveFilePicker`/`showDirectoryPicker`, file-input

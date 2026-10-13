@@ -535,6 +535,8 @@ function publicSite() {
       + 'const fresh=String(f.contentWindow.print).includes("native")?"native":"guarded";'
       + 'f.contentWindow.print();n++;frames[0].print();n++;window.print();n++;'
       + 'document.title="printed:"+n+"|fresh:"+fresh+"|main:"+(String(window.print).includes("native")?"native":"guarded")},300)</script></body>',
+    // A download started by the page itself (renderer-initiated, subject to the document's sandbox).
+    '/dl.html': '<!doctype html><title>dl</title><script>setTimeout(()=>{location.href="/file.bin"},200)</script>',
     // Registration from the page (main-world guard) and from a fresh iframe (no guard: network block).
     '/sw.html': '<!doctype html><title>sw-start</title><body><script>const r={};'
       + 'const done=()=>{if(r.main&&r.frame)document.title="sw:"+r.main+"|frame:"+r.frame};'
@@ -562,6 +564,11 @@ function publicSite() {
     if (p === '/sw.js') {
       res.writeHead(200, { 'Content-Type': 'text/javascript' });
       res.end('self.addEventListener("fetch", () => {});');
+      return;
+    }
+    if (p === '/file.bin') {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="file.bin"' });
+      res.end(Buffer.alloc(1024));
       return;
     }
     const body = pages[p];
@@ -643,6 +650,13 @@ test('public site through a loopback proxy: preload (volume, MEDIA while loading
     const st = await titleOf(game, 1, title => title.startsWith('printed:'), 'all print() calls returned', 8000, since);
     assert.match(st.json.title, /^printed:3\|fresh:\w+\|main:guarded$/);
     assert.ok(!game.messages.some(m => m.type === P.T.EVENT && m.idx >= since && m.json.kind === 'unresponsive'));
+  });
+
+  await t.test('a download the page starts under the sandbox header is cancelled and reported (EVENT download-cancelled)', async () => {
+    const since = game.mark();
+    game.send(P.T.NAVIGATE, 1, { url: 'http://public.akw.test/dl.html' });
+    const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'download-cancelled', 8000, 'download-cancelled', since);
+    assert.strictEqual(ev.json.detail.filename, 'file.bin');
   });
 
   await t.test('a page cannot register a service worker (it could serve documents without the sandbox header)', async () => {

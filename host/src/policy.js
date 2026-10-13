@@ -404,13 +404,14 @@ function attachRequestPolicy(ses, ctx) {
 // review). A CSP sandbox WITHOUT allow-modals makes Blink ignore print() (and alert/confirm/prompt) in
 // the document and in every frame it creates, because sandbox flags are inherited. Everything else is
 // kept: scripts, same origin (cookies, storage), forms, popups (still gated by the window-open
-// handler), pointer lock, presentation, orientation lock, top navigation after user activation and
-// storage access. What a sandbox still takes away and no keyword restores: setting document.domain
-// (throws SecurityError) and plugins (off anyway). Measured on local pages only (AUTOMATED, Linux);
-// YouTube/Twitch compatibility needs a live check.
+// handler), pointer lock, presentation, orientation lock, top navigation after user activation,
+// storage access, and downloads (so they still reach will-download, which cancels them and tells the
+// game, instead of Blink dropping them silently). What a sandbox still takes away and no keyword
+// restores: setting document.domain (throws SecurityError) and plugins (off anyway). Measured on local
+// pages only (AUTOMATED, Linux); YouTube/Twitch compatibility needs a live check.
 const DOCUMENT_SANDBOX = 'sandbox allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox '
   + 'allow-pointer-lock allow-presentation allow-orientation-lock allow-top-navigation-by-user-activation '
-  + 'allow-storage-access-by-user-activation';
+  + 'allow-storage-access-by-user-activation allow-downloads';
 
 /** Response headers of a document with the sandbox policy added as one more CSP (each is enforced). */
 function withSandboxCsp(headers) {

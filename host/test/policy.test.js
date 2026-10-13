@@ -330,6 +330,7 @@ test('document policy: every main-frame and iframe response gets a CSP sandbox w
   assert.strictEqual(flags[0], 'sandbox');
   assert.ok(!flags.includes('allow-modals'), 'print/alert/confirm/prompt blocked in every frame');
   for (const f of ['allow-scripts', 'allow-same-origin', 'allow-forms', 'allow-popups']) assert.ok(flags.includes(f), f);
+  assert.ok(flags.includes('allow-downloads'), 'downloads still reach will-download (cancelled and reported, not dropped silently)');
   assert.ok(!flags.includes('allow-top-navigation'), 'frames may move the top page only after user activation');
 });
 
