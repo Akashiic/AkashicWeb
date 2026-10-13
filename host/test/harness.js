@@ -191,10 +191,13 @@ function descendants(root) {
   return [...out];
 }
 
-/** Linux only: one {pid, type, rssKb, env} record per descendant process of `root`. */
+/**
+ * Linux only: one {pid, type, rssKb, env} record for `root` and each of its descendants. `root` is the browser process
+ * itself when DISPLAY is set (no xvfb-run wrapper).
+ */
 function processTree(root) {
   const out = [];
-  for (const pid of descendants(root)) {
+  for (const pid of [root, ...descendants(root)]) {
     try {
       // Chromium children rewrite their title, so arguments may be separated by spaces, not NULs.
       const cmd = fs.readFileSync('/proc/' + pid + '/cmdline', 'latin1').split(/[\0 ]/);

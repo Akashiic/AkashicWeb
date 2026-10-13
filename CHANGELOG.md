@@ -47,5 +47,6 @@
 - STATE, MEDIA and EVENT messages for a screen the game never created or already destroyed no longer reach the listeners (PCM already did not); they are counted in `/web doctor`. Host-level EVENTs on screen 0 (`policy-error`) still pass.
 - One internal-address rule set for the game (`UrlPolicy.isInternal`) and the host (`policy.js`): Java now refuses TEST-NET-1/2/3, the host Teredo (2001::/32) and IPv4-translated (::ffff:0:0:0/96) addresses. 92 shared vectors in `shared/address-vectors.json`, asserted by `UrlPolicyTest` and `host/test/policy.test.js`; rules in `docs/PROTOCOL.md` section 1, ADR-013 amendment "2026-10-13 alignment".
 - Reason codes `URL_DNS_VIA_PROXY` (host `blocked-url` reason `dns-via-proxy`, until now shown as `URL_DNS_FAILED`) and `POLICY_INVALID` (host `policy-error`: every screen with a browser shows it, instead of the `URL_BLOCKED` of the deny-all re-check), appended to `ReasonCode` with English and Brazilian Portuguese texts.
+- Host test harness: `processTree` now includes the root process, so the churn memory test also finds the browser process when `DISPLAY` is set (Electron started without the `xvfb-run` wrapper). Merged tree: host suite 216/216 with Electron 44.7.0 (Linux, Xvfb), Java build 656 tests / 2 skipped / 0 failed including `RealHostEndToEndTest` (AUTOMATED, Linux).
 
 No release yet.
