@@ -880,4 +880,61 @@ class EngineLocatorImplTest {
         assertFalse(staging.exists());
         assertFalse(swap.exists());
     }
+
+    /**
+     * After ENGINE_IN_USE the player may press Install instead of Repair. That must neither download (the engine is
+     * intact) nor adopt the other version's host app.
+     */
+    @Test
+    void installAfterEngineInUseNeverAdoptsTheOtherVersionsApp() throws Exception {
+        EngineLocatorImpl v1 = installed();
+        EngineLocatorImpl v2 = started(
+            builder(TestSupport.linuxDesktop(), target).hostApp(TestSupport.hostApp(hostAppV2())));
+        assertEquals(ReasonCode.ENGINE_IN_USE, v2.state().reason);
+        int requests = server.requestCount();
+        v2.requestInstall(); // v1 still runs
+        assertEquals(ReasonCode.ENGINE_IN_USE, v2.state().reason, v2.detail());
+        assertTrue(installedMainJs().contains("v1"));
+        v1.release();
+        v2.requestInstall();
+        assertEquals(EngineState.Kind.READY, v2.state().kind, v2.detail());
+        assertTrue(installedMainJs().contains("v2"), "v2's own app, not the one it found");
+        assertEquals(requests, server.requestCount(), "nothing was downloaded for an intact engine");
+    }
+
+    /**
+     * Two instances with different mod versions agreed to the same install. The other one finishes it while this one
+     * waits for the install lock; this one must then adopt the engine with its own host app, not the one it finds.
+     */
+    @Test
+    void anEngineInstalledByAnotherVersionWhileWaitingGetsThisVersionsApp() throws Exception {
+        installed().release(); // what the other version will have installed (its app: v1)
+        File parked = new File(tmp, "parked-engine");
+        assertTrue(engineDir().renameTo(parked));
+        File downloads = new File(base, "download");
+        ConsentRecord.write(downloads, target, 1L); // this instance (v2) agreed in an earlier session
+        Process otherInstaller = AppLockHolder.start(new File(base, "install.lock"));
+        EngineLocatorImpl v2;
+        try {
+            v2 = builder(TestSupport.linuxDesktop(), target).hostApp(TestSupport.hostApp(hostAppV2()))
+                .executor(null)
+                .build();
+            v2.start();
+            long deadline = System.currentTimeMillis() + 20_000;
+            while (v2.state().kind != EngineState.Kind.DOWNLOADING && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10);
+            }
+            assertEquals(EngineState.Kind.DOWNLOADING, v2.state().kind, "waiting for the other instance's install");
+            assertTrue(parked.renameTo(engineDir())); // the other instance's install completes
+        } finally {
+            otherInstaller.destroy();
+        }
+        assertTrue(otherInstaller.waitFor(10, TimeUnit.SECONDS));
+        long deadline = System.currentTimeMillis() + 20_000;
+        while (v2.state().kind == EngineState.Kind.DOWNLOADING && System.currentTimeMillis() < deadline)
+            Thread.sleep(10);
+        assertEquals(EngineState.Kind.READY, v2.state().kind, v2.detail());
+        assertTrue(installedMainJs().contains("v2"), "this version's own app, not the one it found");
+        assertEquals(0, server.entityHits.get() - 1, "only the first install downloaded");
+    }
 }

@@ -289,7 +289,14 @@ public final class EngineLocatorImpl implements EngineLocator {
     private void installTask(boolean repair, int epoch) {
         if (!prepare(repair)) return;
         if (windows() && sacBlocks()) return;
-        if (repair && useInstalledEngine(true) && state.kind == EngineState.Kind.READY) return;
+        boolean replace = repair;
+        // An engine that is already there is used (its host app refreshed) before anything is downloaded; Repair
+        // re-hashes it fully first.
+        if (useInstalledEngine(repair)) {
+            if (state.kind == EngineState.Kind.READY) return;
+            if (state.reason == ReasonCode.ENGINE_IN_USE) return; // intact, only in use: downloading cannot help
+            replace = true; // damaged: a fresh copy replaces it
+        }
         if (cancelled(epoch)) return;
         try {
             // The player pressed Install (or Repair, shown with the same facts): remember it until the install ends.
@@ -298,7 +305,7 @@ public final class EngineLocatorImpl implements EngineLocator {
             fail(EngineState.Kind.FAILED, e.failure, e.detail);
             return;
         }
-        install(null, repair, epoch);
+        install(null, replace, epoch);
     }
 
     /**
@@ -315,28 +322,42 @@ public final class EngineLocatorImpl implements EngineLocator {
             return true;
         }
         try {
-            File appDir = new File(dir, EngineManifest.APP_DIR);
-            if (in.problem == null && HostApp.isCurrent(cfg.hostApp, appDir, in.manifest)
-                && in.manifest.hostAppCheck(dir) == null) {
+            if (appCurrent(in)) {
                 // The common start: nothing to write, so no lock (another instance may hold it for a long download).
                 ready(dir, in.marker, full ? "re-hashed: intact" : "installed");
                 return true;
             }
             try (InstallLock lock = InstallLock.acquire(paths.lockFile())) {
-                newInstaller().refreshHostApp(dir, in.marker, appHold);
-                EngineStore.Inspection again = EngineStore.inspect(dir, known(), full);
-                if (!again.intact()) {
-                    String why = again.problem != null ? again.problem.detail : "marker missing";
-                    InstallFailure f = again.problem != null ? again.problem.failure : InstallFailure.HASH_MISMATCH;
-                    fail(EngineState.Kind.FAILED, f, "engine damaged: " + why);
-                    return true;
-                }
-                ready(dir, again.marker, "installed, host app updated");
+                adoptWithFreshApp(dir, in.marker, full);
             }
         } catch (InstallException e) {
             fail(EngineState.Kind.FAILED, e.failure, e.detail);
         }
         return true;
+    }
+
+    /** True when the folder is intact and its host app is exactly this jar's (files, manifest entries, hashes). */
+    private boolean appCurrent(EngineStore.Inspection in) throws InstallException {
+        return in.problem == null
+            && HostApp.isCurrent(cfg.hostApp, new File(in.dir, EngineManifest.APP_DIR), in.manifest)
+            && in.manifest.hostAppCheck(in.dir) == null;
+    }
+
+    /**
+     * Rewrites the host app from the jar, re-inspects, and settles READY or FAILED. The caller holds the install lock.
+     *
+     * @throws InstallException ENGINE_IN_USE when another instance may be running the host from this folder
+     */
+    private void adoptWithFreshApp(File dir, EngineStore.Marker marker, boolean full) throws InstallException {
+        newInstaller().refreshHostApp(dir, marker, appHold);
+        EngineStore.Inspection again = EngineStore.inspect(dir, known(), full);
+        if (!again.intact()) {
+            String why = again.problem != null ? again.problem.detail : "marker missing";
+            InstallFailure f = again.problem != null ? again.problem.failure : InstallFailure.HASH_MISMATCH;
+            fail(EngineState.Kind.FAILED, f, "engine damaged: " + why);
+            return;
+        }
+        ready(dir, again.marker, "installed, host app updated");
     }
 
     private boolean windows() {
@@ -371,8 +392,10 @@ public final class EngineLocatorImpl implements EngineLocator {
             // Another game instance may have finished the same install while we waited for the lock.
             EngineStore.Inspection done = EngineStore.inspect(store.dirFor(target), known(), false);
             if (done.intact() && !replace) {
+                // Possibly by an instance with another mod version: its host app is only adopted after the check.
                 ConsentRecord.delete(paths.downloadDir(), target);
-                ready(done.dir, done.marker, "installed by another instance");
+                if (appCurrent(done)) ready(done.dir, done.marker, "installed by another instance");
+                else adoptWithFreshApp(done.dir, done.marker, false);
                 return;
             }
             requireReplaceable(store.dirFor(target));
