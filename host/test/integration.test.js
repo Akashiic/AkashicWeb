@@ -650,6 +650,66 @@ test('public site through a loopback proxy: preload (volume, MEDIA while loading
   });
 });
 
+test('CREATE/DESTROY churn reuses cleared partitions: flat memory, nothing carried over', { skip: SKIP || (process.platform !== 'linux' && 'needs /proc'), timeout: 180000 }, async t => {
+  // Wave 1 made a new partition per SHARED CREATE; Electron never frees one, so the host grew by about
+  // 0.7 MB per CREATE/DESTROY. Now partitions are pooled and cleared before reuse.
+  const game = new Game();
+  const port = await game.listen();
+  const site = path.join(game.dir, 'site');
+  fs.mkdirSync(site, { recursive: true });
+  // Leaves 100 kB in localStorage; reports whether the previous screen's value is still there.
+  fs.writeFileSync(path.join(site, 'churn.html'), '<!doctype html><title>c</title><script>const prev=localStorage.getItem("akw");'
+    + 'localStorage.setItem("akw","x".repeat(100000));document.title="prev:"+(prev===null?"none":"leak")</script>');
+  const url = pathToFileURL(path.join(site, 'churn.html')).href;
+  const numbers = {};
+  t.after(async () => {
+    await game.close();
+    console.log('# churn numbers: ' + JSON.stringify(numbers));
+  });
+  game.spawnHost(port, { extraArgs: ['--akw-test-allow-file'] });
+  const hello = await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
+  game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: [] }, locale: 'pt-BR' });
+  const { processTree } = require('./harness');
+  const rssMb = () => {
+    const procs = processTree(game.child.pid);
+    // The browser (main) process: HELLO.pid, or the one launched with our --akw-port and no --type.
+    const browser = procs.find(p => p.pid === hello.json.pid)
+      || procs.find(p => {
+        try {
+          const cmd = fs.readFileSync('/proc/' + p.pid + '/cmdline', 'latin1');
+          return cmd.includes('--akw-port=' + port) && !cmd.includes('--type=') && !cmd.includes('xvfb');
+        } catch (e) {
+          return false;
+        }
+      });
+    assert.ok(browser, 'browser process found');
+    const network = procs.filter(p => /network/i.test(p.type)).reduce((a, p) => a + p.rssKb, 0);
+    return { browser: Math.round(browser.rssKb / 1024), network: Math.round(network / 1024) };
+  };
+  const titles = [];
+  const cycle = async n => {
+    for (let i = 0; i < n; i++) {
+      const since = game.mark();
+      game.send(P.T.CREATE, 1, { width: 160, height: 90, fps: 5, url, session: 'shared', audio: 'os', volume: 0 });
+      const st = await game.waitFor(m => m.type === P.T.STATE && m.screenId === 1 && /^prev:/.test(m.json.title) && !m.json.loading, 10000, 'churn page', since);
+      titles.push(st.json.title);
+      game.send(P.T.DESTROY, 1, null);
+      await sleep(60);
+    }
+    await sleep(2000);
+  };
+  await cycle(10);
+  const before = rssMb();
+  await cycle(80);
+  const after = rssMb();
+  numbers.before = before;
+  numbers.after80 = after;
+  numbers.browserGrowthMbPer100 = +(((after.browser - before.browser) / 80) * 100).toFixed(1);
+  numbers.partitionsCreated = (game.hostLog().match(/new partition akw-/g) || []).length;
+  assert.deepStrictEqual([...new Set(titles)], ['prev:none'], 'no localStorage carried from one screen to the next');
+  assert.ok(after.browser - before.browser < 20, 'browser process grew ' + (after.browser - before.browser) + ' MB over 80 cycles');
+});
+
 test('lifecycle: parent PID gone, missing token, forbidden switch', { skip: SKIP, timeout: 90000 }, async t => {
   await t.test('exits within ~2 s poll after the parent process dies', async () => {
     const game = new Game();

@@ -39,6 +39,7 @@ const EXIT_GRACE_MS = 3000;
 const state = {
   link: null,
   screens: null,
+  sessions: null,
   scheduler: null,
   shuttingDown: false,
   timers: [],
@@ -183,7 +184,7 @@ function wire(socket, token) {
     // The scheduler already asked for a full frame next time; only the first few are logged.
     onError: (screenId, err) => { if (++state.frameErrors <= 5) log.warn('frame of screen ' + screenId + ' dropped: ' + err.message); },
   });
-  const sessions = new SessionFactory({
+  const sessions = state.sessions = new SessionFactory({
     policy: () => state.policy,
     allowFile,
     userAgent: () => state.userAgent || app.userAgentFallback,
@@ -288,9 +289,11 @@ function sendFrame(screenId, image, rect) {
 
 function logStats() {
   const s = state.scheduler ? state.scheduler.stats : {};
+  const p = state.sessions ? state.sessions.stats : {};
   log.info('stats: screens=' + (state.screens ? state.screens.screens.size : 0) + ' frames offered=' + s.offered
-    + ' sent=' + s.sent + ' merged=' + s.merged + ' bytesOut=' + (state.link ? state.link.bytesOut : 0)
-    + ' eventsDropped=' + (state.screens ? state.screens.limiter.dropped : 0));
+    + ' sent=' + s.sent + ' merged=' + s.merged + ' errors=' + s.errors + ' bytesOut=' + (state.link ? state.link.bytesOut : 0)
+    + ' eventsDropped=' + (state.screens ? state.screens.limiter.dropped : 0)
+    + ' partitions created=' + p.created + ' reused=' + p.reused + ' broken=' + p.broken);
 }
 
 // A GPU or network service crash is restarted by Chromium; a crash loop means the host cannot work,
