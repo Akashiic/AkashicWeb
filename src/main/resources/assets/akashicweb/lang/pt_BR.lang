@@ -109,7 +109,7 @@ akashicweb.reason.popup_blocked=Pop-up bloqueado. %s
 akashicweb.reason.upload_failed=Falha ao desenhar a página. %s
 akashicweb.reason.texture_too_large=Resolução grande demais para esta placa de vídeo. %s
 akashicweb.reason.install_dir_not_writable=Sem permissão para gravar na pasta do navegador. %s
-akashicweb.reason.engine_in_use=Uma versão antiga do navegador ainda está em uso; feche o outro Minecraft. %s
+akashicweb.reason.engine_in_use=Outro Minecraft está usando o motor do navegador (talvez outra versão do AkashicWeb); feche-o e clique em Reparar. %s
 
 # Cartão de espera na tela
 akashicweb.placeholder.title=AkashicWeb

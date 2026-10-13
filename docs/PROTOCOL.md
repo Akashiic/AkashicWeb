@@ -116,3 +116,23 @@ Screen key = `(dimension, x, y, z, side)` of the multiblock origin. `epoch` incr
 **Forward compatibility.** Within one major, a field may only be appended at the end of an S2C packet: clients skip unknown trailing bytes of S2C packets and read appended fields only when present. C2S packets decode exactly (a trailing byte is malformed). A hello of another major is read no further than the version numbers and reaches the client as a mismatch (`PROTOCOL_MISMATCH` placeholder). Retired ids stay registered as tombstones. Protocol 1 has not shipped, so D-016 kept `MAJOR = 1`.
 
 **Clock.** One server clock (`server.ServerClock`: wall time at start-up plus monotonic elapsed time) stamps `S2CClockPong`, `S2CMediaClock` and `S2CHello`, and is the clock `C2SMediaSample.clientServerTimeMs` estimates.
+
+**Client behaviour (wave 2, M5).**
+- The controller adopts the server's echo of its own URL report without navigating again; reload, back, forward, home or a typed URL still navigate. Followers always navigate to the server's URL.
+- An empty or non-web URL means "no page": the client mutes and destroys the browser and shows the no-address card. A screen without a page gets no browser.
+- Back and forward go through `C2SNav` only; `stop` stays local.
+- A URL report is sent once per page per epoch. It is never sent when it carries credential parameters (`code`, `token`, `access_token`, `id_token`, `password`, …), is over 2048 characters, or is blocked by the site policy.
+- `C2SControl` timings on the client:
+  - The first gesture on a free screen sends `take` and is applied to the client's own browser at once, optimistically for 3 s.
+  - The take is retried at most once a second.
+  - The keepalive is sent at most every 5 s while the controller interacts.
+  - Control is released beyond 26 blocks, or 5 s after the screen keyboard closes unless the screen is used again.
+- Live rule: target lag = the largest known lag (the controller's `liveLagMs` and its lag measured on the follower's own timeline) + 0.5 s, never past the edge. When the two disagree by more than 20 s, followers steer on the lags alone. While the live edge is not yet known, the follower holds rate 1 with no seek.
+- A hello that follows a world unload (proxy transfer) resets the client clock; a re-sent hello (policy reload, kill switch) does not.
+- Host EVENT mapping:
+  - `blocked-url` reasons map to `URL_INVALID` / `URL_INTERNAL` / `URL_BLOCKED` / `URL_DNS_FAILED` / `POPUP_BLOCKED`.
+  - `screen-limit` maps to `BROWSER_BUDGET` or `TEXTURE_TOO_LARGE` by reason, and `capture-error` to `CAPTURE_FAILED`.
+  - A refusal of the screen's own page fails the screen. A link, redirect or sub-request refusal is only a notice to the driving player, at most one per screen and reason every 10 s.
+  - A crashed page is recreated after 5 s, doubling up to 60 s.
+  - Host-level EVENTs (screen 0) go to the log and `/awdoctor`.
+
