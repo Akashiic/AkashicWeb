@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -35,8 +36,16 @@ public final class SitePolicy {
 
     public final List<String> block;
 
+    /**
+     * @throws NullPointerException for a null mode or list: a policy without a mode would only fail later, far from
+     *                              the cause (writing S2CHello, the host's WELCOME, hashing), and in between read as
+     *                              an allowlist by accident. Untrusted input goes through {@link #of}, which maps a
+     *                              missing mode to ALLOWLIST (fail closed).
+     */
     public SitePolicy(Mode mode, List<String> allow, List<String> block) {
-        this.mode = mode;
+        this.mode = Objects.requireNonNull(mode, "mode");
+        Objects.requireNonNull(allow, "allow");
+        Objects.requireNonNull(block, "block");
         this.allow = Collections.unmodifiableList(new ArrayList<>(allow));
         this.block = Collections.unmodifiableList(new ArrayList<>(block));
     }

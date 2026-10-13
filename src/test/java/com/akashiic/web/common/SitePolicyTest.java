@@ -3,6 +3,7 @@ package com.akashiic.web.common;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -72,6 +73,16 @@ class SitePolicyTest {
         assertEquals(SitePolicy.Mode.BLOCKLIST, SitePolicy.parseMode(" blocklist "));
         assertNull(SitePolicy.parseMode("both"));
         assertEquals(SitePolicy.Mode.ALLOWLIST, SitePolicy.of(null, null, null).mode);
+    }
+
+    /** A policy always has a mode: a null one is refused where it is made, not when it is sent or hashed. */
+    @Test
+    void theConstructorRefusesANullModeOrList() {
+        List<String> none = Collections.emptyList();
+        assertThrows(NullPointerException.class, () -> new SitePolicy(null, none, none));
+        assertThrows(NullPointerException.class, () -> new SitePolicy(SitePolicy.Mode.ALLOWLIST, null, none));
+        assertThrows(NullPointerException.class, () -> new SitePolicy(SitePolicy.Mode.ALLOWLIST, none, null));
+        assertEquals(SitePolicy.Mode.BLOCKLIST, new SitePolicy(SitePolicy.Mode.BLOCKLIST, none, none).mode);
     }
 
     @Test
