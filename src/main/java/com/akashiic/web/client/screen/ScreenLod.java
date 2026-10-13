@@ -14,6 +14,13 @@ public final class ScreenLod {
     public static final int FPS_OFF_VIEW = 2;
     /** Sent with painting=false; the host keeps the page (and its audio) alive. */
     public static final int FPS_IDLE = 1;
+    /**
+     * How far the screen's tile is drawn: M4's TileEntityScreen.getMaxRenderDistanceSquared is 128 squared, measured
+     * by vanilla from the origin block. Beyond it a browser would paint and upload for nothing.
+     */
+    public static final double TESR_RANGE = 128;
+    /** An existing browser is kept a little beyond, against churn at the edge. */
+    public static final double TESR_KEEP_MARGIN = 8;
     /** Wider than any FOV setting (vanilla max 110° vertical, ~140° horizontal on wide screens) on purpose. */
     public static final double VIEW_HALF_ANGLE_DEG = 75;
 

@@ -39,6 +39,8 @@ import com.akashiic.web.common.ScreenKey;
 import com.akashiic.web.common.ScreenMode;
 import com.akashiic.web.common.ScreenState;
 import com.akashiic.web.common.SitePolicy;
+import com.akashiic.web.common.UrlGate;
+import com.akashiic.web.common.UrlPolicy;
 import com.akashiic.web.common.net.MediaSample;
 import com.akashiic.web.common.net.ScreenInput;
 import com.akashiic.web.common.net.ServerBound;
@@ -136,6 +138,8 @@ public final class ClientScreens {
     private final int maxBrowsers;
 
     private BrowserHost attachedHost;
+    /** A world was unloaded since the last hello: the next hello may come from another server behind the proxy. */
+    private boolean worldChangedSinceHello;
     private HostStatus lastStatus;
     private PlayerView view;
     private boolean ticked;
@@ -164,6 +168,11 @@ public final class ClientScreens {
 
     /** @param playerUuid the local player's UUID as the server knows it (D-016), or null from an older server */
     public void onHello(int protoMajor, int protoMinor, boolean killSwitch, SitePolicy policy, UUID playerUuid) {
+        // A hello after a world unload is a new server (a proxy transfer has no disconnect event): the old server's
+        // clock samples would otherwise steer followers for up to ~80 s until new pongs outvote them. A hello without
+        // one (policy reload, kill switch) keeps the clock.
+        if (worldChangedSinceHello) clock.reset();
+        worldChangedSinceHello = false;
         session.onHello(protoMajor, protoMinor, killSwitch, policy, playerUuid);
         LOG.info("AkashicWeb: server hello: {}", session);
         if (!session.allowsBrowsers()) destroyAllBrowsers();
@@ -462,6 +471,7 @@ public final class ClientScreens {
         for (ClientScreen s : new ArrayList<>(screens.values())) dispose(s);
         screens.clear();
         byHostId.clear();
+        worldChangedSinceHello = true;
     }
 
     /** Disconnect: as {@link #teardownAll()}, and the next server must send a new hello and clock. */
@@ -786,12 +796,15 @@ public final class ClientScreens {
             ScreenGeometry g = s.geometry();
             if (g == null || s.key.dim != v.dimension) {
                 s.distance = Double.POSITIVE_INFINITY;
+                s.originDistance = Double.POSITIVE_INFINITY;
                 s.inView = false;
                 s.priority = 0;
                 continue;
             }
             double lx = v.eyeX - s.key.x, ly = v.eyeY - s.key.y, lz = v.eyeZ - s.key.z;
             s.distance = g.distanceTo(lx, ly, lz);
+            double ox = lx - 0.5, oy = ly - 0.5, oz = lz - 0.5;
+            s.originDistance = Math.sqrt(ox * ox + oy * oy + oz * oz);
             double[] c = g.center();
             double[] center = { c[0] + s.key.x, c[1] + s.key.y, c[2] + s.key.z };
             s.inView = ScreenLod.inView(eye, look, center, g.boundingRadius());
@@ -804,6 +817,10 @@ public final class ClientScreens {
         for (ClientScreen s : screens.values()) {
             // No page, no browser: a fresh or cleared screen must not spend a browser or a budget slot.
             if (s.geometry() == null || Double.isInfinite(s.distance) || !hasPage(s.state().url)) continue;
+            // Never a browser for a screen the renderer does not draw (vanilla culls the tile beyond its render
+            // distance, measured from the origin block): it would paint, upload and outbid visible screens.
+            double drawn = ScreenLod.TESR_RANGE + (s.hostScreenId != 0 ? ScreenLod.TESR_KEEP_MARGIN : 0);
+            if (s.originDistance > drawn) continue;
             int dim = s.maxDimBlocks();
             candidates.add(
                 new BrowserBudget.Candidate<>(
@@ -929,12 +946,25 @@ public final class ClientScreens {
             now,
             s.lastUrlReportMs,
             s.reportedUrl)) return;
+        // One report per page and epoch: a report the server refuses (too long, blocked) leaves the epoch as it is,
+        // and resending it every second only fills the audit log. A new page or a new epoch reports again.
+        if (s.attemptedUrl != null && s.attemptedEpoch == s.state().epoch
+            && UrlConvergence.sameDocument(s.attemptedUrl, p.url)) return;
+        s.attemptedUrl = p.url;
+        s.attemptedEpoch = s.state().epoch;
+        // The server would refuse a URL its own site policy blocks (the host should have blocked it already).
+        SitePolicy policy = session.policy();
+        if (policy != null && !new UrlGate(REPORT_URLS, policy).check(p.url)
+            .ok()) return;
         s.reportedUrl = true;
         s.lastUrlReportMs = now;
         s.lastReportedUrl = p.url;
         server.get()
             .setUrl(s.key, s.state().epoch, p.url);
     }
+
+    /** The syntax and internal-address rules M2 checks URLs with before they reach the host (UrlPolicy(true, 2048)). */
+    private static final UrlPolicy REPORT_URLS = new UrlPolicy(true, UrlPolicy.MAX_URL_LENGTH);
 
     private void handleStatus(HostStatus status) {
         HostStatus previous = lastStatus;

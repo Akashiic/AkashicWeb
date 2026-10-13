@@ -75,6 +75,9 @@ public final class ClientScreen {
     long lastUrlReportMs;
     /** The page URL this controller reported last (C2SSetUrl), until the server's next URL arrives; null if none. */
     String lastReportedUrl;
+    /** The last page URL considered for a report, and in which epoch: each page is reported once per epoch. */
+    String attemptedUrl;
+    int attemptedEpoch;
 
     /** prune() did not find the tile at its last pass, since {@link #missingSinceMs}. */
     boolean missing;
@@ -82,6 +85,8 @@ public final class ClientScreen {
 
     // View, recomputed every tick
     double distance = Double.POSITIVE_INFINITY;
+    /** From the eye to the origin block's centre, as vanilla measures the tile's render distance. */
+    double originDistance = Double.POSITIVE_INFINITY;
     boolean inView;
     double priority;
     boolean granted;

@@ -172,6 +172,23 @@ class ClientScreensTest {
         assertEquals(ReasonCode.BROWSER_BUDGET.langKey(), p.detailKey);
     }
 
+    /** Review low finding: a telão 150 blocks away (beyond the 128-block tile render distance) outbid a monitor. */
+    @Test
+    void screensBeyondTheTileRenderDistanceGetNoBrowser() {
+        hello();
+        ScreenState telao = screen(0, 64, 36, "https://telao.example/", 1);
+        telao.key = new ScreenKey(0, 0, 64, -150, SOUTH);
+        screens.onScreenState(telao);
+        ScreenState monitor = screen(10, 4, 3, "https://monitor.example/", 1);
+        screens.onScreenState(monitor);
+        screens.tick(new PlayerView(0, 1, 65, 5, 0, 0, -1, ME, false, 1f, 1f));
+        List<String> urls = new ArrayList<>();
+        for (CreateSpec c : host.created) urls.add(c.url);
+        assertEquals(Collections.singletonList("https://monitor.example/"), urls, "the invisible telão gets nothing");
+        ClientScreen far = screens.get(telao.key);
+        assertEquals(0, far.hostScreenId());
+    }
+
     @Test
     void killSwitchMutesThenDestroys() {
         hello();
@@ -375,6 +392,56 @@ class ClientScreensTest {
         assertEquals(1, host.syncs.size(), host.calls.toString());
         assertEquals(98.5, host.syncs.get(0).targetMediaTime, 0.01, "edge 102 - (3.0 s controller lag + 0.5 s)");
         assertTrue(host.syncs.get(0).rate <= 1.0f, "never forward toward the edge");
+    }
+
+    /** Review low finding: a refused report was resent every second for as long as the page stayed there. */
+    @Test
+    void aReportIsSentOncePerPageAndEpochAndNeverForABlockedSite() {
+        screens.onHello(
+            Protocol.MAJOR,
+            Protocol.MINOR,
+            false,
+            SitePolicy.blocklist(Collections.singletonList("blocked.example")));
+        ScreenState s = screen(0, 2, 2, "https://a.example/", 1);
+        s.controller = ME;
+        screens.onScreenState(s);
+        tick();
+        int id = first().hostScreenId();
+        now[0] += UrlConvergence.NAVIGATE_SETTLE_MS;
+        PageState refusedByServer = new PageState("https://a.example/too-long", "", false, true, false, false);
+        for (int i = 0; i < 10; i++) {
+            screens.onHostState(id, refusedByServer);
+            now[0] += 1_000;
+            tick();
+        }
+        assertEquals(1, server.count("setUrl"), "the server refused it (epoch unchanged): not resent");
+        screens.onHostState(id, new PageState("https://blocked.example/", "", false, true, false, false));
+        now[0] += 1_000;
+        tick();
+        assertEquals(1, server.count("setUrl"), "the site policy would refuse it");
+        screens.onHostState(id, new PageState("https://a.example/next", "", false, true, false, false));
+        assertEquals(1, server.count("setUrl 1 https://a.example/next"), "a new page is reported");
+    }
+
+    @Test
+    void aHelloAfterAWorldChangeComesFromANewServerAndResetsTheClock() {
+        hello();
+        syncClock();
+        assertTrue(
+            screens.clock()
+                .ready());
+        hello(); // policy reload or kill switch: same server
+        assertTrue(
+            screens.clock()
+                .ready(),
+            "a re-sent hello keeps the clock");
+        screens.teardownAll(); // proxy transfer: world unload, no disconnect
+        hello();
+        assertEquals(
+            0,
+            screens.clock()
+                .samples(),
+            "the old server's samples are gone");
     }
 
     @Test
