@@ -19,7 +19,7 @@ const pkg = require('../package.json');
 const P = require('./protocol');
 const { EXIT, parseArgs, findDisallowedArgs, findForbiddenEnv } = require('./args');
 const { readToken } = require('./token');
-const { createLogger } = require('./log');
+const { createLogger, captureStdio } = require('./log');
 const { Link } = require('./link');
 const { FrameScheduler, imagePayloads } = require('./frames');
 const { Router } = require('./router');
@@ -60,7 +60,17 @@ try {
   app.exit(EXIT.BAD_ARGS);
 }
 
-const log = createLogger({ file: args && args.logFile, echo: app.isPackaged ? null : process.stderr });
+// The host owns its output: the --akw-log file is size-capped (log.js); the game stores the host's
+// stdout/stderr without a cap. JavaScript writes to stdout/stderr go into the log (echoed only in
+// unpackaged development/test runs), and Chromium's own logging is turned down to FATAL, which also
+// reaches the child processes (native writes cannot be redirected from JavaScript; measured: the lines
+// logged before this point remain).
+const rawStderr = { write: process.stderr.write.bind(process.stderr) }; // the logger's own echo (dev only)
+const log = createLogger({ file: args && args.logFile, echo: app.isPackaged ? null : rawStderr });
+captureStdio(log, { echo: !app.isPackaged });
+if (!app.commandLine.hasSwitch('enable-logging') && !app.commandLine.hasSwitch('log-level')) {
+  app.commandLine.appendSwitch('log-level', '3');
+}
 
 // Electron shows a modal error dialog for uncaught main-process exceptions; on a player's PC that
 // would pop over the game, so log and exit instead and let the game relaunch us. Installed first so

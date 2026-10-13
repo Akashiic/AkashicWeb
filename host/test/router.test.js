@@ -187,6 +187,46 @@ test('file logger appends lines and rotates past the size cap', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('captureStdio: stdout/stderr writes go into the size-capped log; echo only when asked', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { captureStdio } = require('../src/log');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'akw-log-'));
+  const file = path.join(dir, 'host.log');
+  const log = createLogger({ file, maxBytes: 400 });
+  const passed = [];
+  const out = { write: chunk => { passed.push(String(chunk)); return true; } };
+  const err = { write: chunk => { passed.push(String(chunk)); return true; } };
+  let restore = captureStdio(log, { streams: { stdout: out, stderr: err } });
+  let called = 0;
+  assert.strictEqual(out.write('hello from a stray console.log\n', () => { called++; }), true);
+  err.write(Buffer.from('(node) DeprecationWarning: x\n'));
+  for (let i = 0; i < 100; i++) err.write('flood line ' + i + ' ' + 'z'.repeat(50) + '\n');
+  restore();
+  assert.deepStrictEqual(passed, [], 'nothing reaches the real streams of a packaged host');
+  const all = (fs.existsSync(file + '.1') ? fs.readFileSync(file + '.1', 'utf8') : '') + fs.readFileSync(file, 'utf8');
+  assert.match(all, /ERR flood line 99 /);
+  assert.ok(fs.statSync(file).size < 600 && (!fs.existsSync(file + '.1') || fs.statSync(file + '.1').size < 600), 'capped by rotation');
+  restore = captureStdio(log, { streams: { stdout: out }, echo: true });
+  out.write('dev\n');
+  restore();
+  assert.deepStrictEqual(passed, ['dev\n'], 'echoed in development and test runs');
+  log.close();
+  return new Promise(r => setImmediate(r)).then(() => {
+    assert.strictEqual(called, 1, 'write callbacks still run');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+test('main.js captures stdio into the log and turns Chromium logging down to FATAL', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  assert.match(src, /captureStdio\(log, \{ echo: !app\.isPackaged \}\)/);
+  assert.match(src, /appendSwitch\('log-level', '3'\)/);
+});
+
 test('logger without a file (or with an unwritable one) does not throw', () => {
   const fs = require('fs');
   const os = require('os');

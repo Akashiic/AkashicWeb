@@ -677,6 +677,28 @@ test('display scaling: FRAME size equals the CREATE/RESIZE size and the page see
   assert.strictEqual(f.payload.length, 12 + 320 * 240 * 4);
 });
 
+test('the host owns its output: no Chromium log lines on stderr once the app runs', { skip: SKIP, timeout: 60000 }, async t => {
+  // The game stores the host's stdout/stderr without a size cap; the host's own capped log is --akw-log.
+  // Chromium logs ERROR and above to stderr by default; the host turns that down to FATAL at startup.
+  // Third-party libraries writing to stderr themselves (ALSA without a sound card, Linux only) and the
+  // lines Chromium logs before the app's JavaScript runs cannot be controlled and are not counted.
+  const game = new Game();
+  const port = await game.listen();
+  t.after(() => game.close());
+  game.spawnHost(port, { extraArgs: ['--akw-test-allow-file'] });
+  await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
+  game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: [] }, locale: 'pt-BR' });
+  // A screen (renderer, GPU, network service and the browser's platform services such as D-Bus on Linux
+  // start logging); no outbound request is made.
+  game.send(P.T.CREATE, 1, { width: 320, height: 180, fps: 5, url: '', session: 'shared', audio: 'os', volume: 0 });
+  await sleep(3000);
+  const lines = game.stderr.split('\n');
+  const start = lines.findIndex(l => l.startsWith('[akw-host]'));
+  assert.ok(start >= 0, 'the host ran');
+  const chromium = lines.slice(start).filter(l => /^\[\d+:\d+\/\d+\.\d+:(INFO|WARNING|ERROR|VERBOSE\d*):/.test(l));
+  assert.deepStrictEqual(chromium, [], 'Chromium log lines after the app started');
+});
+
 test('CREATE/DESTROY churn reuses cleared partitions: flat memory, nothing carried over', { skip: SKIP || (process.platform !== 'linux' && 'needs /proc'), timeout: 180000 }, async t => {
   // Wave 1 made a new partition per SHARED CREATE; Electron never frees one, so the host grew by about
   // 0.7 MB per CREATE/DESTROY. Now partitions are pooled and cleared before reuse.
