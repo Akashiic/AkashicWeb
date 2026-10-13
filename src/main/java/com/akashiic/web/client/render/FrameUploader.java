@@ -29,6 +29,8 @@ public final class FrameUploader {
     private static final Logger LOG = LogManager.getLogger(AkashicWeb.NAME);
     /** Log the first GL failure and then one in this many, so a broken driver does not flood the log. */
     private static final int LOG_EVERY = 200;
+    /** Consecutive frames at a size other than the requested one before the screen shows BAD_RESOLUTION. */
+    static final int WRONG_SIZE_LIMIT = 60;
 
     private final ClientScreens screens;
     private final LongSupplier timeMs;
@@ -109,6 +111,18 @@ public final class FrameUploader {
                 stats.recordDroppedSize();
                 s.carriedDamage = Rect.EMPTY; // the next frame at the new size reallocates and uploads in full
                 ring.release(slot);
+                // A few stale frames follow every resize; a page that keeps arriving at another size never shows,
+                // so after about two seconds of them the screen says so (once) instead of "Loading" forever.
+                if (++s.wrongSizeFrames == WRONG_SIZE_LIMIT) {
+                    String detail = slot.width + "x" + slot.height;
+                    s.onUploadFailure(ReasonCode.BAD_RESOLUTION, detail);
+                    LOG.warn(
+                        "AkashicWeb: {} paints {} but {}x{} was requested; frames are dropped",
+                        s.key,
+                        detail,
+                        s.pageWidth(),
+                        s.pageHeight());
+                }
                 return;
             case DROP_INVALID:
                 stats.recordDroppedInvalid();
@@ -136,6 +150,7 @@ public final class FrameUploader {
             stats.recordUpload(System.nanoTime() - t0, plan.bytes(), timeMs.getAsLong());
             s.carriedDamage = Rect.EMPTY;
             s.skippedFrames = 0;
+            s.wrongSizeFrames = 0;
             s.onFrameUploaded();
         } catch (RuntimeException e) {
             // Documented boundary (ADR-004 "On any exception, draw the placeholder"): the screen shows UPLOAD_FAILED

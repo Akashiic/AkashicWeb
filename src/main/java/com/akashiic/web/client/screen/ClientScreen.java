@@ -92,6 +92,8 @@ public final class ClientScreen {
     public FrameSlot heldSlot;
     public Rect carriedDamage = Rect.EMPTY;
     public int skippedFrames;
+    /** Consecutive frames dropped because their size is not the requested one. */
+    public int wrongSizeFrames;
 
     ClientScreen(ScreenState state) {
         this.key = state.key;

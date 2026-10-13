@@ -22,6 +22,7 @@ import org.apache.logging.log4j.Logger;
 import com.akashiic.web.AkashicWeb;
 import com.akashiic.web.client.host.BrowserHost;
 import com.akashiic.web.client.host.CreateSpec;
+import com.akashiic.web.client.host.FrameCanvas;
 import com.akashiic.web.client.host.FrameRing;
 import com.akashiic.web.client.host.HostStatus;
 import com.akashiic.web.client.host.InputEvent;
@@ -971,6 +972,7 @@ public final class ClientScreens {
         s.lastPointerX = -1;
         s.lastPointerY = -1;
         s.optimistic = false;
+        s.wrongSizeFrames = 0;
         s.audio.invalidate();
         resetSync(s);
     }
@@ -1010,11 +1012,19 @@ public final class ClientScreens {
         return st.mode == ScreenMode.PRIVATE && owner ? CreateSpec.Session.PRIVATE : CreateSpec.Session.SHARED;
     }
 
-    /** Page size in CSS pixels, clamped to what we accept; a missing size falls back to 1280x720 (ADR default). */
+    /**
+     * Page size in CSS pixels, clamped to what we accept; a missing size falls back to 1280x720 (ADR default). The
+     * area is clamped with M2's rule (one full frame must fit one FRAME, {@link FrameCanvas#MAX_PIXELS}: the height
+     * shrinks, the width stays), so the size we request is the size the host paints. Requesting 3840x2160 used to get
+     * 3840x1092 frames, which the uploader dropped as "wrong size" forever, with no reason shown.
+     */
     static int[] pageSize(ScreenState s) {
         int w = s.resolutionW > 0 ? s.resolutionW : 1280;
         int h = s.resolutionH > 0 ? s.resolutionH : 720;
-        return new int[] { Math.max(MIN_PAGE, Math.min(MAX_PAGE_W, w)), Math.max(MIN_PAGE, Math.min(MAX_PAGE_H, h)) };
+        w = Math.max(MIN_PAGE, Math.min(MAX_PAGE_W, w));
+        h = Math.max(MIN_PAGE, Math.min(MAX_PAGE_H, h));
+        if ((long) w * h > FrameCanvas.MAX_PIXELS) h = (int) Math.max(MIN_PAGE, FrameCanvas.MAX_PIXELS / w);
+        return new int[] { w, h };
     }
 
     /** Epochs only grow; a wrapped int is treated as newer. */

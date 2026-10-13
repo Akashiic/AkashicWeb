@@ -1,5 +1,6 @@
 package com.akashiic.web.client.screen;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -596,6 +597,28 @@ class ClientScreensTest {
         public void delete() {
             deleted = true;
         }
+    }
+
+    /** Review medium finding: we must request exactly the size M2 lets the host paint (one frame per FRAME). */
+    @Test
+    void requestedPageSizesFitOneFrameLikeM2Clamps() {
+        assertArrayEquals(new int[] { 3840, 1092 }, ClientScreens.pageSize(res(3840, 2160)));
+        assertArrayEquals(new int[] { 2048, 2047 }, ClientScreens.pageSize(res(2048, 2048)));
+        assertArrayEquals(new int[] { 2560, 1638 }, ClientScreens.pageSize(res(2560, 1640)));
+        assertArrayEquals(new int[] { 1920, 1080 }, ClientScreens.pageSize(res(1920, 1080)));
+        assertArrayEquals(new int[] { 1280, 720 }, ClientScreens.pageSize(res(0, 0)));
+        java.util.Random r = new java.util.Random(3);
+        for (int i = 0; i < 1_000; i++) {
+            int[] p = ClientScreens.pageSize(res(r.nextInt(5000) - 100, r.nextInt(5000) - 100));
+            assertTrue(com.akashiic.web.client.host.FrameCanvas.fits(p[0], p[1]), p[0] + "x" + p[1]);
+        }
+    }
+
+    private static ScreenState res(int w, int h) {
+        ScreenState s = screen(0, 2, 2, "https://a.example/", 1);
+        s.resolutionW = w;
+        s.resolutionH = h;
+        return s;
     }
 
     @Test
