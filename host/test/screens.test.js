@@ -68,6 +68,54 @@ test('a blocked-url flood never hides renderer-gone or capture-error; dropped on
   }
 });
 
+const PUBLIC = { endpoints: [{ address: '93.184.216.34', family: 'ipv4' }] };
+
+test('navigation order: a slow DNS answer for an older NAVIGATE never overtakes a newer one', async () => {
+  const f = fakeContext();
+  const sm = new ScreenManager(f.ctx);
+  try {
+    const s = sm.create(1, spec());
+    const wc = f.windows[0].webContents;
+    s.navigate({ url: 'https://slow.example/first' }); // needs DNS: waits for resolveHost
+    s.navigate({ url: 'https://8.8.8.8/second' }); // IP literal: loads at once
+    f.resolveCalls[0].resolve(PUBLIC);
+    await flush();
+    await flush();
+    assert.deepStrictEqual(wc.loads.filter(u => u !== 'about:blank'), ['https://8.8.8.8/second'], 'the stale first URL is never loaded');
+    // Two names: the second resolves first, then the first; only the second loads.
+    s.navigate({ url: 'https://a.example/1' });
+    s.navigate({ url: 'https://b.example/2' });
+    f.resolveCalls[2].resolve(PUBLIC);
+    await flush();
+    f.resolveCalls[1].resolve(PUBLIC);
+    await flush();
+    await flush();
+    assert.deepStrictEqual(wc.loads.filter(u => u !== 'about:blank').slice(1), ['https://b.example/2']);
+  } finally {
+    sm.destroyAll();
+  }
+});
+
+test('navigation order: back/forward/reload/stop cancel a load still waiting for DNS', async () => {
+  const f = fakeContext();
+  const sm = new ScreenManager(f.ctx);
+  try {
+    const s = sm.create(1, spec());
+    const wc = f.windows[0].webContents;
+    for (const action of ['back', 'forward', 'reload', 'stop']) {
+      const n = f.resolveCalls.length;
+      s.navigate({ url: 'https://late.example/' + action });
+      s.navigate({ action });
+      f.resolveCalls[n].resolve(PUBLIC);
+      await flush();
+      await flush();
+    }
+    assert.ok(!wc.loads.some(u => u.startsWith('https://late.example/')), wc.loads.join(','));
+  } finally {
+    sm.destroyAll();
+  }
+});
+
 test('RESIZE beyond the cap keeps the current size and answers EVENT screen-limit', async () => {
   const f = fakeContext();
   const sm = new ScreenManager(f.ctx);

@@ -74,7 +74,7 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
   });
 
   const t0 = Date.now();
-  game.spawnHost(port, { extraArgs: ['--akw-test-allow-file', '--host-resolver-rules=MAP rebind.akw.test 127.0.0.1'] });
+  game.spawnHost(port, { extraArgs: ['--akw-test-allow-file', '--host-resolver-rules=MAP rebind.akw.test 127.0.0.1, MAP slow.akw.test 93.184.216.34'] });
 
   await t.test('HELLO carries the stdin token and the engine identity', async () => {
     const hello = await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
@@ -333,6 +333,20 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     game.send(P.T.INPUT, 1, { type: 'mouseDown', x: 470, y: 315, button: 'left', clickCount: 1 });
     game.send(P.T.INPUT, 1, { type: 'mouseUp', x: 470, y: 315, button: 'left', clickCount: 1 });
     await titleOf(game, 1, title => title.includes('|file:prevented|'), 'file input click prevented', 8000, since);
+  });
+
+  await t.test('NAVIGATE order: a newer NAVIGATE wins over an older one still waiting for its DNS answer', async () => {
+    const since = game.mark();
+    const second = pageUrl.replace('page.html', 'page2.html') + '?second';
+    game.send(P.T.NAVIGATE, 1, { url: 'http://slow.akw.test/first' }); // resolved first (host-resolver-rules)
+    game.send(P.T.NAVIGATE, 1, { url: second }); // no DNS: loads at once
+    await game.waitFor(m => m.type === P.T.STATE && m.screenId === 1 && m.json.url === second && !m.json.loading, 8000, 'second page', since);
+    await sleep(1500);
+    const urls = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1 && m.idx >= since).map(m => m.json.url);
+    assert.ok(!urls.some(u => u.includes('slow.akw.test')), 'the older NAVIGATE never loaded: ' + urls.join(' '));
+    assert.strictEqual(urls[urls.length - 1], second);
+    game.send(P.T.NAVIGATE, 1, { url: pageUrl });
+    await titleOf(game, 1, title => title.startsWith('v:'), 'back on page 1', 8000, game.mark());
   });
 
   await t.test('slow game: full-page frames are replaced, not queued, while the game does not read for 4 s', async () => {

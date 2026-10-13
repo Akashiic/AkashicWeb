@@ -34,6 +34,10 @@ class Screen {
     this.destroyed = false;
     this.mapper = new InputMapper(spec.width, spec.height);
     this.capture = null;
+    // Navigation generation: every navigation request (load, back/forward/reload/stop, window.open)
+    // takes a new number; an answer that arrives later for an older number (a name resolution) is
+    // dropped, so a slow DNS answer can never overtake a newer NAVIGATE.
+    this.navGen = 0;
   }
 
   open() {
@@ -195,6 +199,7 @@ class Screen {
    */
   load(url) {
     if (this.destroyed) return;
+    const gen = ++this.navGen;
     const v = checkNavigation(url, this.ctx.policy(), 'main', { allowFile: this.ctx.allowFile });
     if (!v.ok) {
       this.refuse(v, 'navigate');
@@ -205,7 +210,7 @@ class Screen {
       return;
     }
     resolveVerdict(this.sessionEntry.session, v.host).then(r => {
-      if (this.destroyed) return;
+      if (this.destroyed || gen !== this.navGen) return; // a newer navigation was requested meanwhile
       if (r.ok) this._loadChecked(v.url);
       else this.refuse({ ok: false, reason: r.reason, host: v.host, url: v.url }, 'navigate');
     });
@@ -223,6 +228,7 @@ class Screen {
 
   navigate(cmd) {
     if (cmd.url) return this.load(cmd.url);
+    this.navGen++; // back/forward/reload/stop also cancel a load still waiting for its DNS answer
     const nh = this.wc.navigationHistory;
     switch (cmd.action) {
       case 'back': if (nh.canGoBack()) nh.goBack(); break;
