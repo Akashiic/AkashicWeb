@@ -578,7 +578,8 @@ public final class HostSupervisor {
             p.destroy();
             if (waitQuietly(p, 500)) return;
         }
-        if (pid > 0) {
+        // Only while it still runs: once reaped, its pid may belong to someone else.
+        if (pid > 0 && p.isAlive()) {
             try {
                 processes.kill(pid);
             } catch (RuntimeException e) {

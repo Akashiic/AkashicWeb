@@ -66,10 +66,9 @@ public final class BrowserHostImpl implements BrowserHost {
     }
 
     /**
-     * @param allowFileUrlsForTesting lets {@code file:///} URLs pass the client-side check. Only for the end-to-end
-     *                                test,
-     *                                which also starts its development host with the host's own test-only switch;
-     *                                package-private so game code cannot reach it.
+     * Test seam: {@code allowFileUrlsForTesting} lets {@code file:///} URLs pass the client-side check. Only the
+     * end-to-end test sets it, and it also starts its development host with the host's own test-only switch. The
+     * constructor is package-private so game code cannot reach it.
      */
     BrowserHostImpl(HostLaunchConfig config, HostClock clock, ProcessControl processes,
         boolean allowFileUrlsForTesting) {

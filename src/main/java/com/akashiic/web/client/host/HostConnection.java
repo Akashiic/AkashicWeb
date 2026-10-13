@@ -197,9 +197,8 @@ public final class HostConnection {
     }
 
     /**
-     * PING with a fresh nonce; the PONG updates {@link #lastRttMillis()}. The supervisor keeps one outstanding ping at
-     * a
-     * time ({@link #pingOutstanding()}), so {@link #pongOverdueMillis()} measures from the oldest unanswered one.
+     * PING with a fresh nonce; the PONG updates {@link #lastRttMillis()}. The supervisor sends one only when none is
+     * outstanding ({@link #pingOutstanding()}), so {@link #pongOverdueMillis()} counts from the unanswered one.
      */
     public boolean sendPing() {
         long nonce = nextNonce.getAndIncrement();
