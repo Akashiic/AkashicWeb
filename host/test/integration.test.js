@@ -55,7 +55,7 @@ function titleOf(game, screenId, pred, label, timeoutMs = 8000, since = 0) {
 function prepareSite(game) {
   const site = path.join(game.dir, 'site');
   fs.mkdirSync(site, { recursive: true });
-  for (const f of ['page.html', 'page2.html', 'frame.html']) fs.copyFileSync(path.join(__dirname, 'fixtures', f), path.join(site, f));
+  for (const f of fs.readdirSync(path.join(__dirname, 'fixtures'))) fs.copyFileSync(path.join(__dirname, 'fixtures', f), path.join(site, f));
   fs.writeFileSync(path.join(site, 'tone.wav'), toneWav());
   return pathToFileURL(path.join(site, 'page.html')).href;
 }
@@ -312,6 +312,21 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     since = game.mark();
     game.send(P.T.NAVIGATE, 1, { url: pageUrl });
     await titleOf(game, 1, title => title.startsWith('v:'), 'back on page 1', 8000, since);
+  });
+
+  await t.test('window.open from an iframe without user input is denied (EVENT blocked-url, reason popup)', async () => {
+    const since = game.mark();
+    const popupPage = pageUrl.replace('page.html', 'popup.html');
+    game.send(P.T.NAVIGATE, 1, { url: popupPage });
+    const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'blocked-url' && m.json.detail.reason === 'popup', 8000, 'popup refused', since);
+    assert.strictEqual(ev.json.detail.via, 'window-open');
+    assert.match(ev.json.detail.url, /page2\.html\?hijacked$/);
+    await sleep(700);
+    const urls = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1 && m.idx >= since).map(m => m.json.url);
+    assert.ok(!urls.some(u => u.includes('hijacked')), 'the iframe did not take the screen over: ' + urls.join(' '));
+    assert.strictEqual(urls[urls.length - 1], popupPage);
+    game.send(P.T.NAVIGATE, 1, { url: pageUrl });
+    await titleOf(game, 1, title => title.startsWith('v:'), 'back on page 1', 8000, game.mark());
   });
 
   await t.test('HTML fullscreen fills the page without resizing the offscreen view', async () => {

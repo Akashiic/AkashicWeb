@@ -116,6 +116,62 @@ test('navigation order: back/forward/reload/stop cancel a load still waiting for
   }
 });
 
+test('window.open without recent real input is denied with EVENT blocked-url reason popup', async () => {
+  let now = 10000;
+  const f = fakeContext({ now: () => now });
+  const sm = new ScreenManager(f.ctx);
+  try {
+    sm.create(1, spec());
+    const wc = f.windows[0].webContents;
+    assert.deepStrictEqual(wc.windowOpen('https://ads.example/landing'), { action: 'deny' });
+    await flush();
+    assert.ok(!wc.loads.includes('https://ads.example/landing'), 'no takeover without input');
+    const ev = f.events().pop();
+    assert.deepStrictEqual(ev, { screenId: 1, kind: 'blocked-url', detail: { url: 'https://ads.example/landing', host: 'ads.example', reason: 'popup', via: 'window-open' } });
+    // Input long ago does not count either.
+    sm.get(1).input({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
+    now += 1500;
+    wc.windowOpen('https://late.example/');
+    await flush();
+    assert.strictEqual(f.events().pop().detail.reason, 'popup');
+  } finally {
+    sm.destroyAll();
+  }
+});
+
+test('window.open right after a mouseUp or keyDown on that screen loads in the same screen, once', async () => {
+  let now = 10000;
+  const f = fakeContext({ now: () => now });
+  const sm = new ScreenManager(f.ctx);
+  try {
+    sm.create(1, spec());
+    sm.create(2, spec());
+    const wc1 = f.windows[0].webContents;
+    const wc2 = f.windows[1].webContents;
+    sm.get(1).input({ type: 'mouseDown', x: 1, y: 1, button: 'left', clickCount: 1 });
+    sm.get(1).input({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
+    now += 300;
+    wc2.windowOpen('https://8.8.8.8/other-screen'); // input on screen 1 does not activate screen 2
+    wc1.windowOpen('https://8.8.8.8/allowed');
+    wc1.windowOpen('https://8.8.8.8/second-popup'); // the input was consumed by the first popup
+    await flush();
+    assert.ok(wc1.loads.includes('https://8.8.8.8/allowed'));
+    assert.ok(!wc1.loads.includes('https://8.8.8.8/second-popup'));
+    assert.ok(!wc2.loads.includes('https://8.8.8.8/other-screen'));
+    sm.get(1).input({ type: 'keyDown', keyCode: 'Enter', modifiers: [] });
+    wc1.windowOpen('https://8.8.8.8/by-key');
+    await flush();
+    assert.ok(wc1.loads.includes('https://8.8.8.8/by-key'));
+    // A mouseMove is not an activation.
+    sm.get(1).input({ type: 'mouseMove', x: 3, y: 3 });
+    wc1.windowOpen('https://8.8.8.8/by-move');
+    await flush();
+    assert.ok(!wc1.loads.includes('https://8.8.8.8/by-move'));
+  } finally {
+    sm.destroyAll();
+  }
+});
+
 test('RESIZE beyond the cap keeps the current size and answers EVENT screen-limit', async () => {
   const f = fakeContext();
   const sm = new ScreenManager(f.ctx);

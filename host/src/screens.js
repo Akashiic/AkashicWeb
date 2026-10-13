@@ -14,10 +14,14 @@ const { guardScript } = require('./guard');
 const { SpatialCapture } = require('./capture');
 const { redactUrl } = require('./log');
 const { EventLimiter } = require('./limiter');
+const { monoMs } = require('./clock');
 
 const MAX_SCREENS = 16; // Java's browser budget is 2-4 (ADR-012 item 7); this is only a safety cap
 const MAX_TITLE = 256;
 const SUPPRESSED_REPORT_MS = 2000; // how often counts of rate-limited EVENTs are reported
+// window.open is honoured only this soon after real input (INPUT mouseUp/keyDown) on the same screen:
+// a stand-in for Chromium's user activation, which Electron's window-open handler does not report.
+const POPUP_AFTER_INPUT_MS = 1000;
 // Net errors that are our own doing or a user stop, not a load failure worth a placeholder.
 const QUIET_LOAD_ERRORS = new Set([-3 /* ERR_ABORTED */, -20 /* ERR_BLOCKED_BY_CLIENT */]);
 
@@ -38,6 +42,11 @@ class Screen {
     // takes a new number; an answer that arrives later for an older number (a name resolution) is
     // dropped, so a slow DNS answer can never overtake a newer NAVIGATE.
     this.navGen = 0;
+    this.lastActivationAt = -Infinity; // host monotonic ms of the last INPUT mouseUp/keyDown
+  }
+
+  now() {
+    return this.ctx.now ? this.ctx.now() : monoMs();
   }
 
   open() {
@@ -130,11 +139,25 @@ class Screen {
         this.blocked(v, 'will-redirect');
       }
     });
-    // No child windows (ADR-013): a popup becomes a navigation of this screen if the policy allows it.
+    // No child windows (ADR-013): a popup becomes a navigation of this screen if the policy allows it,
+    // and only right after real input on this screen. Electron has no popup blocker, so without the
+    // input rule any (ad) iframe could take the whole screen over at any time, on every client
+    // independently, away from the server's URL authority.
     wc.setWindowOpenHandler(details => {
+      const recentInput = this.now() - this.lastActivationAt <= POPUP_AFTER_INPUT_MS;
+      if (!recentInput) {
+        let host = '';
+        try { host = new URL(details.url).hostname; } catch (e) { /* malformed: reported as is */ }
+        this.blocked({ url: details.url, host, reason: 'popup' }, 'window-open');
+        return { action: 'deny' };
+      }
       const v = check(details.url, 'main');
-      if (v.ok) setImmediate(() => this.load(v.url));
-      else this.blocked(v, 'window-open');
+      if (v.ok) {
+        this.lastActivationAt = -Infinity; // one popup per input, like Chromium's activation consumption
+        setImmediate(() => this.load(v.url));
+      } else {
+        this.blocked(v, 'window-open');
+      }
       return { action: 'deny' };
     });
   }
@@ -242,6 +265,7 @@ class Screen {
 
   input(evt) {
     const events = this.mapper.map(evt);
+    if (evt.type === 'mouseUp' || evt.type === 'keyDown') this.lastActivationAt = this.now();
     if (events.length === 0) return;
     // sendInputEvent needs a focused view for keyboard input (web-contents.md); focusing per event
     // is cheap and keeps several offscreen screens independent.
