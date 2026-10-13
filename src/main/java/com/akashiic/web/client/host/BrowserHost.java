@@ -55,4 +55,13 @@ public interface BrowserHost {
     default java.util.List<String> diagnostics() {
         return java.util.Collections.emptyList();
     }
+
+    /**
+     * Detail of the last host failure: the launch error text (for example {@code CreateProcess error=4551}), the exit
+     * code or the protocol problem; "" when there was none. For the engine check after a failed launch
+     * ({@code EngineLocator.verifyAfterLoadFailure}). Added by M2 after v1.
+     */
+    default String lastFailureDetail() {
+        return "";
+    }
 }

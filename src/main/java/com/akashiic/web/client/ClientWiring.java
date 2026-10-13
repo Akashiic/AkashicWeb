@@ -132,8 +132,11 @@ public final class ClientWiring {
         Set<ServiceWatcher.Action> actions = watcher.update(engine, host == null ? null : host.status());
         if (host == null) return;
         if (actions.contains(ServiceWatcher.Action.VERIFY)) {
-            // The installer reads App Control and antivirus refusals out of the launch error text (M3).
-            String why = String.join("\n", host.diagnostics());
+            // The installer reads App Control and antivirus refusals out of the launch error text (M3): the host's
+            // last failure detail is that text. The diagnostics (status, paths, per-screen lines) are only a fallback
+            // for a host that keeps no detail.
+            String detail = host.lastFailureDetail();
+            String why = detail == null || detail.isEmpty() ? String.join("\n", host.diagnostics()) : detail;
             AkashicWeb.LOG.warn("AkashicWeb: browser host stopped ({}); verifying the engine", host.status());
             locator.verifyAfterLoadFailure(why);
         }

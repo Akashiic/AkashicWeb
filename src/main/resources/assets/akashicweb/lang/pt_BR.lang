@@ -110,6 +110,8 @@ akashicweb.reason.upload_failed=Falha ao desenhar a página. %s
 akashicweb.reason.texture_too_large=Resolução grande demais para esta placa de vídeo. %s
 akashicweb.reason.install_dir_not_writable=Sem permissão para gravar na pasta do navegador. %s
 akashicweb.reason.engine_in_use=Outro Minecraft está usando o motor do navegador (talvez outra versão do AkashicWeb); feche-o e clique em Reparar. %s
+akashicweb.reason.url_dns_via_proxy=Não foi possível verificar o site porque este PC usa um proxy: %s
+akashicweb.reason.policy_invalid=O navegador não conseguiu ler as regras de sites do servidor, então todas as páginas estão bloqueadas. %s
 
 # Cartão de espera na tela
 akashicweb.placeholder.title=AkashicWeb

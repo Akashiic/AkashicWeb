@@ -769,13 +769,21 @@ class ClientScreensTest {
         tick();
         screens.onHostEvent(
             0,
+            HostMessages.event("{\"kind\":\"load-error\",\"detail\":{\"description\":\"host-wide hiccup\"}}"));
+        assertNull(first().failure(), "another host-level event is not a screen failure");
+        // W3-0: the host fell back to deny-all, so every page it shows is blocked; the screen says why.
+        screens.onHostEvent(
+            0,
             HostMessages
                 .event("{\"kind\":\"policy-error\",\"detail\":{\"error\":\"bad mode\",\"applied\":\"deny-all\"}}"));
-        assertNull(first().failure(), "not a screen failure");
-        assertTrue(notices.isEmpty());
+        assertEquals(ReasonCode.POLICY_INVALID, first().failure());
+        assertEquals(ReasonCode.POLICY_INVALID.langKey(), screens.placeholder(first()).detailKey);
+        assertTrue(notices.isEmpty(), "no chat notice");
         String doctor = String.join("\n", screens.diagnostics(now[0]));
         assertTrue(
-            doctor.contains("host event:") && doctor.contains("policy-error") && doctor.contains("bad mode"),
+            doctor.contains("host event:") && doctor.contains("policy-error")
+                && doctor.contains("bad mode")
+                && doctor.contains("POLICY_INVALID"),
             doctor);
     }
 

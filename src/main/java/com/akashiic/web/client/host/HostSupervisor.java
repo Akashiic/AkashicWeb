@@ -2,12 +2,14 @@ package com.akashiic.web.client.host;
 
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
+import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -35,6 +37,12 @@ import com.akashiic.web.protocol.Protocol;
  * closes the socket and kills the child as a last resort.
  *
  * <p>
+ * Host exit codes (docs/PROTOCOL.md section 1) refine the failure: a host that ends before connecting is judged by its
+ * code at once; when the connection drops before or after HELLO, the supervisor waits up to
+ * {@link HostLaunchConfig#exitCodeWaitMillis} (500 ms) for the code. 64 (bad argument) and 65 (forbidden switch)
+ * disable the host, since the same command line would fail again; see {@link HostFailure#forExitCode}.
+ *
+ * <p>
  * Status changes are reported on the supervisor thread through {@link Callbacks#onStatus}.
  */
 public final class HostSupervisor {
@@ -49,6 +57,8 @@ public final class HostSupervisor {
     static final long QUIT_FLUSH_MILLIS = 300;
 
     private static final long ACCEPT_POLL_MILLIS = 100;
+    /** {@link #exitCode} of a process that has not exited (no real exit code is this value). */
+    private static final int STILL_RUNNING = Integer.MIN_VALUE;
     private static final boolean WINDOWS = System.getProperty("os.name", "")
         .toLowerCase(Locale.ROOT)
         .startsWith("windows");
@@ -368,7 +378,7 @@ public final class HostSupervisor {
             } // The listener closes here: exactly one connection is ever accepted per launch.
 
             DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream(), 64 * 1024));
-            HelloInfo hello = handshake(socket, in, token);
+            HelloInfo hello = handshake(socket, in, token, p);
             if (pid <= 0 && hello.pid > 0) {
                 pid = hello.pid; // Java 8 on Windows: trust the authenticated host for its own pid
                 recordPid(p, pid, command.get(0));
@@ -395,13 +405,23 @@ public final class HostSupervisor {
             callbacks.onDisconnected(conn);
             boolean healthy = clock.nowMillis() - connectedAt >= config.stableRunMillis;
             HostFailure why = conn.closeReason() == null ? HostFailure.CONNECTION_LOST : conn.closeReason();
+            String detail = conn.closeDetail();
+            if (why == HostFailure.CONNECTION_LOST && !isStopping()) {
+                // The host ended the connection: its exit code, if it comes within a moment, says why (68, 69).
+                int code = exitCode(p, config.exitCodeWaitMillis);
+                HostFailure byCode = code == STILL_RUNNING ? null : HostFailure.forExitCode(code, conn.welcomeSent());
+                if (byCode != null) {
+                    why = byCode;
+                    detail = detail + "; " + HostFailure.describeExit(code);
+                }
+            }
             // Report DOWN now, not after the exit grace below, so placeholders appear as soon as frames stop.
             if (!isStopping() && !why.disables()) {
                 lastFailure = why;
-                lastFailureDetail = conn.closeDetail();
+                lastFailureDetail = detail;
                 publish(HostStatus.down(why.reason()));
             }
-            result = new RunResult(why, conn.closeDetail(), healthy);
+            result = new RunResult(why, detail, healthy);
         } catch (RunFailure f) {
             result = new RunResult(f.failure, f.getMessage(), false);
         } catch (IOException e) {
@@ -470,7 +490,7 @@ public final class HostSupervisor {
             try {
                 return server.accept();
             } catch (SocketTimeoutException e) {
-                if (!p.isAlive()) throw new RunFailure(HostFailure.EXITED_BEFORE_CONNECT, "exited before connecting");
+                if (!p.isAlive()) throw exitedBeforeConnect(p);
                 if (System.nanoTime() - deadline > 0) throw new RunFailure(
                     HostFailure.CONNECT_TIMEOUT,
                     "no connection within " + config.connectTimeoutMillis + " ms");
@@ -478,13 +498,52 @@ public final class HostSupervisor {
         }
     }
 
+    /**
+     * The host ended before it connected: its exit code names the failure when the host defines it (bad argument,
+     * forbidden switch, no token, connect failure), else {@link HostFailure#EXITED_BEFORE_CONNECT}.
+     */
+    private static RunFailure exitedBeforeConnect(Process p) {
+        int code = exitCode(p, 0);
+        HostFailure byCode = code == STILL_RUNNING ? null : HostFailure.forExitCode(code, false);
+        String meaning = code == STILL_RUNNING ? null : HostFailure.describeExit(code);
+        return new RunFailure(
+            byCode == null ? HostFailure.EXITED_BEFORE_CONNECT : byCode,
+            "exited before connecting" + (meaning == null ? "" : ": " + meaning));
+    }
+
+    /**
+     * The connection dropped before a whole HELLO arrived: waits up to {@link HostLaunchConfig#exitCodeWaitMillis}
+     * for the host to exit and lets a defined exit code name the failure, else {@link HostFailure#BAD_HELLO}.
+     */
+    private RunFailure closedBeforeHello(Process p, String detail) {
+        int code = exitCode(p, config.exitCodeWaitMillis);
+        HostFailure byCode = code == STILL_RUNNING ? null : HostFailure.forExitCode(code, false);
+        if (byCode == null) return new RunFailure(HostFailure.BAD_HELLO, detail);
+        return new RunFailure(byCode, detail + "; " + HostFailure.describeExit(code));
+    }
+
+    /**
+     * Exit code of {@code p}, waiting at most {@code millis} for it to exit (on the supervisor thread only), or
+     * {@link #STILL_RUNNING}.
+     */
+    private static int exitCode(Process p, long millis) {
+        if (p == null) return STILL_RUNNING;
+        if (millis > 0) waitQuietly(p, millis);
+        if (p.isAlive()) return STILL_RUNNING;
+        try {
+            return p.exitValue();
+        } catch (IllegalThreadStateException e) {
+            return STILL_RUNNING;
+        }
+    }
+
     /** Reads HELLO from {@code in}; on any failure the socket is closed and a {@link RunFailure} thrown. */
-    private HelloInfo handshake(Socket socket, DataInputStream in, String token) throws RunFailure {
+    private HelloInfo handshake(Socket socket, DataInputStream in, String token, Process p) throws RunFailure {
         try {
             socket.setTcpNoDelay(true);
             socket.setSoTimeout((int) Math.min(Integer.MAX_VALUE, config.connectTimeoutMillis));
             HostProtocol.Header h = HostProtocol.readHeader(in);
-            if (h == null) throw new RunFailure(HostFailure.BAD_HELLO, "closed before HELLO");
+            if (h == null) throw closedBeforeHello(p, "closed before HELLO");
             if (h.type != HostProtocol.HELLO)
                 throw new RunFailure(HostFailure.BAD_HELLO, "first message type " + h.type);
             if (h.length > MAX_HELLO_BYTES)
@@ -506,6 +565,10 @@ public final class HostSupervisor {
         } catch (SocketTimeoutException e) {
             closeQuietly(socket);
             throw new RunFailure(HostFailure.BAD_HELLO, "no HELLO within " + config.connectTimeoutMillis + " ms");
+        } catch (EOFException | SocketException e) {
+            // Cut inside HELLO, or reset: the host is going away.
+            closeQuietly(socket);
+            throw closedBeforeHello(p, e.toString());
         } catch (IOException e) {
             closeQuietly(socket);
             throw new RunFailure(HostFailure.BAD_HELLO, e.getMessage());

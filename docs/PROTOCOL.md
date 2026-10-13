@@ -23,6 +23,8 @@ Grade: BUILD / AUTOMATED (Linux container, Electron 44.7.0): the Java side (`cli
 
 Host exit codes: 0 normal; 64 bad `--akw-*` argument or profile directory; 65 forbidden switch, or (packaged) any non-`--akw-*` argument or forbidden variable; 66 no token; 67 could not connect within 5 s; 68 no WELCOME within 10 s, protocol major mismatch or malformed WELCOME; 69 bytes that are not protocol v1; 70 uncaught exception or child crash loop. BYE reasons: `quit`, `parent-gone`, `protocol-error`, `protocol-mismatch`, `bad-welcome`, `welcome-timeout`, `internal-error`, `child-crash-loop-<type>`, `signal-<SIG>`.
 
+Java maps the exit codes (`HostFailure.forExitCode`): 64 `HOST_LAUNCH_FAILED` and 65 `HOST_FORBIDDEN_SWITCH` disable the host (the same command line would fail again); 66 `HOST_HANDSHAKE`; 67 `HOST_CONNECT_FAILED` (relaunch with backoff); 68 `HOST_PROTOCOL_ERROR` once Java's WELCOME was written, `HOST_HANDSHAKE` before; 69 `HOST_PROTOCOL_ERROR`; any other code keeps the failure Java saw (`HOST_EXITED` for a host that ended before connecting or dropped the connection). A host that ended before connecting is judged at once; when the connection drops before or after HELLO, the supervisor thread waits up to 500 ms for the exit code.
+
 Loopback TCP is the only frame transport (amendment to ADR-003: stdio and Java `RandomAccessFile` named pipes are rejected for frames).
 
 ### Framing
@@ -73,6 +75,16 @@ Java also raises two EVENTs locally, never on the wire: `blocked-url` `{reason, 
 | 43 | QUIT | empty |
 
 Java checks every URL with the server's `UrlGate` (`UrlPolicy(true, 2048)` plus the site policy) before CREATE or NAVIGATE: a refused CREATE goes out as `about:blank`, a refused NAVIGATE is not sent. The host checks again (site policy, then the internal-address block on every request, see ADR-013).
+
+### Internal addresses
+
+One rule set on both sides (ADR-013, 2026-10-13 alignment): Java `UrlPolicy.isInternal` (server and client) and the host's `isInternalAddress` / `isInternalHostname` (`host/src/policy.js`), for IP literals in URLs and, in the host, for every resolved address. Both test suites assert every vector of [`shared/address-vectors.json`](../shared/address-vectors.json) (`[{address, internal, note}]`); change the rules only together with the vectors.
+
+- IPv4: 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4 and 240.0.0.0/4 (with 255.255.255.255).
+- IPv6, refused whole: ::, ::1, fc00::/7, fe80::/10, fec0::/10, ff00::/8, 64:ff9b:1::/48 (local-use NAT64), 100::/64 (discard), 2001::/32 (Teredo) and 2001:db8::/32 (documentation).
+- IPv6 that carries an IPv4 address, judged by that address with the IPv4 rule: ::ffff:0:0/96 (mapped), ::/96 (compatible), ::ffff:0:0:0/96 (translated), 64:ff9b::/96 (NAT64) and 2002::/16 (6to4, bits 16-47).
+- Fail closed: an address the host cannot parse, or one with a zone id, is internal; Java refuses a host that ends in a number but is not a valid IPv4 address.
+- Host names are not part of the shared set yet: both refuse `localhost` and `.localhost`, `.local`, `.internal`, `.lan`, `.home.arpa`; only Java refuses `.localdomain`, only the host refuses `.intranet` and single-label names.
 
 ### Backpressure and threads
 
@@ -130,9 +142,9 @@ Screen key = `(dimension, x, y, z, side)` of the multiblock origin. `epoch` incr
 - Live rule: target lag = the largest known lag (the controller's `liveLagMs` and its lag measured on the follower's own timeline) + 0.5 s, never past the edge. When the two disagree by more than 20 s, followers steer on the lags alone. While the live edge is not yet known, the follower holds rate 1 with no seek.
 - A hello that follows a world unload (proxy transfer) resets the client clock; a re-sent hello (policy reload, kill switch) does not.
 - Host EVENT mapping:
-  - `blocked-url` reasons map to `URL_INVALID` / `URL_INTERNAL` / `URL_BLOCKED` / `URL_DNS_FAILED` / `POPUP_BLOCKED`.
+  - `blocked-url` reasons map to `URL_INVALID` / `URL_INTERNAL` / `URL_BLOCKED` / `URL_DNS_FAILED` / `URL_DNS_VIA_PROXY` (reason `dns-via-proxy`) / `POPUP_BLOCKED`.
   - `screen-limit` maps to `BROWSER_BUDGET` or `TEXTURE_TOO_LARGE` by reason, and `capture-error` to `CAPTURE_FAILED`.
   - A refusal of the screen's own page fails the screen. A link, redirect or sub-request refusal is only a notice to the driving player, at most one per screen and reason every 10 s.
   - A crashed page is recreated after 5 s, doubling up to 60 s.
-  - Host-level EVENTs (screen 0) go to the log and `/awdoctor`.
+  - Host-level EVENTs (screen 0) go to the log and `/awdoctor`. A `policy-error` (the host now blocks every page) also fails every screen that has a browser with `POLICY_INVALID`; the next navigation clears it.
 

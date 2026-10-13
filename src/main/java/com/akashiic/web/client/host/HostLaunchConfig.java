@@ -20,6 +20,11 @@ public final class HostLaunchConfig {
      * x 10 s rides out GC pauses and heavy page loads, yet a hung host no longer freezes screens without a reason.
      */
     public static final int DEFAULT_STALL_INTERVALS = 4;
+    /**
+     * How long the supervisor waits for a host whose connection dropped (before or after HELLO) to exit, so its exit
+     * code can name the failure (docs/PROTOCOL.md section 1). Spent on the supervisor thread, never the game's.
+     */
+    public static final long DEFAULT_EXIT_CODE_WAIT_MILLIS = 500;
 
     public final HostExecutable executable;
     /** Directory for {@code host.log} (the host's own log, {@code --akw-log}) and {@code host-stdio.log}. */
@@ -32,6 +37,8 @@ public final class HostLaunchConfig {
     public final long pingIntervalMillis;
     /** Unanswered ping intervals after which the connection is closed as {@link HostFailure#STALLED}. */
     public final int stallIntervals;
+    /** Bounded wait for the exit code of a host whose connection dropped. */
+    public final long exitCodeWaitMillis;
     /** Source of the child's environment before sanitising (System.getenv() in the game, a map in tests). */
     public final Map<String, String> parentEnvironment;
 
@@ -47,6 +54,7 @@ public final class HostLaunchConfig {
         this.stableRunMillis = b.stableRunMillis;
         this.pingIntervalMillis = b.pingIntervalMillis;
         this.stallIntervals = b.stallIntervals;
+        this.exitCodeWaitMillis = b.exitCodeWaitMillis;
         this.parentEnvironment = Collections.unmodifiableMap(new LinkedHashMap<>(b.parentEnvironment));
         this.locale = b.locale;
         this.userAgent = b.userAgent;
@@ -81,6 +89,7 @@ public final class HostLaunchConfig {
         private long stableRunMillis = DEFAULT_STABLE_RUN_MILLIS;
         private long pingIntervalMillis = DEFAULT_PING_INTERVAL_MILLIS;
         private int stallIntervals = DEFAULT_STALL_INTERVALS;
+        private long exitCodeWaitMillis = DEFAULT_EXIT_CODE_WAIT_MILLIS;
         private Map<String, String> parentEnvironment = System.getenv();
         private String locale = HostMessages.DEFAULT_LOCALE;
         private String userAgent;
@@ -111,6 +120,12 @@ public final class HostLaunchConfig {
         /** Unanswered ping intervals before the host counts as stalled (at least 2). */
         public Builder stallIntervals(int v) {
             this.stallIntervals = Math.max(2, v);
+            return this;
+        }
+
+        /** Wait for a dropped host's exit code (0 to 10 s; tests on a loaded machine lengthen it). */
+        public Builder exitCodeWaitMillis(long v) {
+            this.exitCodeWaitMillis = Math.max(0, Math.min(10_000, v));
             return this;
         }
 

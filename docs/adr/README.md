@@ -1185,6 +1185,7 @@ Add to the G3 tests: a page on a public host that fetch()es http://192.168.0.1/ 
   - WebRTC and DNS prefetch/preconnect are not covered.
   - Worth reporting upstream to Electron.
 - **Document-start preload.** Volume, media sampling, SYNC and the print/file guard run from a sandboxed preload at document start in every frame. Every document response also gets a CSP `sandbox` header without `allow-modals`, and service workers are refused. Its effect on YouTube/Twitch is not yet checked live.
+- **2026-10-13 alignment.** The game's `UrlPolicy.isInternal` and the host's `isInternalAddress` now apply one rule set, the union of both (Java gained TEST-NET-1/2/3; the host gained Teredo 2001::/32, refused whole, and the IPv4-translated ::ffff:0:0:0/96). The ranges are listed in [`../PROTOCOL.md`](../PROTOCOL.md) section 1, "Internal addresses"; `shared/address-vectors.json` holds the shared test vectors that `UrlPolicyTest` and `host/test/policy.test.js` both assert (AUTOMATED, Linux). Host-name rules (internal suffixes, single-label names) still differ and are not part of this alignment.
 
 ## ADR-014
 

@@ -195,8 +195,10 @@ public final class UrlPolicy {
     /**
      * Copied from AkashicFM UrlPolicy.isInternal, plus IPv6 rules added here (review finding): Teredo, documentation,
      * discard and local-use NAT64 prefixes are refused whole, and the IPv6 forms that carry an IPv4 address
-     * ({@link #embeddedIpv4}) are judged by that address. host/src/policy.js has the same additions except Teredo and
-     * the IPv4-translated form, which only this side refuses.
+     * ({@link #embeddedIpv4}) are judged by that address. The IPv4 documentation ranges (TEST-NET-1/2/3) came from
+     * host/src/policy.js. Both sides apply the same rule set (docs/PROTOCOL.md section 1, "Internal addresses"),
+     * checked
+     * against the shared vectors in {@code shared/address-vectors.json}.
      */
     public static boolean isInternal(InetAddress a) {
         if (a.isAnyLocalAddress() || a.isLoopbackAddress()
@@ -211,7 +213,10 @@ public final class UrlPolicy {
             if (b0 == 0) return true; // 0.0.0.0/8
             if (b0 == 100 && b1 >= 64 && b1 <= 127) return true; // 100.64.0.0/10 (CGNAT)
             if (b0 == 192 && b1 == 0 && (b[2] & 0xFF) == 0) return true; // 192.0.0.0/24
+            if (b0 == 192 && b1 == 0 && (b[2] & 0xFF) == 2) return true; // 192.0.2.0/24 TEST-NET-1
             if (b0 == 198 && (b1 == 18 || b1 == 19)) return true; // 198.18.0.0/15
+            if (b0 == 198 && b1 == 51 && (b[2] & 0xFF) == 100) return true; // 198.51.100.0/24 TEST-NET-2
+            if (b0 == 203 && b1 == 0 && (b[2] & 0xFF) == 113) return true; // 203.0.113.0/24 TEST-NET-3
             if (b0 >= 240) return true; // reserved + broadcast
         } else if (a instanceof Inet6Address) {
             int b0 = b[0] & 0xFF;

@@ -352,10 +352,10 @@ public final class ClientScreens {
     }
 
     /**
-     * A host EVENT (ClientReason has the mapping). Screen 0 is the host itself (e.g. policy-error: the host fell back
-     * to deny-all): logged and kept for /awdoctor. Notices go only to the player driving the page, at most one per
-     * screen and reason every {@link #NOTICE_INTERVAL_MS}: the host rate-limits page-triggered EVENTs to 5/s, still far
-     * too many for chat.
+     * A host EVENT (ClientReason has the mapping). Screen 0 is the host itself: logged and kept for /awdoctor; a
+     * policy-error (the host fell back to deny-all) also fails every screen with a browser with POLICY_INVALID. Notices
+     * go only to the player driving the page, at most one per screen and reason every {@link #NOTICE_INTERVAL_MS}: the
+     * host rate-limits page-triggered EVENTs to 5/s, still far too many for chat.
      */
     void onHostEvent(int hostId, HostEvent e) {
         long now = timeMs.getAsLong();
@@ -376,11 +376,18 @@ public final class ClientScreens {
 
     private void onHostLevelEvent(HostEvent e, long now) {
         if (e.suppressedSummary) return;
-        String line = String.format(java.util.Locale.ROOT, "t=%ds %s", now / 1000, e);
+        boolean policyError = "policy-error".equals(e.kind);
+        String line = String
+            .format(java.util.Locale.ROOT, "t=%ds %s%s", now / 1000, e, policyError ? " -> POLICY_INVALID" : "");
         if (hostEvents.size() == MAX_HOST_EVENTS) hostEvents.removeFirst();
         hostEvents.addLast(line);
-        if ("policy-error".equals(e.kind)) {
-            LOG.warn("AkashicWeb: the browser host refused the site policy and blocks every page: {}", e);
+        if (policyError) {
+            LOG.warn(
+                "AkashicWeb: the browser host refused the site policy and blocks every page (POLICY_INVALID): {}",
+                e);
+            // The host fell back to deny-all, so every page it shows is blocked now: say why on each of them instead of
+            // the URL_BLOCKED its policy re-check reported. The next navigation clears it, as for any refused page.
+            for (ClientScreen s : screens.values()) if (s.hostScreenId != 0) s.fail(ReasonCode.POLICY_INVALID, e.text);
         } else {
             LOG.info("AkashicWeb: browser host event {}", e);
         }
