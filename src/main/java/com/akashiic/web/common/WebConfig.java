@@ -148,15 +148,13 @@ public final class WebConfig {
             2,
             256,
             "Blocks from the screen within which a player may change its URL, rights or control.");
-        b.pointerReach = c
-            .getInt("pointerReach", LIMITS, (int) d.pointerReach, 2, 256, "Blocks from the eye to a pointer position.");
-        b.pointerMaxAngleDeg = c.getInt(
-            "pointerMaxAngleDeg",
+        b.controlMaxAngleDeg = c.getInt(
+            "controlMaxAngleDeg",
             LIMITS,
-            (int) d.pointerMaxAngleDeg,
+            (int) d.controlMaxAngleDeg,
             5,
-            180,
-            "Largest angle between the player's look and a pointer position (GUI cursor input is not at the crosshair).");
+            90,
+            "Largest angle between the player's look and the screen when taking or keeping its controller lock.");
         b.mediaClockHz = c.getInt("mediaClockHz", LIMITS, d.mediaClockHz, 1, 10, "Media clock broadcasts per second.");
         b.controllerIdleSeconds = c.getInt(
             "controllerIdleSeconds",
@@ -164,7 +162,8 @@ public final class WebConfig {
             d.controllerIdleSeconds,
             5,
             3600,
-            "The controller lock is released after this long without input.");
+            "The controller lock is released after this long without a keepalive from its holder (sent while it"
+                + " interacts) and without playing media.");
 
         c.addCustomCategoryComment(
             ADMIN,
@@ -220,8 +219,7 @@ public final class WebConfig {
         b.mediaSamplesPerSecond = s.mediaSamplesPerSecond;
         b.clockPingsPerSecond = s.clockPingsPerSecond;
         b.interactRange = s.interactRange;
-        b.pointerReach = s.pointerReach;
-        b.pointerMaxAngleDeg = s.pointerMaxAngleDeg;
+        b.controlMaxAngleDeg = s.controlMaxAngleDeg;
         b.mediaClockHz = s.mediaClockHz;
         b.controllerIdleSeconds = s.controllerIdleSeconds;
         b.adminUuids = new ArrayList<>(s.adminUuids);

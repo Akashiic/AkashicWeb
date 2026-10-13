@@ -34,6 +34,10 @@ public final class ActionLimits {
                     return s.clockPingsPerSecond;
                 case PREFLIGHT:
                     return 1;
+                case CONTROL:
+                    // D-016: the controller's keepalive comes at most every 5 s; one take or release a second is
+                    // plenty and keeps the sight ray trace off the hot path.
+                    return 1;
                 default:
                     return s.actionsPerSecond;
             }

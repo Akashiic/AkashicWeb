@@ -100,34 +100,28 @@ public final class ScreenActions {
         if (!quiet) ScreenSync.notice(p, code, detail);
     }
 
-    /** CHANGE_URL, or the controller's own navigation (clicking a link is navigating) with CLICK_TYPE. */
-    static ReasonCode urlRight(Target t) {
-        ReasonCode r = RightsPolicy.denial(t.state, t.id, t.admin, Rights.CHANGE_URL);
-        if (r == ReasonCode.OK) return r;
-        if (t.id.equals(t.state.controller) && RightsPolicy.can(t.state, t.id, t.admin, Rights.CLICK_TYPE)) {
-            return ReasonCode.OK;
+    /**
+     * {@link ActionRules#urlChange}: reach, rights, then the epoch. A refusal is recorded; a stale epoch (someone
+     * changed the page meanwhile) also shows the sender the current page, which is why it is checked last.
+     */
+    private static boolean urlAllowed(Target t, int epoch, String action, String detail) {
+        ReasonCode r = ActionRules.urlChange(t.state, t.id, t.admin, t.eye, epoch, t.cfg.interactRange);
+        if (r == ReasonCode.OK) return true;
+        if (r == ReasonCode.STALE_EPOCH) {
+            reject(t.player, r, action, detail, true);
+            ScreenSync.sendTo(t.player, new S2CUrl(t.state.key, t.state.url, t.state.epoch));
+        } else {
+            reject(t.player, r, action, detail, false);
         }
-        return r;
+        return false;
     }
 
     // ---- URL and navigation ----
 
     public static void setUrl(EntityPlayerMP p, C2SSetUrl m) {
         Target t = resolve(p, m.key, "url", false);
-        if (t == null) return;
+        if (t == null || !urlAllowed(t, m.epoch, "url", "")) return;
         ScreenState s = t.state;
-        if (m.epoch != s.epoch) {
-            // Someone changed the page meanwhile: drop it and show the sender the current page.
-            reject(p, ReasonCode.STALE_EPOCH, "url", "", true);
-            ScreenSync.sendTo(p, new S2CUrl(s.key, s.url, s.epoch));
-            return;
-        }
-        if (!near(t, t.cfg.interactRange, "url")) return;
-        ReasonCode right = urlRight(t);
-        if (right != ReasonCode.OK) {
-            reject(p, right, "url", "", false);
-            return;
-        }
         UrlGate.Result r = t.cfg.urlGate()
             .check(m.url);
         if (!r.ok()) {
@@ -140,21 +134,10 @@ public final class ScreenActions {
     }
 
     public static void nav(EntityPlayerMP p, C2SNav m) {
+        if ("stop".equals(m.action)) return; // only the sender's own browser stops: nothing to check or share
         Target t = resolve(p, m.key, "nav", false);
-        if (t == null) return;
+        if (t == null || !urlAllowed(t, m.epoch, "nav", m.action)) return;
         ScreenState s = t.state;
-        if (m.epoch != s.epoch) {
-            reject(p, ReasonCode.STALE_EPOCH, "nav", m.action, true);
-            ScreenSync.sendTo(p, new S2CUrl(s.key, s.url, s.epoch));
-            return;
-        }
-        if (!near(t, t.cfg.interactRange, "nav")) return;
-        if ("stop".equals(m.action)) return; // only the sender's browser stops; nothing to share
-        ReasonCode right = urlRight(t);
-        if (right != ReasonCode.OK) {
-            reject(p, right, "nav", m.action, false);
-            return;
-        }
         ScreenSession session = ServerRuntime.session(s);
         String target = NavLogic.target(m.action, s, session.history, t.cfg.homeUrl);
         if (target == null) return; // no history in that direction
@@ -180,6 +163,12 @@ public final class ScreenActions {
 
     // ---- media clock ----
 
+    /**
+     * The controller's media sample (ADR-012 item 3). Only the current controller, and only while it still holds
+     * CLICK_TYPE: rights can change under a held lock, and a revoked controller must stop steering everyone's clock at
+     * once (the lock itself goes at the next {@link ControlLock} sweep). A sample of playing media (or of an ad)
+     * counts as lock activity: watching is not idling.
+     */
     public static void media(EntityPlayerMP p, C2SMediaSample m) {
         Target t = resolve(p, m.key, "media", true);
         if (t == null) return;
@@ -187,35 +176,65 @@ public final class ScreenActions {
             reject(p, ReasonCode.NOT_CONTROLLER, "media", "", true);
             return;
         }
-        MediaClock.Result r = ServerRuntime.session(t.state).clock.apply(m.sample, t.state.epoch, ServerClock.nowMs());
-        if (r == MediaClock.Result.STALE_EPOCH) reject(p, ReasonCode.STALE_EPOCH, "media", "", true);
-        else if (r == MediaClock.Result.INVALID) reject(p, ReasonCode.BAD_PACKET, "media", "values", true);
+        ReasonCode right = RightsPolicy.denial(t.state, t.id, t.admin, Rights.CLICK_TYPE);
+        if (right != ReasonCode.OK) {
+            reject(p, right, "media", "", true);
+            return;
+        }
+        ScreenSession session = ServerRuntime.session(t.state);
+        // One server clock (ServerClock): the sample's clientServerTimeMs is the client's estimate of this clock,
+        // synced with C2SClockPing/S2CClockPong, and S2CMediaClock is stamped with it too.
+        long now = ServerClock.nowMs();
+        switch (session.clock.apply(m.sample, t.state.epoch, now)) {
+            case APPLIED:
+                if (!m.sample.paused) session.lastPlayingMs = now;
+                break;
+            case HELD_FOR_AD:
+                session.lastPlayingMs = now;
+                break;
+            case STALE_EPOCH:
+                reject(p, ReasonCode.STALE_EPOCH, "media", "", true);
+                break;
+            case INVALID:
+                reject(p, ReasonCode.BAD_PACKET, "media", "values", true);
+                break;
+            default:
+                break; // IGNORED_OLD: a reordered duplicate
+        }
     }
 
     // ---- control ----
 
+    /**
+     * C2SControl and {@code /web take|release} (D-016). Take is checked for rights (CLICK_TYPE, lock, owner or admin
+     * to pre-empt someone), then the player must be near, in front of the screen, looking at it and in sight of it
+     * ({@link ViewCheck}). The current controller repeats take as its keepalive while it interacts: an accepted one
+     * refreshes the lock, a refused one is recorded quietly and the lock ages until {@link ControlLock} lets it go.
+     * Release only needs the lock. Every change goes to every tracker in the tile's description packet.
+     */
     public static void control(EntityPlayerMP p, C2SControl m) {
         Target t = resolve(p, m.key, "control", false);
         if (t == null) return;
-        if (!near(t, t.cfg.interactRange, "control")) return;
-        if (m.take) {
-            ReasonCode r = RightsPolicy.canTakeControl(t.state, t.id, t.admin);
-            if (r != ReasonCode.OK) {
-                reject(p, r, "control", "", false);
-                return;
-            }
-            if (!t.id.equals(t.state.controller)) setController(t, t.id, "take");
-            ServerRuntime.session(t.state).lastInputMs = ServerClock.nowMs();
-        } else if (t.id.equals(t.state.controller)) {
-            setController(t, null, "release");
+        if (!m.take) {
+            if (t.id.equals(t.state.controller)) setController(t, null, "release");
+            return;
         }
+        boolean keepalive = t.id.equals(t.state.controller);
+        ReasonCode r = ActionRules
+            .takeControl(t.state, t.id, t.admin, t.eye, ScreenWorld.look(p), t.cfg, ScreenWorld.sight(t.world));
+        if (r != ReasonCode.OK) {
+            reject(p, r, "control", "", keepalive);
+            return;
+        }
+        if (keepalive) ServerRuntime.session(t.state).lastKeepaliveMs = ServerClock.nowMs();
+        else setController(t, t.id, "take");
     }
 
     private static void setController(Target t, UUID controller, String why) {
         UUID previous = t.state.controller;
         t.state.controller = controller;
         t.state.controllerName = controller == null ? "" : t.player.getCommandSenderName();
-        ServerRuntime.session(t.state).lastInputMs = ServerClock.nowMs();
+        lockChanged(t.state);
         if (previous != null && controller != null) {
             AuditLog
                 .log(t.player.getCommandSenderName(), t.id, "control pre-empted", t.state.key + " from " + previous);
@@ -224,10 +243,18 @@ public final class ScreenActions {
         com.akashiic.web.AkashicWeb.LOG.debug("AkashicWeb: {} controller {} ({})", t.state.key, controller, why);
     }
 
-    /** Housekeeping release (offline, idle, far, other dimension). */
+    /** A new holder (or none) starts with a fresh keepalive and none of the previous holder's media activity. */
+    private static void lockChanged(ScreenState s) {
+        ScreenSession session = ServerRuntime.session(s);
+        session.lastKeepaliveMs = ServerClock.nowMs();
+        session.lastPlayingMs = 0;
+    }
+
+    /** Housekeeping release ({@link ControlLock}: offline, other dimension, far, rights, idle; logout). */
     static void releaseControl(ScreenState s, String why) {
         s.controller = null;
         s.controllerName = "";
+        lockChanged(s);
         TileEntityScreen te = ServerRuntime.LOADED.tile(s.key);
         if (te != null) ScreenSync.sendDescription(te);
         com.akashiic.web.AkashicWeb.LOG.debug("AkashicWeb: {} controller released ({})", s.key, why);
@@ -239,16 +266,27 @@ public final class ScreenActions {
         UUID previous = s.controller;
         s.controller = admin.getUniqueID();
         s.controllerName = admin.getCommandSenderName();
-        ServerRuntime.session(s).lastInputMs = ServerClock.nowMs();
+        lockChanged(s);
         if (te != null) ScreenSync.sendDescription(te);
         AuditLog.log(admin.getCommandSenderName(), admin.getUniqueID(), "admin takeover", s.key + " from " + previous);
     }
 
-    /** Releases every lock a player holds (logout). */
-    public static void releaseAll(UUID player) {
+    /** Releases every lock a player holds (logout, dimension change). */
+    public static void releaseAll(UUID player, String why) {
         for (ScreenState s : ServerRuntime.LOADED.faces()) {
-            if (player.equals(s.controller)) releaseControl(s, "logout");
+            if (player.equals(s.controller)) releaseControl(s, why);
         }
+    }
+
+    /**
+     * Whether the current controller still passes the rights part of taking control (CLICK_TYPE, lock, mode). False
+     * when there is no controller or it is offline; used after rights changes and by the once-a-second sweep.
+     */
+    static boolean controllerMayStay(ScreenState s, WebSettings cfg) {
+        if (s.controller == null) return false;
+        EntityPlayerMP holder = ScreenWorld.online(s.controller);
+        if (holder == null) return false;
+        return RightsPolicy.canTakeControl(s, s.controller, Admins.isAdmin(holder, cfg)) == ReasonCode.OK;
     }
 
     // ---- rights ----
@@ -268,6 +306,11 @@ public final class ScreenActions {
         if (ServerRuntime.index()
             .put(ScreenIndex.Entry.of(t.state))) ServerRuntime.indexChanged();
         AuditLog.log(p.getCommandSenderName(), t.id, "rights", t.state.key + " " + o.audit);
+        // Removing a friend, lowering rights or locking must not leave that player in control.
+        if (t.state.controller != null && !controllerMayStay(t.state, t.cfg)) {
+            releaseControl(t.state, "rights");
+            return; // releaseControl already sent the new state
+        }
         ScreenSync.sendDescription(t.tile);
     }
 
@@ -306,6 +349,7 @@ public final class ScreenActions {
         if (locked && s.controller != null) {
             s.controller = null;
             s.controllerName = "";
+            lockChanged(s);
         }
         TileEntityScreen te = ServerRuntime.LOADED.tile(s.key);
         if (te != null) {
@@ -321,7 +365,7 @@ public final class ScreenActions {
     }
 
     private static boolean near(Target t, double range, String action) {
-        ReasonCode r = PointerCheck.near(t.state, t.eye[0], t.eye[1], t.eye[2], range, false);
+        ReasonCode r = ViewCheck.near(t.state, t.eye[0], t.eye[1], t.eye[2], range);
         if (r == ReasonCode.OK) return true;
         reject(t.player, r, action, "", false);
         return false;

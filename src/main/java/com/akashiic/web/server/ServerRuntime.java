@@ -80,7 +80,7 @@ public final class ServerRuntime {
         ticks++;
         WebSettings cfg = WebConfig.get();
         if (ticks % cfg.mediaClockIntervalTicks() == 0) broadcastClocks(cfg);
-        if (ticks % 20 == 0) releaseIdleControllers(cfg);
+        if (ticks % 20 == 0) releaseLostControllers(cfg);
     }
 
     private static void broadcastClocks(WebSettings cfg) {
@@ -104,24 +104,37 @@ public final class ServerRuntime {
     }
 
     /**
-     * The controller lock is released when its holder logged out, changed dimension, walked far away or sent no input
-     * for {@code controllerIdleSeconds}; the media clock keeps running from its last anchor.
+     * Lets go of controller locks whose holder logged out, changed dimension, walked out of reach, lost the right to
+     * control or went idle ({@link ControlLock}); the media clock keeps running from its last anchor.
      */
-    private static void releaseIdleControllers(WebSettings cfg) {
+    private static void releaseLostControllers(WebSettings cfg) {
         long now = ServerClock.nowMs();
         for (ScreenState s : LOADED.faces()) {
             if (s.controller == null) continue;
             EntityPlayerMP p = ScreenWorld.online(s.controller);
             ScreenSession session = session(s);
-            String why = null;
-            if (p == null) why = "offline";
-            else if (p.dimension != s.key.dim) why = "dimension";
-            else {
+            boolean sameDimension = p != null && p.dimension == s.key.dim;
+            double distance = Double.POSITIVE_INFINITY;
+            if (sameDimension) {
                 double[] eye = ScreenWorld.eye(p);
-                if (HitMath.distanceToScreen(s, eye[0], eye[1], eye[2]) > cfg.interactRange * 2) why = "far";
-                else if (now - session.lastInputMs > cfg.controllerIdleSeconds * 1000L) why = "idle";
+                distance = HitMath.distanceToScreen(s, eye[0], eye[1], eye[2]);
             }
-            if (why != null) ScreenActions.releaseControl(s, why);
+            ControlLock.Release release = ControlLock.check(
+                p != null,
+                sameDimension,
+                distance,
+                cfg.interactRange,
+                sameDimension && ScreenActions.controllerMayStay(s, cfg),
+                now,
+                session.lastKeepaliveMs,
+                session.lastPlayingMs,
+                cfg.controllerIdleSeconds);
+            if (release != ControlLock.Release.NONE) {
+                ScreenActions.releaseControl(
+                    s,
+                    release.name()
+                        .toLowerCase(java.util.Locale.ROOT));
+            }
         }
     }
 

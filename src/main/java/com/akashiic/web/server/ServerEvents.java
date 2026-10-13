@@ -43,10 +43,18 @@ public final class ServerEvents {
     public void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.player == null) return;
         UUID id = event.player.getUniqueID();
-        ScreenActions.releaseAll(id);
+        ScreenActions.releaseAll(id, "logout");
         ServerRuntime.LIMITS.forget(id);
         ServerRuntime.THROTTLE.forget(id);
         ServerRuntime.DIAGNOSTICS.forget(id);
+    }
+
+    /** A lock is only ever taken in the player's own dimension, so a dimension change ends every lock it holds. */
+    @SubscribeEvent
+    public void onDimensionChange(PlayerEvent.PlayerChangedDimensionEvent event) {
+        if (event.player != null && !(event.player instanceof FakePlayer)) {
+            ScreenActions.releaseAll(event.player.getUniqueID(), "dimension");
+        }
     }
 
     /**

@@ -82,6 +82,26 @@ public final class HitMath {
         return uv == null ? null : new double[] { uv[0], uv[1], dist };
     }
 
+    /**
+     * The point of the screen rectangle (frame included) the eye ray aims at: where the ray meets the face plane,
+     * clamped into the rectangle, so looking just beside a screen gives the nearest point of its edge. Null when the
+     * eye is not in front of the face or the ray does not point towards the face plane (looking away or along it).
+     * The server's "is this player looking at the screen" test for the controller lock (D-016).
+     */
+    public static double[] aimPoint(ScreenState s, double ex, double ey, double ez, double dx, double dy, double dz) {
+        BlockSide side = side(s);
+        double[] c = corner(s, side);
+        double height = side.dotForward(ex - c[0], ey - c[1], ez - c[2]);
+        double towards = side.dotForward(dx, dy, dz);
+        if (height <= 0 || towards >= 0) return null;
+        double t = -height / towards;
+        double px = ex + dx * t - c[0], py = ey + dy * t - c[1], pz = ez + dz * t - c[2];
+        double a = Math.max(0, Math.min(s.widthBlocks, side.dotRight(px, py, pz)));
+        double b = Math.max(0, Math.min(s.heightBlocks, side.dotUp(px, py, pz)));
+        return new double[] { c[0] + side.rightX * a + side.upX * b, c[1] + side.rightY * a + side.upY * b,
+            c[2] + side.rightZ * a + side.upZ * b };
+    }
+
     /** Signed distance of a point from the face plane: positive in front of the screen. */
     public static double heightAbove(ScreenState s, double px, double py, double pz) {
         BlockSide side = side(s);

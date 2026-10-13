@@ -7,6 +7,8 @@ import java.util.UUID;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.MovingObjectPosition;
+import net.minecraft.util.Vec3;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.DimensionManager;
@@ -73,6 +75,37 @@ public final class ScreenWorld {
 
     public static double[] look(EntityPlayerMP p) {
         return HitMath.lookVector(p.rotationYaw, p.rotationPitch);
+    }
+
+    /**
+     * Line of sight with vanilla's block ray trace (World.func_147447_a: liquids do not stop it, blocks without a
+     * collision box are ignored, so a torch on the wall does not hide a screen but glass or a slab does). A ray across
+     * a chunk that is not loaded counts as blocked: a sight check never loads or generates a chunk.
+     */
+    public static ViewCheck.Sight sight(World w) {
+        return (ax, ay, az, bx, by, bz) -> {
+            if (!loadedAlong(w, ax, az, bx, bz)) return false;
+            MovingObjectPosition hit = w.func_147447_a(
+                Vec3.createVectorHelper(ax, ay, az),
+                Vec3.createVectorHelper(bx, by, bz),
+                false,
+                true,
+                false);
+            return hit == null || hit.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK;
+        };
+    }
+
+    /** Every chunk in the horizontal box spanned by the segment is loaded (at most a few for interaction ranges). */
+    static boolean loadedAlong(World w, double ax, double az, double bx, double bz) {
+        int x0 = (int) Math.floor(Math.min(ax, bx)) >> 4, x1 = (int) Math.floor(Math.max(ax, bx)) >> 4;
+        int z0 = (int) Math.floor(Math.min(az, bz)) >> 4, z1 = (int) Math.floor(Math.max(az, bz)) >> 4;
+        for (int cx = x0; cx <= x1; cx++) {
+            for (int cz = z0; cz <= z1; cz++) {
+                if (!w.getChunkProvider()
+                    .chunkExists(cx, cz)) return false;
+            }
+        }
+        return true;
     }
 
     /** Online player by UUID, or null. */

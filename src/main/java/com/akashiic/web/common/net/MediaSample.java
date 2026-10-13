@@ -12,6 +12,10 @@ public final class MediaSample {
     /** Seconds behind the live edge, or 0 for VOD. */
     public final double behindLiveEdge;
 
+    /**
+     * When the sample was taken, as the client's estimate of the server clock (synced with C2SClockPing/S2CClockPong),
+     * so the server reads it on that same clock (server.ServerClock) without re-stamping.
+     */
     public final long clientServerTimeMs;
 
     public MediaSample(int epoch, double mediaTime, float rate, boolean paused, boolean adShowing, boolean live,
