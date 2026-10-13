@@ -180,6 +180,10 @@ test('about:blank child frames (no preload of their own) are watched by the pare
   let prevented = 0;
   clickGuards[0].fn({ target: { tagName: 'INPUT', type: 'file' }, preventDefault: () => prevented++ });
   assert.strictEqual(prevented, 1, 'file-input clicks cancelled in the child too');
+  // The iframe is removed: its document loses its window and is forgotten at the next rescan.
+  childDoc.defaultView = null;
+  for (let i = 0; i < S.RESCAN_EVERY; i++) page.tick();
+  assert.strictEqual(page.agent.docs.size, 1);
 });
 
 test('MEDIA: off until the host turns sampling on; then 4 Hz samples of the best element; none -> one {score:-1}', async () => {

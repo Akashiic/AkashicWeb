@@ -358,7 +358,11 @@ class FrameAgent {
   tick() {
     this.ticks++;
     if (this.ticks % RESCAN_EVERY === 0) {
-      for (const doc of this.docs) this.scan(doc);
+      for (const doc of this.docs) {
+        // A child document whose iframe was removed has no window any more: forget it.
+        if (doc !== this.env.document && !doc.defaultView) this.docs.delete(doc);
+        else this.scan(doc);
+      }
     }
     if (this.els.size > 0) this.enforceAll();
   }
