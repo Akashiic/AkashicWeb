@@ -40,4 +40,15 @@ public interface BrowserHost {
     void removeListener(HostListener listener);
 
     void shutdown();
+
+    /**
+     * Leaves DISABLED (crash loop, protocol mismatch, engine missing at launch) and launches now; also cuts a running
+     * relaunch backoff short. For the "try again" button and after the engine install finishes. Added by M2 after v1.
+     */
+    default void reenable() {}
+
+    /** Lines for /web doctor (status, versions, failures, per-screen frame counters). Added by M2 after v1. */
+    default java.util.List<String> diagnostics() {
+        return java.util.Collections.emptyList();
+    }
 }

@@ -10,4 +10,13 @@ public interface FrameRing {
     FrameSlot takeLatest();
 
     void release(FrameSlot slot);
+
+    /**
+     * Gives back a slot that was taken but not uploaded (upload budget spent, texture not ready), so its damage is not
+     * lost: the next {@link #takeLatest} covers it again. Added by M2 after v1; the default only releases, which is
+     * enough for test fakes but loses damage, so real rings override it.
+     */
+    default void requeue(FrameSlot slot) {
+        release(slot);
+    }
 }
