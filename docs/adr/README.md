@@ -957,6 +957,30 @@ If TLS fails on 8u51, use bundled roots plus manual import. If AV or SAC blocks,
   Evidence: INFERRED from GitHub release-asset redirect behaviour; not probed in this review. The distribution challenge VERIFIED Range support on the OBS CDN only.  
   Correction: The installer stores only the canonical github.com URL plus the ETag and size. Each attempt follows the redirect afresh and resumes with If-Range. If the ETag changes, restart from 0, and rely on the SHA-256 pin. Add a 'resume after 30 minutes' case to NativesProbe.
 
+### Lead amendment (2026-10-13, wave 2 evidence)
+
+- **TLS trust order** (installer-only `SSLContext`, never `setDefault`):
+  - The order is the JRE store, then the OS store (`Windows-ROOT` through SunMSCAPI on Windows, the system PEM bundle on Linux), then pinned roots.
+  - The pinned roots are ISRG X1/X2, USERTrust RSA/ECC and Sectigo Public Server Authentication Root R46/E46.
+  - The next layer is tried only on a certificate-path failure.
+  - Chains (VERIFIED, SSL Labs assessments 2026-10-13, agreeing with CT records):
+    - `github.com`: Sectigo DV R36/E36, then Root R46/E46, served cross-signed by USERTrust.
+    - `release-assets.githubusercontent.com`: Let's Encrypt YR1, then Root YR, then ISRG X1.
+  - Fingerprints were checked against a Mozilla CCADB export and Debian ca-certificates 20260601.
+  - Not run on Java 8u51 or Windows.
+- **Download integrity.** GitHub's asset host ignores `If-Range` (VERIFIED 2026-10-13), so the 206's ETag and Content-Range are the real guard.
+- **Pinned files and rollback.**
+  - Every kept vendor file has a per-file SHA-256 pin, and the host app is tied to the jar.
+  - A forged engine folder is not trusted.
+  - Re-pinning regenerates the pins from the official zips; the outgoing target moves to `EngineManifest.PREVIOUS`, and rollback goes only to a pinned build.
+- **Consent** is a record bound to the pin's SHA-256 and canonical URL.
+  - An install interrupted by closing the game resumes at the next start.
+  - A failed install asks again.
+  - `cancelInstall()` deletes the partial files.
+  - A planted resume file is not consent.
+- **One host app per engine.** An instance holds a shared lock on `resources/.akw-inuse.lock` while READY, and rewriting or pruning that engine needs the exclusive lock. Two different AkashicWeb versions on one PC therefore cannot use the browser at the same time: the second shows `ENGINE_IN_USE`. Versioned app folders (a bootstrap plus `--akw-app`) are a pending M1+M2 item.
+- **Launch refusals.** Windows CreateProcess codes map to `SAC_BLOCKED` (App Control 4550–4559, 4580–4583, 1260, 786) or `AV_BLOCKED` (225, 226). This mapping is INFERRED and not yet observed on Windows. Smart App Control is read at every Windows start.
+
 ## ADR-012
 
 **Multiplayer model: each client runs its own browser; server owns URL and video clock; shared screens use in-memory sessions; state convergence instead of trusting raw input** — status: `accepted`
@@ -1216,6 +1240,17 @@ G4 preflight telemetry on 10-18: at least 90% of desktop players report Windows 
 ### Fallback
 
 Re-add a Java 21/lwjgl3ify client cell before RC1 (10-20) if telemetry shows meaningful use.
+
+### Lead amendment (2026-10-13, wave 2)
+
+- **No ProgramData fallback.** A folder every local user can write must not be a trusted install location. Windows folder order:
+  1. `%LOCALAPPDATA%\AkashicWeb`
+  2. its 8.3 short form
+  3. the non-ASCII path
+  4. `%USERPROFILE%\AppData\Local`
+- **One import folder**: `%LOCALAPPDATA%\AkashicWeb\import`.
+- **Browser profiles** always stay in the player's own folder.
+- **Logs** do not show profile paths.
 
 ## ADR-015
 

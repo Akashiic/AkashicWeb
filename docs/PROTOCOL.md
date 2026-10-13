@@ -81,25 +81,38 @@ Java checks every URL with the server's `UrlGate` (`UrlPolicy(true, 2048)` plus 
 
 ## 2. Server ↔ client (Forge SimpleNetworkWrapper channel `akashicweb`)
 
-All client→server packets are validated on the server main thread: rights, dimension, reach and ray-plane hit, rate limit, length caps, controller lock, screen epoch; FakePlayers ignored; rejected packets are audited. Sends only from the main thread.
+Grade: BUILD / AUTOMATED (Linux container): implemented in `common.net` (codecs and S2C handlers) and `server.net`; the first Crucible boot and dev-client run are in [`evidence/2026-10-13-crucible-boot-and-dev-client.md`](evidence/2026-10-13-crucible-boot-and-dev-client.md). Not yet run with several players.
+
+**Threads.** In 1.7.10, and on Crucible, `FMLProxyPacket` has no `hasPriority` override, so every handler of this channel runs on the server main thread (server) or the client thread (client), never on a Netty thread. Server handlers drop FakePlayers, refuse malformed packets and apply the per-player rate limit on arrival (refusals are only counted, with one flush per player recording them), then queue the work, charged to the player (at most 128 pending per player; 1024 queue slots are reserved for the server's own tasks), for the start of the next tick. Sends happen only from the main thread.
+
+**Validation.**
+- `C2SSetUrl` / `C2SNav`: dimension, loaded screen, kill switch, reach (`interactRange`), rights (`CHANGE_URL`, or the controller with `CLICK_TYPE`), then epoch (the stale-epoch answer `S2CUrl` only goes to a player who passed reach and rights), then the site policy and internal-address checks.
+- `C2SControl` take: dimension, kill switch, rights and lock, eye in front of the face, within `interactRange`, look within `controlMaxAngleDeg` (default 45) of the screen, unobstructed line of sight (a block ray trace that never loads chunks).
+- `C2SMediaSample`: current controller with `CLICK_TYPE`, epoch, finite values.
+- `C2SRights`: rights per part first, then names (players who logged in on this server; never a Mojang lookup), then limits.
+
+**Page input (D-016)** never travels to the server: the client applies the local player's pointer and keys to its own browser only while `ScreenState.controller` equals `S2CHello.playerUuid`, or on a PRIVATE screen.
 
 | Id | Direction | Name | Content |
 |---|---|---|---|
-| 0 | S→C | S2CHello | protoMajor, protoMinor, killSwitch, sitePolicy (mode, allow, block), serverTimeMs |
-| 1 | S→C | S2CScreenState | full screen record (also via the TE description packet) |
+| 0 | S→C | S2CHello | protoMajor u16, protoMinor u16 (always first, never move), killSwitch, sitePolicy (mode, allow, block), serverTimeMs, playerUuid (appended by D-016: present flag + 2 longs; the receiving player's server-side UUID) |
+| 1 | S→C | S2CScreenState | full screen record (also via the TE description packet); last field, appended by D-016: controllerName (string ≤ 32, "" when there is no controller) |
 | 2 | S→C | S2CUrl | screen key, url, epoch |
-| 3 | S→C | S2CInput | screen key, epoch, input (controller's input relayed only to the controller's own client on SHARED screens, see ADR-012 amendment) |
-| 4 | S→C | S2CMediaClock | screen key, epoch, mediaTime, rate, paused, serverTimeMs |
+| 3 | — | reserved | was S2CInput, retired by D-016; registered as a tombstone that skips its payload; never reuse |
+| 4 | S→C | S2CMediaClock | screen key, epoch, mediaTime, rate, paused, serverTimeMs, live (bool), liveLagMs (0..3,600,000: the controller's lag behind the live edge, 0 for VOD). While the controller's samples report an ad, the clock is held (sent as paused where the content stopped) and resumes with the next content sample. |
 | 5 | S→C | S2CClockPong | nonce, clientSendMs, serverTimeMs |
-| 6 | S→C | S2CNotice | reason code + args |
+| 6 | S→C | S2CNotice | reason code + one detail argument |
 | 16 | C→S | C2SSetUrl | screen key, epoch, url |
 | 17 | C→S | C2SNav | screen key, epoch, action |
-| 18 | C→S | C2SPointer | screen key, side, u, v (0..1), button, action |
-| 19 | C→S | C2SKey | screen key, type, keyCode, text, modifiers |
+| 18, 19 | — | reserved | were C2SPointer / C2SKey, retired by D-016; tombstones |
 | 20 | C→S | C2SMediaSample | screen key, epoch, mediaTime, rate, paused, adShowing, live, behindLiveEdge, clientServerTimeMs |
-| 21 | C→S | C2SControl | screen key, take/release controller |
-| 22 | C→S | C2SRights | screen key, friends add/remove, rights bits, resolution, rotation |
+| 21 | C→S | C2SControl | screen key, take (bool). Take is also the keepalive: the controller's client repeats it at most every 5 s while it interacts; rate limit 1/s (burst 2). The server releases the lock after `controllerIdleSeconds` (default 60) with neither a keepalive nor a sample of playing media or an ad, and at once on logout or dimension change, beyond `interactRange` + 4 blocks, or when the holder loses the right to control. Every change goes to all trackers in the description packet. |
+| 22 | C→S | C2SRights | screen key, add/remove friend names (each list ≤ 4 names matching `[A-Za-z0-9_]{1,16}`; anything else is malformed), friendRights, otherRights, resolutionW, resolutionH, rotation, locked (ints with an UNCHANGED sentinel) |
 | 23 | C→S | C2SClockPing | nonce, clientSendMs |
 | 24 | C→S | C2SPreflight | opt-in: os, arch, java, launcher, gpu, ram, engine state |
 
-Screen key = `(dimension, x, y, z, side)` of the multiblock origin. `epoch` increments on every URL change; packets with an old epoch are dropped.
+Screen key = `(dimension, x, y, z, side)` of the multiblock origin. `epoch` increments on every URL change and never goes backwards for a key (a server-wide high-water mark covers merges and re-forms); packets with an old epoch are dropped.
+
+**Forward compatibility.** Within one major, a field may only be appended at the end of an S2C packet: clients skip unknown trailing bytes of S2C packets and read appended fields only when present. C2S packets decode exactly (a trailing byte is malformed). A hello of another major is read no further than the version numbers and reaches the client as a mismatch (`PROTOCOL_MISMATCH` placeholder). Retired ids stay registered as tombstones. Protocol 1 has not shipped, so D-016 kept `MAJOR = 1`.
+
+**Clock.** One server clock (`server.ServerClock`: wall time at start-up plus monotonic elapsed time) stamps `S2CClockPong`, `S2CMediaClock` and `S2CHello`, and is the clock `C2SMediaSample.clientServerTimeMs` estimates.

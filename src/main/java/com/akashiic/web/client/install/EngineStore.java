@@ -33,6 +33,9 @@ final class EngineStore {
 
     static final String STAGING_PREFIX = ".staging-";
     static final String TRASH_PREFIX = ".trash-";
+    /** Temporary host app folders inside {@code resources/} while it is swapped. */
+    static final String APP_NEW_PREFIX = ".akw-app-new-";
+    static final String APP_OLD_PREFIX = ".akw-app-old-";
 
     /** The {@code .complete} marker's content. */
     static final class Marker {
@@ -78,10 +81,23 @@ final class EngineStore {
         }
     }
 
+    /** Renames a folder on the same volume (a seam: tests make it fail like a folder held open on Windows). */
+    @FunctionalInterface
+    interface DirMover {
+
+        void move(File from, File to) throws IOException;
+    }
+
     final File root;
+    private final DirMover mover;
 
     EngineStore(File root) {
+        this(root, EngineStore::moveDir);
+    }
+
+    EngineStore(File root, DirMover mover) {
         this.root = root;
+        this.mover = mover;
     }
 
     File dirFor(EngineTarget t) {
@@ -99,30 +115,32 @@ final class EngineStore {
      * Atomically renames the staging folder to its final name. A previous folder of the same name (a broken install
      * being repaired) is first renamed into the trash. Renames are retried because Windows antivirus scanners hold
      * freshly written executables open; if the staging folder still cannot be renamed, that is reported as
-     * AV_BLOCKED, its usual cause.
+     * AV_BLOCKED, its usual cause. An old folder that cannot be moved aside is held open by another process, usually
+     * the host of another game instance: ENGINE_IN_USE.
      */
     void promote(File staging, File finalDir) throws InstallException {
         if (finalDir.exists()) {
             removeMarker(finalDir);
             File trash = new File(root, TRASH_PREFIX + finalDir.getName() + "-" + Long.toHexString(System.nanoTime()));
             try {
-                moveDir(finalDir, trash);
+                mover.move(finalDir, trash);
             } catch (IOException e) {
                 throw new InstallException(
-                    InstallFailure.DOWNLOAD_FAILED,
+                    InstallFailure.ENGINE_IN_USE,
                     "old engine folder is in use (close other game instances): " + e,
                     e);
             }
             FileOps.deleteTree(trash);
         }
         try {
-            moveDir(staging, finalDir);
+            mover.move(staging, finalDir);
         } catch (IOException e) {
             throw new InstallException(InstallFailure.AV_BLOCKED, "cannot finalize the engine folder: " + e, e);
         }
     }
 
-    void writeMarker(File dir, LocalManifest m, String hostExecutable, long nowMs) throws InstallException {
+    /** Writes the marker and returns what it says, so callers never depend on reading it back. */
+    Marker writeMarker(File dir, LocalManifest m, String hostExecutable, long nowMs) throws InstallException {
         Properties p = new Properties();
         p.setProperty("engine", m.engineId);
         p.setProperty("zip-sha256", m.zipSha256);
@@ -136,8 +154,12 @@ final class EngineStore {
                 .getBytes(StandardCharsets.ISO_8859_1);
             FileOps.writeAtomic(new File(dir, LocalManifest.MARKER), bytes);
         } catch (IOException e) {
-            throw new InstallException(InstallFailure.DOWNLOAD_FAILED, "cannot write the install marker: " + e, e);
+            throw new InstallException(
+                InstallFailure.INSTALL_DIR_NOT_WRITABLE,
+                "cannot write the install marker: " + e,
+                e);
         }
+        return new Marker(m.engineId, m.zipSha256, m.digest(), hostExecutable, nowMs);
     }
 
     static Marker readMarker(File dir) {
@@ -165,8 +187,12 @@ final class EngineStore {
         if (m.exists() && !m.delete()) LOG.warn("Could not remove the install marker in {}", dir.getName());
     }
 
-    /** Checks one engine folder: marker, manifest binding, then sizes (quick) or hashes (full). */
-    static Inspection inspect(File dir, boolean full) {
+    /**
+     * Checks one engine folder: marker, manifest binding, the manifest's vendor files against the pins of the engine
+     * it names (one of {@code known}), then the files on disk: sizes (quick) or hashes (full). Together these tie every
+     * vendor file on disk to the pinned build; a folder whose engine has no pins here is not trusted.
+     */
+    static Inspection inspect(File dir, List<EngineTarget> known, boolean full) {
         Marker marker = readMarker(dir);
         if (marker == null) return new Inspection(dir, null, null, null);
         LocalManifest manifest;
@@ -180,9 +206,35 @@ final class EngineStore {
             LocalManifest.Problem drift = problem(InstallFailure.HASH_MISMATCH, "manifest does not match marker");
             return new Inspection(dir, marker, manifest, drift);
         }
+        EngineTarget pinned = pinsFor(marker, known);
+        if (pinned == null) {
+            LocalManifest.Problem unknown = problem(
+                InstallFailure.HASH_MISMATCH,
+                marker.engineId + " is not a build this mod version has pins for");
+            return new Inspection(dir, marker, manifest, unknown);
+        }
+        String mismatch = pinned.vendorMismatch(manifest.vendorEntries());
+        if (mismatch != null) {
+            LocalManifest.Problem foreign = problem(
+                InstallFailure.HASH_MISMATCH,
+                "engine files are not the pinned ones: " + mismatch);
+            return new Inspection(dir, marker, manifest, foreign);
+        }
         LocalManifest.Problem p = full ? manifest.fullCheck(dir, marker.hostExecutable)
             : manifest.quickCheck(dir, marker.hostExecutable);
         return new Inspection(dir, marker, manifest, p);
+    }
+
+    /** The known target the marker names (engine id and zip SHA-256 both), or null. */
+    static EngineTarget pinsFor(Marker marker, List<EngineTarget> known) {
+        for (EngineTarget t : known) {
+            if (t.engineId()
+                .equals(marker.engineId) && t.sha256.equals(marker.zipSha256)
+                && t.hostExecutable.equals(marker.hostExecutable)) {
+                return t;
+            }
+        }
+        return null;
     }
 
     private static LocalManifest.Problem problem(InstallFailure f, String detail) {
@@ -209,7 +261,8 @@ final class EngineStore {
 
     /**
      * Keeps {@code current} and the newest other installed engine (the rollback target); retires the rest and any
-     * trash. Best effort: a folder in use by another game instance is left for a later start.
+     * trash. Best effort: a folder another game instance may be running its host from ({@link AppUseLock}) is left for
+     * a later start.
      */
     void prune(File current) {
         boolean keptPrevious = false;
@@ -219,9 +272,16 @@ final class EngineStore {
                 keptPrevious = true;
                 continue;
             }
-            LOG.info("Removing old engine {}", dir.getName());
-            removeMarker(dir);
-            FileOps.deleteTree(dir);
+            try {
+                boolean removed = AppUseLock.exclusively(dir, null, () -> {
+                    LOG.info("Removing old engine {}", dir.getName());
+                    removeMarker(dir);
+                });
+                if (removed) FileOps.deleteTree(dir);
+                else LOG.info("Old engine {} is in use by another game instance; kept for now", dir.getName());
+            } catch (InstallException e) {
+                LOG.warn("Old engine {} not removed: {}", dir.getName(), e.detail);
+            }
         }
         File[] children = root.listFiles();
         if (children == null) return;
@@ -231,13 +291,30 @@ final class EngineStore {
         }
     }
 
-    /** Deletes leftovers of interrupted installs. Call only while holding the install lock. */
+    /**
+     * Deletes leftovers of interrupted installs: staging and trash folders, and the temporary host app folders a crash
+     * during a host app swap leaves in an engine's {@code resources/}. Call only while holding the install lock (no
+     * install or swap is running then).
+     */
     void cleanStaging() {
         File[] children = root.listFiles();
         if (children == null) return;
         for (File c : children) {
             String n = c.getName();
-            if (n.startsWith(STAGING_PREFIX) || n.startsWith(TRASH_PREFIX)) FileOps.deleteTree(c);
+            if (n.startsWith(STAGING_PREFIX) || n.startsWith(TRASH_PREFIX)) {
+                FileOps.deleteTree(c);
+            } else if (!n.startsWith(".")) {
+                File[] res = new File(c, "resources").listFiles();
+                if (res == null) continue;
+                for (File r : res) {
+                    if (r.getName()
+                        .startsWith(APP_NEW_PREFIX)
+                        || r.getName()
+                            .startsWith(APP_OLD_PREFIX)) {
+                        FileOps.deleteTree(r);
+                    }
+                }
+            }
         }
     }
 

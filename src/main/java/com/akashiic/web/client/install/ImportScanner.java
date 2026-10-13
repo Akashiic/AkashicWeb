@@ -23,39 +23,45 @@ final class ImportScanner {
     private ImportScanner() {}
 
     /** The first matching zip, or null. Hashes only files of the exact pinned size, the asset's own name first. */
-    static File find(List<File> dirs, EngineTarget t) {
-        for (File dir : dirs) {
-            File[] files = dir.listFiles(
-                f -> f.isFile() && f.getName()
-                    .toLowerCase(Locale.ROOT)
-                    .endsWith(".zip"));
-            if (files == null) continue;
-            List<File> candidates = new ArrayList<>(Arrays.asList(files));
-            candidates.sort((a, b) -> {
-                boolean an = a.getName()
-                    .equals(t.assetName);
-                boolean bn = b.getName()
-                    .equals(t.assetName);
-                return an == bn ? a.getName()
-                    .compareTo(b.getName()) : an ? -1 : 1;
-            });
-            for (File f : candidates) {
-                if (f.length() != t.size) {
-                    if (f.getName()
-                        .equals(t.assetName)) {
-                        LOG.warn("Import {}: size {} is not the pinned {} (incomplete copy?)", f, f.length(), t.size);
-                    }
-                    continue;
+    static File find(File dir, EngineTarget t) {
+        File[] files = dir.listFiles(
+            f -> f.isFile() && f.getName()
+                .toLowerCase(Locale.ROOT)
+                .endsWith(".zip"));
+        if (files == null) return null;
+        List<File> candidates = new ArrayList<>(Arrays.asList(files));
+        candidates.sort((a, b) -> {
+            boolean an = a.getName()
+                .equals(t.assetName);
+            boolean bn = b.getName()
+                .equals(t.assetName);
+            return an == bn ? a.getName()
+                .compareTo(b.getName()) : an ? -1 : 1;
+        });
+        for (File f : candidates) {
+            if (f.length() != t.size) {
+                if (f.getName()
+                    .equals(t.assetName)) {
+                    LOG.warn(
+                        "Import {}: size {} is not the pinned {} (incomplete copy?)",
+                        f.getName(),
+                        f.length(),
+                        t.size);
                 }
-                try {
-                    if (Sha256.same(Sha256.of(f), t.sha256)) {
-                        LOG.info("Using imported engine zip {}", f);
-                        return f;
-                    }
-                    LOG.warn("Import {}: SHA-256 is not the pinned one; ignored", f);
-                } catch (IOException e) {
-                    LOG.warn("Import {}: unreadable ({})", f, e.toString());
+                continue;
+            }
+            try {
+                if (Sha256.same(Sha256.of(f), t.sha256)) {
+                    LOG.info("Using imported engine zip {}", f.getName());
+                    return f;
                 }
+                LOG.warn("Import {}: SHA-256 is not the pinned one; ignored", f.getName());
+            } catch (IOException e) {
+                LOG.warn(
+                    "Import {}: unreadable ({})",
+                    f.getName(),
+                    e.getClass()
+                        .getSimpleName());
             }
         }
         return null;

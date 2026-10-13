@@ -59,14 +59,17 @@ final class SafePath {
             throw new InstallException(InstallFailure.HASH_MISMATCH, "unsafe path in archive: " + printable(relative));
         }
         File out = new File(root, relative.replace('/', File.separatorChar));
+        String rootCanon;
+        String outCanon;
         try {
-            String rootCanon = root.getCanonicalPath() + File.separator;
-            if (!out.getCanonicalPath()
-                .startsWith(rootCanon)) {
-                throw new InstallException(InstallFailure.HASH_MISMATCH, "path escapes target: " + printable(relative));
-            }
+            rootCanon = root.getCanonicalPath() + File.separator;
+            outCanon = out.getCanonicalPath();
         } catch (IOException e) {
             throw new InstallException(InstallFailure.HASH_MISMATCH, "cannot resolve " + printable(relative), e);
+        }
+        // Outside the try: InstallException is an IOException, and this verdict must not be re-labelled above.
+        if (!outCanon.startsWith(rootCanon)) {
+            throw new InstallException(InstallFailure.HASH_MISMATCH, "path escapes target: " + printable(relative));
         }
         return out;
     }

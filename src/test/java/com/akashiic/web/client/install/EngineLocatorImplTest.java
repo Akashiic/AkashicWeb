@@ -202,6 +202,21 @@ class EngineLocatorImplTest {
     }
 
     @Test
+    void anUnwritableInstallFolderIsInstallDirNotWritable() throws Exception {
+        // A regular file where the AkashicWeb folder should be: no sub-folder can be created, even by root.
+        assertTrue(
+            base.getParentFile()
+                .isDirectory()
+                || base.getParentFile()
+                    .mkdirs());
+        assertTrue(base.createNewFile());
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.FAILED, l.state().kind);
+        assertEquals(ReasonCode.INSTALL_DIR_NOT_WRITABLE, l.state().reason);
+        assertEquals(0, server.requestCount());
+    }
+
+    @Test
     void lowDiskSpaceIsDiskFullBeforeAnyByte() {
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target).usableSpace(f -> 500L * 1024 * 1024));
         l.requestInstall();
@@ -231,21 +246,222 @@ class EngineLocatorImplTest {
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
     }
 
-    @Test
-    void interruptedDownloadResumesOnNextStartWithoutAskingAgain() throws Exception {
+    /** What a previous session left: half the file and its resume record. */
+    private File leavePartialDownload() throws Exception {
         File downloads = new File(base, "download");
         downloads.mkdirs();
-        // What a previous session left: half the file plus its state record (consent was given then).
         byte[] half = java.util.Arrays.copyOf(zip, zip.length / 2);
         Files.write(new File(downloads, target.assetName + ".part").toPath(), half);
-        File state = new File(downloads, target.assetName + ".state.json");
-        new DownloadState(target.url, "\"v1\"", target.size).write(state);
+        new DownloadState(target.url, "\"v1\"", target.size)
+            .write(new File(downloads, target.assetName + ".state.json"));
+        return downloads;
+    }
+
+    @Test
+    void anInstallInterruptedByClosingTheGameResumesAtTheNextStart() throws Exception {
+        File downloads = leavePartialDownload();
+        ConsentRecord.write(downloads, target, 1L); // the player pressed Install in that session
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
         assertEquals(
             "bytes=" + (zip.length / 2) + "-",
             server.entityRequests()
                 .get(0).range);
+        assertFalse(
+            ConsentRecord.file(downloads, target)
+                .exists(),
+            "consent is spent once the install is done");
+    }
+
+    /**
+     * Review finding (medium, 4, probe 'stateonly'): a resume file alone (planted, stale, or left by another
+     * instance) is not consent. Nothing is fetched until the player agrees; then the partial download resumes.
+     */
+    @Test
+    void aResumeFileAloneIsNotConsent() throws Exception {
+        leavePartialDownload();
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.CONSENT_NEEDED, l.state().kind, l.detail());
+        assertEquals(0, server.requestCount());
+        l.requestInstall();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertEquals(
+            "bytes=" + (zip.length / 2) + "-",
+            server.entityRequests()
+                .get(0).range,
+            "after the yes, the kept half is reused");
+    }
+
+    @Test
+    void consentForAnotherPinOrUrlIsNotConsent() throws Exception {
+        File downloads = leavePartialDownload();
+        EngineTarget otherUrl = TestSupport.withUrl(target, "https://mirror.invalid/" + target.assetName);
+        ConsentRecord.write(downloads, otherUrl, 1L);
+        assertEquals(
+            EngineState.Kind.CONSENT_NEEDED,
+            started(builder(TestSupport.linuxDesktop(), target)).state().kind);
+        Files.write(
+            ConsentRecord.file(downloads, target)
+                .toPath(),
+            ("sha256=" + Sha256.ofUtf8("other zip") + "\nurl=" + target.url + "\n").getBytes(StandardCharsets.UTF_8));
+        assertEquals(
+            EngineState.Kind.CONSENT_NEEDED,
+            started(builder(TestSupport.linuxDesktop(), target)).state().kind);
+        assertEquals(0, server.requestCount());
+    }
+
+    /** Review finding (medium, 4): a failed install no longer re-downloads in the background at every start. */
+    @Test
+    void aFailedInstallAsksAgainAtTheNextStart() {
+        server.persistentStatus = 503;
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        l.requestInstall();
+        assertEquals(ReasonCode.DOWNLOAD_FAILED, l.state().reason);
+        int requests = server.requestCount();
+        EngineLocatorImpl next = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.CONSENT_NEEDED, next.state().kind, next.detail());
+        assertEquals(requests, server.requestCount(), "no background download without a new yes");
+    }
+
+    /** Review finding (medium, 4): the player can stop a download; everything it left is removed. */
+    @Test
+    void cancelStopsTheDownloadAndForgetsIt() throws Exception {
+        server.gateAt = zip.length / 2;
+        EngineLocatorImpl l = builder(TestSupport.linuxDesktop(), target).executor(null)
+            .build();
+        l.start();
+        l.requestInstall();
+        assertTrue(server.reached.await(20, TimeUnit.SECONDS), "download never reached the middle");
+        l.cancelInstall();
+        server.release.countDown();
+        long deadline = System.currentTimeMillis() + 20_000;
+        while (l.state().kind != EngineState.Kind.CONSENT_NEEDED && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        assertEquals(EngineState.Kind.CONSENT_NEEDED, l.state().kind, l.detail());
+        File downloads = new File(base, "download");
+        assertEquals(
+            0,
+            downloads.list().length,
+            "part, resume record and consent record are gone: " + java.util.Arrays.toString(downloads.list()));
+        assertFalse(engineDir().exists());
+        EngineLocatorImpl next = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.CONSENT_NEEDED, next.state().kind);
+    }
+
+    @Test
+    void notNowOnAFailureKeepsTheReason() {
+        server.persistentStatus = 404;
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        l.requestInstall();
+        l.cancelInstall();
+        assertEquals(EngineState.Kind.FAILED, l.state().kind);
+        assertEquals(ReasonCode.DOWNLOAD_FAILED, l.state().reason);
+    }
+
+    /** Review finding (low, 8): a failed probe is run again by the next Install click. */
+    @Test
+    void installAfterAFailedProbeProbesAgain() throws Exception {
+        assertTrue(
+            base.getParentFile()
+                .isDirectory()
+                || base.getParentFile()
+                    .mkdirs());
+        assertTrue(base.createNewFile()); // not a folder: nothing can be created inside
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(ReasonCode.INSTALL_DIR_NOT_WRITABLE, l.state().reason);
+        assertTrue(base.delete()); // the player fixed it
+        l.requestInstall();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+    }
+
+    @Test
+    void repairReinstallsDamageOnlyAFullRehashFinds() throws Exception {
+        installed().release();
+        File ffmpeg = new File(engineDir(), "libffmpeg.so");
+        byte[] bytes = Files.readAllBytes(ffmpeg.toPath());
+        bytes[10] ^= 1; // same size: the start-up check cannot see it
+        Files.write(ffmpeg.toPath(), bytes);
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.READY, l.state().kind);
+        int requests = server.requestCount();
+        l.repair();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertTrue(server.requestCount() > requests, "the engine was downloaded again");
+        assertTrue(
+            EngineStore.inspect(engineDir(), java.util.Collections.singletonList(target), true)
+                .intact());
+    }
+
+    @Test
+    void repairOfAnIntactEngineDownloadsNothing() {
+        installed();
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        int requests = server.requestCount();
+        l.repair();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertTrue(
+            l.detail()
+                .contains("intact"),
+            l.detail());
+        assertEquals(requests, server.requestCount());
+    }
+
+    /** Review finding (low, 6): Smart App Control is read at every Windows start and after a load failure. */
+    @Test
+    void smartAppControlIsCheckedEvenWithAnEngineInstalled() throws Exception {
+        byte[] winZip = TestSupport.zip(TestSupport.windowsLikeEntries(9));
+        server.body = winZip;
+        EngineTarget win = TestSupport.target("win32-x64", target.url, winZip, true);
+        java.util.concurrent.atomic.AtomicReference<SmartAppControl.State> sacState = new java.util.concurrent.atomic.AtomicReference<>(
+            SmartAppControl.State.EVALUATION);
+        EngineLocatorImpl l = started(builder(TestSupport.windows10(), win).sacProbe(f -> sacState.get()));
+        l.requestInstall();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+
+        sacState.set(SmartAppControl.State.ENFORCE); // evaluation mode switched itself to enforce
+        l.verifyAfterLoadFailure();
+        assertEquals(ReasonCode.SAC_BLOCKED, l.state().reason, l.detail());
+        assertNull(l.hostExecutable());
+
+        EngineLocatorImpl next = started(builder(TestSupport.windows10(), win).sacProbe(f -> sacState.get()));
+        assertEquals(EngineState.Kind.FAILED, next.state().kind);
+        assertEquals(ReasonCode.SAC_BLOCKED, next.state().reason);
+    }
+
+    /** Review finding (high, 0, M2 part): a Windows refusal in the launch error names the real cause. */
+    @Test
+    void aWindowsRefusalInTheLaunchErrorBecomesItsReason() {
+        EngineLocatorImpl l = installed();
+        l.verifyAfterLoadFailure("java.io.IOException: Cannot run program \"x\": CreateProcess error=4551, An App...");
+        assertEquals(EngineState.Kind.FAILED, l.state().kind);
+        assertEquals(ReasonCode.SAC_BLOCKED, l.state().reason);
+        assertTrue(
+            l.detail()
+                .contains("error=4551"),
+            l.detail());
+
+        EngineLocatorImpl av = started(builder(TestSupport.linuxDesktop(), target));
+        av.verifyAfterLoadFailure("CreateProcess error=225, Operation did not complete successfully");
+        assertEquals(ReasonCode.AV_BLOCKED, av.state().reason);
+
+        EngineLocatorImpl other = started(builder(TestSupport.linuxDesktop(), target));
+        other.verifyAfterLoadFailure("exited before connecting");
+        assertEquals(EngineState.Kind.READY, other.state().kind, "an intact engine with an unknown error stays READY");
+    }
+
+    @Test
+    void consentInfoCarriesWhatTheConsentScreenAndImportHintNeed() {
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        ConsentInfo info = l.consentInfo();
+        assertEquals(target.assetName, info.zipName);
+        assertEquals(target.url, info.downloadUrl);
+        assertEquals(new File(base, "import"), info.importDir);
+        assertTrue(info.importDir.isDirectory(), "created so the player can find it");
+        assertEquals(base, info.installDir);
+        assertEquals(base.getPath(), info.installDirDisplay);
+        assertTrue(info.importDirDisplay.endsWith("import"), info.importDirDisplay);
+        assertTrue(info.diskBytes > 0 && info.requiredFreeBytes >= info.downloadBytes);
     }
 
     @Test
@@ -275,7 +491,7 @@ class EngineLocatorImplTest {
 
     @Test
     void newHostAppInTheJarIsInstalledWithoutDownloadingTheEngine() throws Exception {
-        installed();
+        installed().release(); // the game with the old mod version exited
         int requests = server.requestCount();
         Map<String, String> v2 = new LinkedHashMap<>();
         v2.put("package.json", "{\"name\":\"akashicweb-host\",\"main\":\"src/main.js\",\"version\":\"2\"}\n");
@@ -291,14 +507,14 @@ class EngineLocatorImplTest {
             new String(Files.readAllBytes(new File(app, "src/main.js").toPath()), StandardCharsets.UTF_8)
                 .contains("v2"));
         assertTrue(
-            EngineStore.inspect(engineDir(), true)
+            EngineStore.inspect(engineDir(), java.util.Collections.singletonList(target), true)
                 .intact(),
             "manifest and marker were rewritten");
     }
 
     @Test
     void damagedEngineFailsAtStartupAndRequestInstallRepairsIt() throws Exception {
-        installed();
+        installed().release();
         Files.write(new File(engineDir(), "libffmpeg.so").toPath(), new byte[] { 1, 2, 3 });
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
         assertEquals(EngineState.Kind.FAILED, l.state().kind);
@@ -306,7 +522,7 @@ class EngineLocatorImplTest {
         l.requestInstall();
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
         assertTrue(
-            EngineStore.inspect(engineDir(), true)
+            EngineStore.inspect(engineDir(), java.util.Collections.singletonList(target), true)
                 .intact());
     }
 
@@ -321,13 +537,13 @@ class EngineLocatorImplTest {
 
     @Test
     void damagedHostAppIsRepairedFromTheJarAtStartup() throws Exception {
-        installed();
+        installed().release();
         File main = new File(engineDir(), "resources/app/src/main.js");
         Files.write(main.toPath(), "evil()".getBytes(StandardCharsets.UTF_8));
         EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
         assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
         assertTrue(
-            EngineStore.inspect(engineDir(), true)
+            EngineStore.inspect(engineDir(), java.util.Collections.singletonList(target), true)
                 .intact());
     }
 
@@ -346,18 +562,11 @@ class EngineLocatorImplTest {
         byte[] zipB = TestSupport.zip(TestSupport.linuxLikeEntries(70));
         server.body = zipB;
         server.etag = "\"b\"";
-        EngineTarget targetB = new EngineTarget(
-            "linux-x64",
-            "44.8.0",
-            "electron-v44.8.0-linux-x64.zip",
-            server.canonicalUrl("electron-v44.8.0-linux-x64.zip"),
-            zipB.length,
-            Sha256.of(zipB),
-            "electron",
-            "AkashicWebHost",
-            false,
-            target.unixExecutables);
-        EngineLocatorImpl b = started(builder(TestSupport.linuxDesktop(), targetB));
+        EngineTarget targetB = TestSupport
+            .target("linux-x64", "44.8.0", server.canonicalUrl("electron-v44.8.0-linux-x64.zip"), zipB, false);
+        // A is the previous pin: this mod version can still check it file by file.
+        EngineLocatorImpl b = started(
+            builder(TestSupport.linuxDesktop(), targetB).previousTargets(java.util.Collections.singletonList(target)));
         b.requestInstall();
         assertEquals(EngineState.Kind.READY, b.state().kind, b.detail());
         File dirB = b.hostExecutable()
@@ -400,30 +609,22 @@ class EngineLocatorImplTest {
 
     @Test
     void onlyTheCurrentAndOnePreviousEngineAreKept() throws Exception {
-        installed();
+        installed().release();
         File first = engineDir();
         List<File> dirs = new ArrayList<>();
         for (int i = 1; i <= 2; i++) {
             byte[] z = TestSupport.zip(TestSupport.linuxLikeEntries(100 + i));
             server.body = z;
             server.etag = "\"e" + i + "\"";
-            EngineTarget t = new EngineTarget(
-                "linux-x64",
-                "44.8." + i,
-                "electron-v44.8." + i + "-linux-x64.zip",
-                server.canonicalUrl("electron-v44.8." + i + ".zip"),
-                z.length,
-                Sha256.of(z),
-                "electron",
-                "AkashicWebHost",
-                false,
-                target.unixExecutables);
+            EngineTarget t = TestSupport
+                .target("linux-x64", "44.8." + i, server.canonicalUrl("electron-v44.8." + i + ".zip"), z, false);
             EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), t));
             l.requestInstall();
             assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
             dirs.add(
                 l.hostExecutable()
                     .getParentFile());
+            l.release();
         }
         assertFalse(first.exists(), "the oldest engine was removed");
         assertTrue(
@@ -451,5 +652,289 @@ class EngineLocatorImplTest {
             one.userDataDir()
                 .equals(two.userDataDir()),
             "two instances never share a Chromium profile");
+    }
+
+    private static Map<String, String> hostAppV2() {
+        Map<String, String> v2 = new LinkedHashMap<>();
+        v2.put("package.json", "{\"name\":\"akashicweb-host\",\"main\":\"src/main.js\",\"version\":\"2\"}\n");
+        v2.put("src/main.js", "'use strict';\n// test host app v2\n");
+        return v2;
+    }
+
+    private String installedMainJs() throws Exception {
+        return new String(
+            Files.readAllBytes(new File(engineDir(), "resources/app/src/main.js").toPath()),
+            StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Review finding (medium, 2, probe 'skew'): a second game instance with another mod version must not rewrite the
+     * host app the first instance's host runs from. It reports ENGINE_IN_USE; once the first one exits, Repair updates.
+     */
+    @Test
+    void anotherModVersionNeverRewritesTheHostAppOfARunningInstance() throws Exception {
+        EngineLocatorImpl v1 = installed();
+        EngineLocatorImpl v2 = started(
+            builder(TestSupport.linuxDesktop(), target).hostApp(TestSupport.hostApp(hostAppV2())));
+        assertEquals(EngineState.Kind.FAILED, v2.state().kind);
+        assertEquals(ReasonCode.ENGINE_IN_USE, v2.state().reason, v2.detail());
+        assertTrue(installedMainJs().contains("v1"), "the running instance's app is untouched");
+        assertEquals(EngineState.Kind.READY, v1.state().kind);
+
+        v1.release(); // the first game exits
+        v2.repair();
+        assertEquals(EngineState.Kind.READY, v2.state().kind, v2.detail());
+        assertTrue(installedMainJs().contains("v2"));
+
+        // The first version starts again while v2 runs: now it is the one told to wait, and nothing swaps back.
+        EngineLocatorImpl again = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(ReasonCode.ENGINE_IN_USE, again.state().reason);
+        assertTrue(installedMainJs().contains("v2"));
+    }
+
+    /** Review finding (medium, 2): verify() no longer calls a folder intact when its app is another version's. */
+    @Test
+    void verifyNoticesAHostAppThatIsNotThisVersions() throws Exception {
+        EngineLocatorImpl v1 = installed();
+        v1.release();
+        EngineLocatorImpl v2 = started(
+            builder(TestSupport.linuxDesktop(), target).hostApp(TestSupport.hostApp(hostAppV2())));
+        assertEquals(EngineState.Kind.READY, v2.state().kind, v2.detail());
+        // v1 still thinks it is READY (it was released behind its back in this test) and its host fails to load.
+        v1.verifyAfterLoadFailure();
+        assertEquals(ReasonCode.ENGINE_IN_USE, v1.state().reason, "v2 runs from the folder: v1 must not swap it");
+        v2.release();
+        v1.verifyAfterLoadFailure();
+        assertEquals(EngineState.Kind.READY, v1.state().kind, v1.detail());
+        assertTrue(installedMainJs().contains("v1"));
+    }
+
+    /** Review finding (medium, 2): the lock holds across processes (a second JVM), as two game instances are. */
+    @Test
+    void aHostAppHeldByAnotherProcessIsNotRewritten() throws Exception {
+        installed().release();
+        Process holder = AppLockHolder.start(AppUseLock.fileFor(engineDir()));
+        try {
+            EngineLocatorImpl v2 = started(
+                builder(TestSupport.linuxDesktop(), target).hostApp(TestSupport.hostApp(hostAppV2())));
+            assertEquals(ReasonCode.ENGINE_IN_USE, v2.state().reason, v2.detail());
+            assertTrue(installedMainJs().contains("v1"));
+            holder.destroy();
+            assertTrue(holder.waitFor(10, TimeUnit.SECONDS));
+            v2.repair();
+            assertEquals(EngineState.Kind.READY, v2.state().kind, v2.detail());
+            assertTrue(installedMainJs().contains("v2"));
+        } finally {
+            holder.destroy();
+        }
+    }
+
+    @Test
+    void anOldEngineStillInUseIsNotPruned() throws Exception {
+        EngineLocatorImpl first = installed(); // keeps running from the oldest engine
+        File oldest = engineDir();
+        for (int i = 1; i <= 2; i++) {
+            byte[] z = TestSupport.zip(TestSupport.linuxLikeEntries(200 + i));
+            server.body = z;
+            server.etag = "\"p" + i + "\"";
+            EngineTarget t = TestSupport
+                .target("linux-x64", "44.9." + i, server.canonicalUrl("electron-v44.9." + i + ".zip"), z, false);
+            EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), t));
+            l.requestInstall();
+            assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+            l.release();
+        }
+        assertTrue(new File(oldest, LocalManifest.MARKER).isFile(), "the engine a running instance uses stays whole");
+        assertEquals(EngineState.Kind.READY, first.state().kind);
+    }
+
+    /**
+     * Review finding (medium, 1a, probe 'forged'): a hand-made engine folder with its own manifest and marker is not
+     * trusted, because its files are not the pinned ones. Install replaces it with the real engine.
+     */
+    @Test
+    void aForgedEngineFolderIsNotTrusted() throws Exception {
+        File dir = engineDir();
+        assertTrue(new File(dir, "resources").mkdirs());
+        Files.write(
+            new File(dir, "AkashicWebHost").toPath(),
+            "#!/bin/sh\necho pwned\n".getBytes(StandardCharsets.UTF_8));
+        List<LocalManifest.Entry> forged = new ArrayList<>(
+            HostApp.install(TestSupport.defaultHostApp(), new File(dir, EngineManifest.APP_DIR)));
+        forged.add(
+            new LocalManifest.Entry(
+                "AkashicWebHost",
+                new File(dir, "AkashicWebHost").length(),
+                Sha256.of(new File(dir, "AkashicWebHost"))));
+        LocalManifest m = new LocalManifest(target.engineId(), target.sha256, forged);
+        m.write(dir);
+        new EngineStore(new File(base, "engine")).writeMarker(dir, m, "AkashicWebHost", 1L);
+
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.FAILED, l.state().kind);
+        assertEquals(ReasonCode.HASH_MISMATCH, l.state().reason);
+        assertTrue(
+            l.detail()
+                .contains("not the pinned"),
+            l.detail());
+        assertNull(l.hostExecutable());
+        l.requestInstall();
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertTrue(
+            EngineStore.inspect(dir, java.util.Collections.singletonList(target), true)
+                .intact());
+    }
+
+    /**
+     * Review finding (medium, 1a): a self-consistent but foreign host app (manifest and marker rewritten) is replaced.
+     */
+    @Test
+    void aSelfConsistentForeignHostAppIsReplacedFromTheJar() throws Exception {
+        installed().release();
+        File dir = engineDir();
+        File main = new File(dir, "resources/app/src/main.js");
+        Files.write(main.toPath(), "evil()".getBytes(StandardCharsets.UTF_8));
+        LocalManifest old = LocalManifest.read(dir);
+        List<LocalManifest.Entry> entries = new ArrayList<>();
+        for (LocalManifest.Entry e : old.entries) {
+            entries.add(
+                e.path.equals("resources/app/src/main.js")
+                    ? new LocalManifest.Entry(e.path, main.length(), Sha256.of(main))
+                    : e);
+        }
+        LocalManifest forged = new LocalManifest(old.engineId, old.zipSha256, entries);
+        forged.write(dir);
+        new EngineStore(new File(base, "engine")).writeMarker(dir, forged, "AkashicWebHost", 2L);
+
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertTrue(installedMainJs().contains("test host app v1"), "the jar's app is back");
+    }
+
+    @Test
+    void rollbackGoesOnlyToAnEngineThisVersionHasPinsFor() throws Exception {
+        installed().release();
+        File dirA = engineDir();
+        byte[] zipB = TestSupport.zip(TestSupport.linuxLikeEntries(71));
+        server.body = zipB;
+        server.etag = "\"b2\"";
+        EngineTarget targetB = TestSupport
+            .target("linux-x64", "44.8.0", server.canonicalUrl("electron-v44.8.0-linux-x64.zip"), zipB, false);
+        EngineLocatorImpl b = started(builder(TestSupport.linuxDesktop(), targetB)); // A's pins unknown to "this" jar
+        b.requestInstall();
+        assertEquals(EngineState.Kind.READY, b.state().kind, b.detail());
+        File exeB = b.hostExecutable();
+        byte[] bytes = Files.readAllBytes(exeB.toPath());
+        bytes[0] ^= 1;
+        Files.write(exeB.toPath(), bytes);
+        b.verifyAfterLoadFailure();
+        assertEquals(EngineState.Kind.FAILED, b.state().kind, b.detail());
+        assertTrue(new File(dirA, LocalManifest.MARKER).isFile(), "the unpinned engine was left alone, not used");
+    }
+
+    /**
+     * Review finding (medium, 5, mutant M5): the marker binds the manifest's content (its canonical rendering). A
+     * manifest whose content changed after the install, here the zip it claims to come from, is not trusted.
+     */
+    @Test
+    void aManifestThatNoLongerMatchesItsMarkerIsNotTrusted() throws Exception {
+        installed().release();
+        File manifest = new File(engineDir(), LocalManifest.FILE);
+        String text = new String(Files.readAllBytes(manifest.toPath()), StandardCharsets.UTF_8);
+        Files.write(
+            manifest.toPath(),
+            text.replace("# zip-sha256 " + target.sha256, "# zip-sha256 " + Sha256.ofUtf8("another zip"))
+                .getBytes(StandardCharsets.UTF_8));
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.FAILED, l.state().kind);
+        assertEquals(ReasonCode.HASH_MISMATCH, l.state().reason);
+        assertTrue(
+            l.detail()
+                .contains("manifest does not match marker"),
+            l.detail());
+    }
+
+    /** Review finding (low, 9c): leftovers of interrupted installs and of older pins are removed at the next start. */
+    @Test
+    void leftoversOfInterruptedInstallsAndOlderPinsAreRemoved() throws Exception {
+        installed().release();
+        File downloads = new File(base, "download");
+        String old = "electron-v44.6.0-linux-x64.zip";
+        for (String n : new String[] { old, old + ".part", old + ".state.json", old + ConsentRecord.SUFFIX,
+            old + ".consent.tmp-1f" }) {
+            Files.write(new File(downloads, n).toPath(), new byte[] { 1 });
+        }
+        File players = new File(downloads, "notas do jogador.txt");
+        Files.write(players.toPath(), new byte[] { 2 });
+        File staging = new File(base, "engine/" + EngineStore.STAGING_PREFIX + "dead");
+        assertTrue(new File(staging, "x").mkdirs());
+        File swap = new File(engineDir(), "resources/" + EngineStore.APP_NEW_PREFIX + "dead");
+        assertTrue(new File(swap, "src").mkdirs());
+
+        EngineLocatorImpl l = started(builder(TestSupport.linuxDesktop(), target));
+        assertEquals(EngineState.Kind.READY, l.state().kind, l.detail());
+        assertEquals(
+            java.util.Collections.singletonList(players.getName()),
+            java.util.Arrays.asList(downloads.list()),
+            "only the player's own file stays");
+        assertFalse(staging.exists());
+        assertFalse(swap.exists());
+    }
+
+    /**
+     * After ENGINE_IN_USE the player may press Install instead of Repair. That must neither download (the engine is
+     * intact) nor adopt the other version's host app.
+     */
+    @Test
+    void installAfterEngineInUseNeverAdoptsTheOtherVersionsApp() throws Exception {
+        EngineLocatorImpl v1 = installed();
+        EngineLocatorImpl v2 = started(
+            builder(TestSupport.linuxDesktop(), target).hostApp(TestSupport.hostApp(hostAppV2())));
+        assertEquals(ReasonCode.ENGINE_IN_USE, v2.state().reason);
+        int requests = server.requestCount();
+        v2.requestInstall(); // v1 still runs
+        assertEquals(ReasonCode.ENGINE_IN_USE, v2.state().reason, v2.detail());
+        assertTrue(installedMainJs().contains("v1"));
+        v1.release();
+        v2.requestInstall();
+        assertEquals(EngineState.Kind.READY, v2.state().kind, v2.detail());
+        assertTrue(installedMainJs().contains("v2"), "v2's own app, not the one it found");
+        assertEquals(requests, server.requestCount(), "nothing was downloaded for an intact engine");
+    }
+
+    /**
+     * Two instances with different mod versions agreed to the same install. The other one finishes it while this one
+     * waits for the install lock; this one must then adopt the engine with its own host app, not the one it finds.
+     */
+    @Test
+    void anEngineInstalledByAnotherVersionWhileWaitingGetsThisVersionsApp() throws Exception {
+        installed().release(); // what the other version will have installed (its app: v1)
+        File parked = new File(tmp, "parked-engine");
+        assertTrue(engineDir().renameTo(parked));
+        File downloads = new File(base, "download");
+        ConsentRecord.write(downloads, target, 1L); // this instance (v2) agreed in an earlier session
+        Process otherInstaller = AppLockHolder.start(new File(base, "install.lock"));
+        EngineLocatorImpl v2;
+        try {
+            v2 = builder(TestSupport.linuxDesktop(), target).hostApp(TestSupport.hostApp(hostAppV2()))
+                .executor(null)
+                .build();
+            v2.start();
+            long deadline = System.currentTimeMillis() + 20_000;
+            while (v2.state().kind != EngineState.Kind.DOWNLOADING && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10);
+            }
+            assertEquals(EngineState.Kind.DOWNLOADING, v2.state().kind, "waiting for the other instance's install");
+            assertTrue(parked.renameTo(engineDir())); // the other instance's install completes
+        } finally {
+            otherInstaller.destroy();
+        }
+        assertTrue(otherInstaller.waitFor(10, TimeUnit.SECONDS));
+        long deadline = System.currentTimeMillis() + 20_000;
+        while (v2.state().kind == EngineState.Kind.DOWNLOADING && System.currentTimeMillis() < deadline)
+            Thread.sleep(10);
+        assertEquals(EngineState.Kind.READY, v2.state().kind, v2.detail());
+        assertTrue(installedMainJs().contains("v2"), "this version's own app, not the one it found");
+        assertEquals(0, server.entityHits.get() - 1, "only the first install downloaded");
     }
 }

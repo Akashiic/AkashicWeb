@@ -12,7 +12,8 @@ import javax.net.ssl.HttpsURLConnection;
  * Opens one HTTP(S) request for the installer and follows redirects itself, from the canonical URL, on every call:
  * GitHub answers {@code github.com/.../releases/download/...} with a 302 to a short-lived signed URL on
  * release-assets.githubusercontent.com, so a stored redirect target would expire (ADR-011 amendment). Following by
- * hand also keeps the Range/If-Range headers on every hop and refuses HTTPS-to-HTTP downgrades.
+ * hand also keeps the Range/If-Range headers on every hop and refuses HTTPS-to-HTTP downgrades. Every HTTPS hop
+ * uses the installer's own TLS context ({@link InstallerTls}), never the JVM default.
  */
 final class HttpFetcher {
 
@@ -44,6 +45,8 @@ final class HttpFetcher {
     private final boolean allowPlainHttp;
     private final int connectTimeoutMs;
     private final int readTimeoutMs;
+    /** Host of the hop opened last, so a failure can name it (the canonical host or the redirect target's). */
+    private volatile String lastHost = "";
 
     HttpFetcher(String userAgent, InstallerTls tls, boolean allowPlainHttp, int connectTimeoutMs, int readTimeoutMs) {
         this.userAgent = userAgent;
@@ -63,18 +66,23 @@ final class HttpFetcher {
         return "AkashicWeb/" + v + " (+" + PROJECT_URL + ")";
     }
 
+    /** Host of the hop opened last (for messages; never a signed URL). */
+    String lastHost() {
+        return lastHost;
+    }
+
     /**
-     * @param rangeFrom   first byte wanted, or 0 for the whole entity
-     * @param ifRange     validator for If-Range, or null
-     * @param fallbackTls use the installer's bundled-roots context for HTTPS hops
+     * @param rangeFrom first byte wanted, or 0 for the whole entity
+     * @param ifRange   validator for If-Range, or null
      */
-    Response open(String canonicalUrl, long rangeFrom, String ifRange, boolean fallbackTls) throws IOException {
+    Response open(String canonicalUrl, long rangeFrom, String ifRange) throws IOException {
         URL url = parse(canonicalUrl);
         for (int hop = 0;; hop++) {
             checkScheme(url);
+            lastHost = url.getHost();
             HttpURLConnection c = (HttpURLConnection) url.openConnection();
-            if (fallbackTls && c instanceof HttpsURLConnection) {
-                ((HttpsURLConnection) c).setSSLSocketFactory(tls.fallbackFactory());
+            if (c instanceof HttpsURLConnection) {
+                ((HttpsURLConnection) c).setSSLSocketFactory(tls.socketFactory());
             }
             c.setInstanceFollowRedirects(false);
             c.setUseCaches(false);

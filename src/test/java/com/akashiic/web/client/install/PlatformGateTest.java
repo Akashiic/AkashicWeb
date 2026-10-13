@@ -143,4 +143,13 @@ class PlatformGateTest {
             assertFalse(f.reason == ReasonCode.OK);
         }
     }
+
+    /** Review finding (low, 10): "/system/..." on Windows is a path on the current drive, not Android. */
+    @Test
+    void androidSystemFilesAreLookedForOnlyOnLinux() {
+        assertFalse(PlatformFacts.androidSystemFiles("Windows 11", f -> true), "C:\\system\\build.prop is not Android");
+        assertFalse(PlatformFacts.androidSystemFiles("Mac OS X", f -> true));
+        assertTrue(PlatformFacts.androidSystemFiles("Linux", f -> f.equals("/system/build.prop")));
+        assertFalse(PlatformFacts.androidSystemFiles("Linux", f -> false));
+    }
 }

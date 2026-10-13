@@ -51,6 +51,28 @@ class HostAppTest {
         }
     }
 
+    /**
+     * Review finding (low, 7, probe 'longpath'): the engine manifest stores {@code resources/app/<path>} and rejects
+     * lines over the length limit, so a host path that fits alone but not with the prefix installed as READY and then
+     * failed every start (and every repair). The jar's manifest is now checked against the installed path.
+     */
+    @Test
+    void aHostPathTooLongOnceInstalledIsRejectedUpFront() throws Exception {
+        int room = SafePath.MAX_RELATIVE_LENGTH - (EngineManifest.APP_DIR + "/").length();
+        StringBuilder fits = new StringBuilder("src/");
+        while (fits.length() < room - 3) fits.append('a');
+        fits.append(".js");
+        assertEquals(room, fits.length());
+        HostApp.parse(utf8(HASH + "  package.json\n" + HASH + "  " + fits + "\n"));
+        String tooLong = fits.toString()
+            .replace(".js", "a.js");
+        assertTrue(SafePath.isSafeRelative(tooLong), "fine on its own");
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> HostApp.parse(utf8(HASH + "  package.json\n" + HASH + "  " + tooLong + "\n")));
+        assertEquals(InstallFailure.HASH_MISMATCH, e.failure);
+    }
+
     @Test
     void installsEveryFileAndTheManifest() throws Exception {
         File app = new File(tmp, "resources/app");
@@ -86,6 +108,34 @@ class HostAppTest {
         assertEquals(
             InstallFailure.HASH_MISMATCH,
             assertThrows(InstallException.class, () -> HostApp.install(rel -> null, new File(tmp, "b"))).failure);
+    }
+
+    @Test
+    void aJarThatCannotBeReadIsAModJarProblemNotADownloadOne() {
+        HostApp.Source good = TestSupport.defaultHostApp();
+        HostApp.Source unreadable = rel -> rel.equals("src/main.js") ? new InputStream() {
+
+            @Override
+            public int read() throws java.io.IOException {
+                throw new java.io.IOException("zip entry corrupt");
+            }
+        } : good.open(rel);
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> HostApp.install(unreadable, new File(tmp, "a")));
+        assertEquals(InstallFailure.HASH_MISMATCH, e.failure);
+        assertTrue(e.detail.startsWith("mod jar"), e.detail);
+    }
+
+    @Test
+    void aFolderThatCannotBeWrittenIsInstallDirNotWritable() throws Exception {
+        File app = new File(tmp, "app");
+        // A folder where a file must go makes the write fail even for root (tests run as root here).
+        assertTrue(new File(app, "src/main.js").mkdirs());
+        InstallException e = assertThrows(
+            InstallException.class,
+            () -> HostApp.install(TestSupport.defaultHostApp(), app));
+        assertEquals(InstallFailure.INSTALL_DIR_NOT_WRITABLE, e.failure);
     }
 
     @Test
