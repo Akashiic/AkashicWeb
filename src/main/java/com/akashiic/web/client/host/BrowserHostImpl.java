@@ -1,10 +1,13 @@
 package com.akashiic.web.client.host;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -23,9 +26,16 @@ import com.akashiic.web.common.SitePolicy;
  * at 4 Hz anyway.
  *
  * <p>
+ * URLs. Every URL is checked by {@link ClientUrlCheck} (the server's own UrlGate: internal addresses, site policy)
+ * before it leaves the JVM, in CREATE, NAVIGATE and the CREATE of a replay. A refused URL never reaches the host: the
+ * screen keeps its page (NAVIGATE) or starts blank (CREATE), and the listeners get a local {@code blocked-url} EVENT
+ * whose detail carries the ReasonCode (URL_INVALID, URL_INTERNAL or URL_BLOCKED). Until {@link #policy} is called the
+ * site policy denies everything, as it does for a policy with a null or unknown mode.
+ *
+ * <p>
  * Listener callbacks arrive on the reader thread (onStatus on the supervisor thread, and the "blocked-url" EVENT for a
- * URL refused here synchronously on the caller's thread); each listener is isolated so one that throws cannot break
- * the others or the connection. Implementations hop to the client thread in every case.
+ * URL refused here synchronously on the caller's thread); each listener is isolated so one that throws, even an Error,
+ * cannot break the others, the connection or the supervisor. Implementations hop to the client thread in every case.
  */
 public final class BrowserHostImpl implements BrowserHost {
 
@@ -37,11 +47,14 @@ public final class BrowserHostImpl implements BrowserHost {
     /** Sorted by id, which is creation order, so replay re-creates screens in the order the game made them. */
     private final ConcurrentSkipListMap<Integer, ScreenRecord> screens = new ConcurrentSkipListMap<>();
     private final AtomicInteger lastScreenId = new AtomicInteger();
+    /** Test seam: see {@link ClientUrlCheck#ClientUrlCheck(SitePolicy, boolean)}. False for the game. */
+    private final boolean allowFileUrls;
 
     private final Object lock = new Object();
     // Guarded by lock.
     private HostConnection connection;
     private SitePolicy policy;
+    private ClientUrlCheck urls;
     private boolean shutDown;
 
     public BrowserHostImpl(HostLaunchConfig config) {
@@ -49,7 +62,19 @@ public final class BrowserHostImpl implements BrowserHost {
     }
 
     BrowserHostImpl(HostLaunchConfig config, HostClock clock, ProcessControl processes) {
+        this(config, clock, processes, false);
+    }
+
+    /**
+     * Test seam: {@code allowFileUrlsForTesting} lets {@code file:///} URLs pass the client-side check. Only the
+     * end-to-end test sets it, and it also starts its development host with the host's own test-only switch. The
+     * constructor is package-private so game code cannot reach it.
+     */
+    BrowserHostImpl(HostLaunchConfig config, HostClock clock, ProcessControl processes,
+        boolean allowFileUrlsForTesting) {
         this.config = config;
+        this.allowFileUrls = allowFileUrlsForTesting;
+        this.urls = new ClientUrlCheck(null, allowFileUrlsForTesting);
         this.supervisor = new HostSupervisor(config, clock, processes, new Inbound(), new SupervisorEvents());
     }
 
@@ -77,14 +102,15 @@ public final class BrowserHostImpl implements BrowserHost {
     public int createScreen(CreateSpec spec) {
         if (spec == null) throw new NullPointerException("spec");
         int id = lastScreenId.updateAndGet(v -> v >= Integer.MAX_VALUE ? 1 : v + 1);
-        boolean blocked = !HostMessages.isNavigable(spec.url);
-        ScreenRecord r = new ScreenRecord(id, spec, blocked ? "about:blank" : spec.url);
+        ClientUrlCheck.Decision d;
         synchronized (lock) {
             if (shutDown) return id;
+            d = urls.check(spec.url);
+            ScreenRecord r = new ScreenRecord(id, spec, d.ok() ? d.url : ClientUrlCheck.BLANK);
             screens.put(id, r);
             if (connection != null) connection.sendCreate(id, r.currentSpec());
         }
-        if (blocked) rejectUrl(id, spec.url);
+        if (!d.ok()) refuse(id, d);
         return id;
     }
 
@@ -97,16 +123,17 @@ public final class BrowserHostImpl implements BrowserHost {
 
     @Override
     public void navigate(int screenId, String url) {
-        if (!HostMessages.isNavigable(url)) {
-            if (screens.containsKey(screenId)) rejectUrl(screenId, url);
-            return;
-        }
+        ClientUrlCheck.Decision d;
         synchronized (lock) {
             ScreenRecord r = screens.get(screenId);
             if (r == null) return;
-            r.url = url;
-            if (connection != null) connection.sendNavigate(screenId, url);
+            d = urls.check(url);
+            if (d.ok()) {
+                r.url = d.url;
+                if (connection != null) connection.sendNavigate(screenId, d.url);
+            }
         }
+        if (!d.ok()) refuse(screenId, d); // the screen keeps its current page
     }
 
     @Override
@@ -178,6 +205,8 @@ public final class BrowserHostImpl implements BrowserHost {
     public void policy(SitePolicy policy) {
         synchronized (lock) {
             this.policy = policy;
+            this.urls = new ClientUrlCheck(policy, allowFileUrls);
+            // The host re-checks what each screen shows against the new policy itself (POLICY handling).
             if (connection != null) connection.sendPolicy(policy);
         }
     }
@@ -233,12 +262,20 @@ public final class BrowserHostImpl implements BrowserHost {
                     + ", taken "
                     + c[2]
                     + ", requeued "
-                    + c[3]);
+                    + c[3]
+                    + rejection(r.frames));
         }
         return out;
     }
 
     // ---------------------------------------------------------------------------------------------------------------
+
+    private static String rejection(FramePipeline p) {
+        long n = p.framesRejected();
+        if (n == 0) return "";
+        String now = p.rejectedSize();
+        return ", too large and skipped " + n + (now == null ? "" : " (now " + now + ")");
+    }
 
     /** Pointer coordinates inside the page, so a rounding error at the screen edge never reaches the host as -1. */
     static InputEvent clampToPage(InputEvent e, int width, int height) {
@@ -253,30 +290,53 @@ public final class BrowserHostImpl implements BrowserHost {
     }
 
     /** A URL this layer refuses shows up like a host-side block, so the screen's placeholder logic handles both. */
-    private void rejectUrl(int screenId, String url) {
-        LOG.warn("AkashicWeb: refusing to send a non-http(s) or malformed URL to the host (screen {})", screenId);
-        String json = JsonWriter.object("kind", "blocked-url", "detail", "scheme");
+    private void refuse(int screenId, ClientUrlCheck.Decision d) {
+        // The URL itself is not logged (it can be long and carry tokens); the host name and the reason are enough.
+        LOG.warn(
+            "AkashicWeb: refused a URL before it reached the host (screen {}): {} {} {}",
+            screenId,
+            d.code,
+            d.reason,
+            d.host);
+        String json = d.event();
+        deliver("event", l -> l.onEvent(screenId, json));
+    }
+
+    /**
+     * Calls every listener, each isolated: whatever one throws (a RuntimeException, or an Error such as a
+     * NoClassDefFoundError from game code) is logged and the others still run, and neither the reader thread nor the
+     * supervisor thread is taken down by it.
+     */
+    private void deliver(String what, Consumer<HostListener> call) {
         for (HostListener l : listeners) {
             try {
-                l.onEvent(screenId, json);
-            } catch (RuntimeException e) {
-                LOG.error("AkashicWeb: host listener failed", e);
+                call.accept(l);
+            } catch (Throwable t) {
+                LOG.error("AkashicWeb: host listener failed (" + what + ")", t);
             }
         }
     }
 
     /** Called on the supervisor thread when a connection is ready: WELCOME first, then re-create every screen. */
     private void replay(HostConnection conn) {
+        Map<Integer, ClientUrlCheck.Decision> refused = new LinkedHashMap<>();
         synchronized (lock) {
             if (shutDown) return;
             conn.sendWelcome(policy, config.locale, config.userAgent);
             for (ScreenRecord r : screens.values()) {
+                // The URL leaves the JVM again: check it against the policy in force now, which may have changed.
+                ClientUrlCheck.Decision d = urls.check(r.url);
+                if (!d.ok()) {
+                    r.url = ClientUrlCheck.BLANK;
+                    refused.put(r.id, d);
+                }
                 conn.sendCreate(r.id, r.currentSpec());
                 if (r.audioSet) conn.sendAudio(r.id, r.muted, r.volume);
                 if (r.renderSet) conn.sendRender(r.id, r.fps, r.painting);
             }
             connection = conn;
         }
+        for (Map.Entry<Integer, ClientUrlCheck.Decision> e : refused.entrySet()) refuse(e.getKey(), e.getValue());
     }
 
     private final class SupervisorEvents implements HostSupervisor.Callbacks {
@@ -295,13 +355,7 @@ public final class BrowserHostImpl implements BrowserHost {
 
         @Override
         public void onStatus(HostStatus status) {
-            for (HostListener l : listeners) {
-                try {
-                    l.onStatus(status);
-                } catch (RuntimeException e) {
-                    LOG.error("AkashicWeb: host listener failed", e);
-                }
-            }
+            deliver("status", l -> l.onStatus(status));
         }
     }
 
@@ -317,46 +371,40 @@ public final class BrowserHostImpl implements BrowserHost {
         @Override
         public void onPcm(int screenId, PcmChunk c) {
             if (!screens.containsKey(screenId)) return;
-            for (HostListener l : listeners) {
-                try {
-                    l.onPcm(screenId, c.ptsMicros, c.sampleRate, c.channels, c.interleaved, c.frames);
-                } catch (RuntimeException e) {
-                    LOG.error("AkashicWeb: host PCM listener failed", e);
-                }
-            }
+            deliver("pcm", l -> l.onPcm(screenId, c.ptsMicros, c.sampleRate, c.channels, c.interleaved, c.frames));
         }
 
         @Override
         public void onState(int screenId, String json) {
-            for (HostListener l : listeners) {
-                try {
-                    l.onState(screenId, json);
-                } catch (RuntimeException e) {
-                    LOG.error("AkashicWeb: host listener failed", e);
-                }
-            }
+            deliver("state", l -> l.onState(screenId, json));
         }
 
         @Override
         public void onMedia(int screenId, String json) {
-            for (HostListener l : listeners) {
-                try {
-                    l.onMedia(screenId, json);
-                } catch (RuntimeException e) {
-                    LOG.error("AkashicWeb: host listener failed", e);
-                }
-            }
+            deliver("media", l -> l.onMedia(screenId, json));
         }
 
         @Override
         public void onEvent(int screenId, String json) {
-            for (HostListener l : listeners) {
-                try {
-                    l.onEvent(screenId, json);
-                } catch (RuntimeException e) {
-                    LOG.error("AkashicWeb: host listener failed", e);
-                }
-            }
+            deliver("event", l -> l.onEvent(screenId, json));
+        }
+
+        /**
+         * A page too large to hold (for example painted at a display scale above 100%): its frames are skipped, the
+         * connection and every other screen keep running, and this screen fails visibly with a local
+         * {@code load-error} EVENT whose detail names {@code frame-too-large} and TEXTURE_TOO_LARGE.
+         */
+        @Override
+        public void onFrameRejected(int screenId, int width, int height) {
+            LOG.warn(
+                "AkashicWeb: screen {} sent a {}x{} page, larger than {} per side or {} pixels; its frames are skipped",
+                screenId,
+                width,
+                height,
+                FrameCanvas.MAX_DIMENSION,
+                FrameCanvas.MAX_PIXELS);
+            String json = HostMessages.frameTooLargeEvent(width, height);
+            deliver("event", l -> l.onEvent(screenId, json));
         }
     }
 }

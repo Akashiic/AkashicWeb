@@ -76,6 +76,22 @@ class FrameRing3Test {
         assertThrows(HostProtocol.ProtocolException.class, () -> c.ensureSize(4096, 1025));
         assertThrows(HostProtocol.ProtocolException.class, () -> c.ensureSize(0, 10));
         c.ensureSize(4096, 1023); // largest 4096-wide page that fits one FRAME
+        // Review finding (low): the pixel cap alone let 65535x64 through, wider than any GL texture.
+        assertThrows(HostProtocol.ProtocolException.class, () -> c.ensureSize(65535, 64));
+        assertThrows(HostProtocol.ProtocolException.class, () -> c.ensureSize(4097, 16));
+        assertThrows(HostProtocol.ProtocolException.class, () -> c.ensureSize(16, 4097));
+        assertTrue(FrameCanvas.fits(4096, 1023));
+        assertTrue(FrameCanvas.fits(1023, 4096));
+        assertFalse(FrameCanvas.fits(4096, 1024), "4,194,304 pixels: 3 over the one-payload cap");
+        assertFalse(FrameCanvas.fits(2880, 1620), "a 1080p screen painted at 150% display scale");
+        assertFalse(FrameCanvas.fits(4097, 1));
+        assertFalse(FrameCanvas.fits(-1, 10));
+        assertEquals(4096, FrameSlot.MAX_DIMENSION);
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> new FrameSlot(java.nio.ByteBuffer.allocateDirect(4097 * 4), 4097, 1));
+        assertThrows(IllegalArgumentException.class, () -> new FrameSlot(java.nio.ByteBuffer.allocate(16), -2, -2));
+        assertEquals(4096, new FrameSlot(java.nio.ByteBuffer.allocate(4096 * 4), 4096, 1).width);
     }
 
     // --- ring basics ----------------------------------------------------------------------------------------------

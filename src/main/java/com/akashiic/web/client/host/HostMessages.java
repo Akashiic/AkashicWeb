@@ -73,19 +73,40 @@ public final class HostMessages {
 
     /**
      * Cheap shape check before a URL leaves the JVM: http(s) or about:blank, bounded length, no whitespace or control
-     * characters. The real site policy and internal-address block run on the server and in the host; this only stops
-     * schemes like file:, chrome: or javascript: from ever reaching the engine through a client bug.
+     * characters, no backslash and no user info in the authority. It is the first stage of the client-side URL check,
+     * which then applies the server's own {@code UrlGate} (internal addresses, site policy).
      */
     public static boolean isNavigable(String url) {
-        if (url == null || url.isEmpty() || url.length() > MAX_URL) return false;
+        return "about:blank".equals(url) || urlShapeProblem(url) == null;
+    }
+
+    /**
+     * Why {@code url} fails the http(s) shape check, as a short stable word for logs and events, or null when it
+     * passes. Backslashes are refused anywhere: Chromium's WHATWG parser reads {@code \} as {@code /} in http(s) URLs
+     * while java.net.URI rejects it, so the two parsers could disagree about where the host ends
+     * ({@code http://allowed.example\@evil.example/}). Any {@code @} in the authority is refused for the same reason
+     * (and because a page URL never needs credentials).
+     */
+    static String urlShapeProblem(String url) {
+        if (url == null || url.isEmpty()) return "empty";
+        if (url.length() > MAX_URL) return "too_long";
         for (int i = 0; i < url.length(); i++) {
             char c = url.charAt(i);
-            if (c <= 0x20 || c == 0x7F) return false;
+            if (c <= 0x20 || c == 0x7F) return "malformed";
+            if (c == '\\') return "backslash";
         }
-        if (url.equals("about:blank")) return true;
         String lower = url.substring(0, Math.min(8, url.length()))
             .toLowerCase(Locale.ROOT);
-        return (lower.startsWith("https://") && url.length() > 8) || (lower.startsWith("http://") && url.length() > 7);
+        int authority;
+        if (lower.startsWith("https://")) authority = 8;
+        else if (lower.startsWith("http://")) authority = 7;
+        else return "scheme";
+        int end = authority;
+        while (end < url.length() && "/?#".indexOf(url.charAt(end)) < 0) end++;
+        if (end == authority) return "no_host";
+        int at = url.indexOf('@', authority);
+        if (at >= 0 && at < end) return "credentials";
+        return null;
     }
 
     /** True for the NAVIGATE actions the host understands. */
@@ -166,21 +187,78 @@ public final class HostMessages {
     // ---------------------------------------------------------------------------------------------------------------
 
     /**
-     * Site policy as sent in WELCOME and POLICY. A null policy becomes an empty allowlist, which denies every site:
-     * until the server has told us its policy, the safe answer is "nothing".
+     * Site policy as sent in WELCOME and POLICY. A null policy, or one whose mode is null or unknown (a malformed or
+     * newer S2CHello), becomes an empty allowlist, which denies every site: until the server has told us a policy we
+     * understand, the safe answer is "nothing". Never an allow-all blocklist.
      */
     static Object policyMap(SitePolicy policy) {
-        if (policy == null) {
+        String mode = knownMode(policy);
+        if (mode == null) {
             return JsonWriter
                 .map("mode", "allowlist", "allow", new ArrayList<String>(), "block", new ArrayList<String>());
         }
-        return JsonWriter.map(
-            "mode",
-            policy.mode == SitePolicy.Mode.ALLOWLIST ? "allowlist" : "blocklist",
-            "allow",
-            hosts(policy.allow),
-            "block",
-            hosts(policy.block));
+        return JsonWriter.map("mode", mode, "allow", hosts(policy.allow), "block", hosts(policy.block));
+    }
+
+    /** "allowlist" or "blocklist", or null when the policy or its mode is missing or unknown (fail closed). */
+    private static String knownMode(SitePolicy policy) {
+        if (policy == null || policy.mode == null) return null;
+        switch (policy.mode) {
+            case ALLOWLIST:
+                return "allowlist";
+            case BLOCKLIST:
+                return "blocklist";
+            default:
+                return null; // a mode added after this build: we cannot know what it allows
+        }
+    }
+
+    /**
+     * The policy the client-side URL gate applies: entries normalised like the server's ({@link SitePolicy#of}), and
+     * deny-all for a null policy or a null or unknown mode, matching {@link #policyMap}.
+     */
+    static SitePolicy gatePolicy(SitePolicy policy) {
+        if (knownMode(policy) == null) {
+            return new SitePolicy(SitePolicy.Mode.ALLOWLIST, new ArrayList<String>(), new ArrayList<String>());
+        }
+        return SitePolicy.of(policy.mode, policy.allow, policy.block);
+    }
+
+    /**
+     * EVENT for a URL refused on this side before it left the JVM: the same {@code blocked-url} kind and detail shape
+     * as the host's own refusals ({@code reason}, {@code host}, {@code via}), plus {@code code}, the
+     * {@link com.akashiic.web.common.ReasonCode} name (URL_INVALID, URL_INTERNAL or URL_BLOCKED).
+     */
+    static String blockedUrlEvent(String code, String reason, String host) {
+        return JsonWriter.object(
+            "kind",
+            "blocked-url",
+            "detail",
+            JsonWriter.map("reason", reason, "code", code, "host", host == null ? "" : host, "via", "client"));
+    }
+
+    /**
+     * EVENT for a screen whose page is too large to hold (frames skipped). The {@code load-error} kind is what the
+     * game already shows as a failed page; {@code code} names the precise reason.
+     */
+    static String frameTooLargeEvent(int width, int height) {
+        return JsonWriter.object(
+            "kind",
+            "load-error",
+            "detail",
+            JsonWriter.map(
+                "reason",
+                "frame-too-large",
+                "code",
+                "TEXTURE_TOO_LARGE",
+                "width",
+                width,
+                "height",
+                height,
+                "maxSide",
+                FrameCanvas.MAX_DIMENSION,
+                "maxPixels",
+                FrameCanvas.MAX_PIXELS));
     }
 
     private static List<String> hosts(List<String> in) {

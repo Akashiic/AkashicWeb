@@ -31,6 +31,12 @@ import com.akashiic.web.protocol.Protocol;
  * drains under the writer lock. The game's client thread therefore never waits on a socket, even if the host's main
  * thread hangs; if the queue fills up the host is considered stalled and the connection is closed (the supervisor
  * relaunches it).
+ *
+ * <p>
+ * Whatever ends the reader or the writer (EOF, a protocol violation, or an unexpected exception or Error such as a
+ * direct-memory OutOfMemoryError) closes the connection, so the supervisor always sees the end of a run: a dead thread
+ * never leaves a READY status with frozen frames behind. A FRAME of a page too large to hold is skipped and fails only
+ * its screen ({@link Inbound#onFrameRejected}); the connection stays up.
  */
 public final class HostConnection {
 
@@ -59,6 +65,12 @@ public final class HostConnection {
         void onMedia(int screenId, String json);
 
         void onEvent(int screenId, String json);
+
+        /**
+         * A FRAME of screen {@code screenId} was skipped because its {@code width x height} page does not
+         * {@link FrameCanvas#fits fit}; called once per page size (later frames of that size are skipped quietly).
+         */
+        default void onFrameRejected(int screenId, int width, int height) {}
     }
 
     private static final class Outgoing {
@@ -184,11 +196,14 @@ public final class HostConnection {
         return json != null && enqueue(HostProtocol.SYNC, screenId, json);
     }
 
-    /** PING with a fresh nonce; the PONG updates {@link #lastRttMillis()}. One outstanding ping at a time. */
+    /**
+     * PING with a fresh nonce; the PONG updates {@link #lastRttMillis()}. The supervisor sends one only when none is
+     * outstanding ({@link #pingOutstanding()}), so {@link #pongOverdueMillis()} counts from the unanswered one.
+     */
     public boolean sendPing() {
         long nonce = nextNonce.getAndIncrement();
+        pingSentNanos = System.nanoTime(); // before the nonce: whoever sees the nonce sees its send time
         pingNonce = nonce;
-        pingSentNanos = System.nanoTime();
         return enqueue(HostProtocol.PING, 0, HostMessages.ping(nonce));
     }
 
@@ -262,6 +277,17 @@ public final class HostConnection {
         return pingNonce != 0 && System.nanoTime() - pingSentNanos > millis * 1_000_000L;
     }
 
+    /** True while a PING waits for its PONG. */
+    public boolean pingOutstanding() {
+        return pingNonce != 0;
+    }
+
+    /** How long the outstanding PING has waited, in ms, or -1 when none is outstanding. */
+    public long pongOverdueMillis() {
+        if (pingNonce == 0) return -1;
+        return Math.max(0, (System.nanoTime() - pingSentNanos) / 1_000_000L);
+    }
+
     public long messagesIn() {
         return messagesIn;
     }
@@ -294,12 +320,14 @@ public final class HostConnection {
     }
 
     private void writeLoop() {
+        boolean graceful = false;
         try {
             while (true) {
                 Outgoing m = queue.take();
                 synchronized (writerLock) {
                     if (m == END) {
                         out.flush();
+                        graceful = true; // flushAndClose() closes with SHUTDOWN once it sees endWritten
                         endWritten.countDown();
                         return;
                     }
@@ -312,13 +340,20 @@ public final class HostConnection {
             // close() interrupts us: the connection is over.
         } catch (IOException e) {
             close(HostFailure.CONNECTION_LOST, "write: " + e);
+        } catch (Throwable t) {
+            // Boundary: an Error (OutOfMemoryError, LinkageError) or a bug must end the connection visibly too. Close
+            // first: logging may itself fail when memory is short.
+            close(HostFailure.INTERNAL_ERROR, "writer: " + t);
+            LOG.error("AkashicWeb: host writer failed", t);
+        } finally {
+            if (!graceful) close(HostFailure.INTERNAL_ERROR, "writer ended"); // no-op when already closed
         }
     }
 
     private void readLoop() {
-        byte[] scratch = new byte[SCRATCH_BYTES];
-        byte[] frameHead = new byte[HostProtocol.FrameHeader.BYTES];
         try {
+            byte[] scratch = new byte[SCRATCH_BYTES];
+            byte[] frameHead = new byte[HostProtocol.FrameHeader.BYTES];
             while (!closed.get()) {
                 HostProtocol.Header h = HostProtocol.readHeader(in);
                 if (h == null) {
@@ -332,10 +367,15 @@ public final class HostConnection {
             close(HostFailure.PROTOCOL_ERROR, e.getMessage());
         } catch (IOException e) {
             close(HostFailure.CONNECTION_LOST, e.toString());
-        } catch (RuntimeException e) {
-            // Boundary: a bug in a frame or listener path must end this connection visibly, not leave a dead reader.
-            LOG.error("AkashicWeb: host reader failed", e);
-            close(HostFailure.PROTOCOL_ERROR, "reader: " + e);
+        } catch (Throwable t) {
+            // Boundary: a RuntimeException or an Error from the frame path (a direct-memory OutOfMemoryError from
+            // ByteBuffer.allocateDirect) or from a listener must end this connection visibly, never leave a dead
+            // reader behind a READY status. Close first: logging may itself fail when memory is short.
+            close(HostFailure.INTERNAL_ERROR, "reader: " + t);
+            LOG.error("AkashicWeb: host reader failed", t);
+        } finally {
+            // Whatever ended the loop, the connection must not outlive its reader (the supervisor waits on close).
+            close(HostFailure.INTERNAL_ERROR, "reader ended"); // no-op when already closed
         }
     }
 
@@ -346,11 +386,23 @@ public final class HostConnection {
                 in.readFully(frameHead);
                 HostProtocol.FrameHeader f = HostProtocol.FrameHeader.parse(frameHead, h.length);
                 FramePipeline pipeline = inbound.framesFor(h.screenId);
-                if (pipeline == null) skip(h.length - HostProtocol.FrameHeader.BYTES, scratch);
-                else pipeline.receive(f, in, scratch);
+                long pixelBytes = h.length - HostProtocol.FrameHeader.BYTES;
+                if (pipeline == null) {
+                    skip(pixelBytes, scratch);
+                } else if (!FrameCanvas.fits(f.width, f.height)) {
+                    // A page we cannot hold (e.g. painted at a display scale above 100%). The payload length was
+                    // validated, so skip it and fail only this screen; the other screens keep the connection.
+                    skip(pixelBytes, scratch);
+                    if (pipeline.reject(f.width, f.height)) inbound.onFrameRejected(h.screenId, f.width, f.height);
+                } else {
+                    pipeline.receive(f, in, scratch);
+                }
                 break;
             }
             case HostProtocol.PCM: {
+                // A valid chunk is at most 1 MiB: refuse a longer one before allocating anything for it.
+                if (h.length > PcmChunk.MAX_PAYLOAD)
+                    throw new HostProtocol.ProtocolException("PCM payload of " + h.length + " bytes");
                 byte[] buf = h.length <= scratch.length ? scratch : new byte[h.length];
                 in.readFully(buf, 0, h.length);
                 inbound.onPcm(h.screenId, PcmChunk.decode(buf, 0, h.length));

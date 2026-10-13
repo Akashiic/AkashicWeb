@@ -12,6 +12,12 @@ public final class PcmChunk {
     public static final int MIN_RATE = 8000;
     public static final int MAX_RATE = 192000;
     public static final int MAX_CHANNELS = 8;
+    /**
+     * Largest payload a valid chunk can have (u16 frames x {@link #MAX_CHANNELS} x 2 bytes, plus the header): 1 MiB.
+     * The
+     * reader refuses a longer PCM before allocating anything for it.
+     */
+    public static final int MAX_PAYLOAD = HEADER_BYTES + 0xFFFF * MAX_CHANNELS * 2;
 
     public final long ptsMicros;
     public final int sampleRate;

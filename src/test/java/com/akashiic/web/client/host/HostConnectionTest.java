@@ -11,10 +11,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,9 +45,15 @@ class HostConnectionTest {
         final Map<Integer, FramePipeline> pipelines = new ConcurrentHashMap<>();
         final List<String> got = new CopyOnWriteArrayList<>();
         final List<PcmChunk> pcm = new CopyOnWriteArrayList<>();
+        final List<String> rejected = new CopyOnWriteArrayList<>();
+        /** Thrown from framesFor / onState when set, to simulate an Error escaping the frame or listener path. */
+        volatile Error frameError;
+        volatile Error stateError;
 
         @Override
         public FramePipeline framesFor(int screenId) {
+            Error e = frameError;
+            if (e != null) throw e;
             return pipelines.get(screenId);
         }
 
@@ -56,7 +64,14 @@ class HostConnectionTest {
 
         @Override
         public void onState(int screenId, String json) {
+            Error e = stateError;
+            if (e != null) throw e;
             got.add("state " + screenId + " " + json);
+        }
+
+        @Override
+        public void onFrameRejected(int screenId, int width, int height) {
+            rejected.add(screenId + " " + width + "x" + height);
         }
 
         @Override
@@ -221,24 +236,150 @@ class HostConnectionTest {
         assertEquals(HostFailure.PROTOCOL_ERROR, c.closeReason());
     }
 
+    /**
+     * Review finding (medium): a page too large to hold used to close the whole connection, taking every screen down
+     * and feeding the crash-loop guard. Now its frames are skipped (their length is valid), only that screen is
+     * reported, once per page size, and the stream stays in step for everything after it.
+     */
     @Test
-    void oversizedPageIsAProtocolError() throws Exception {
-        inbound.pipelines.put(1, new FramePipeline());
+    void oversizedPagesAreSkippedAndFailOnlyTheirScreen() throws Exception {
+        FramePipeline one = new FramePipeline();
+        FramePipeline two = new FramePipeline();
+        inbound.pipelines.put(1, one);
+        inbound.pipelines.put(2, two);
         HostConnection c = open();
-        byte[] f = new byte[HostProtocol.FrameHeader.BYTES + 4];
-        int[] head = { 65535, 65535, 0, 0, 1, 1 };
-        for (int i = 0; i < head.length; i++) {
-            f[i * 2] = (byte) (head[i] >> 8);
-            f[i * 2 + 1] = (byte) head[i];
-        }
-        HostProtocol.write(hostOut, HostProtocol.FRAME, 1, 0, f);
+        // A 1920x1080 screen painted at 150% display scale: 2880x1620 is over the pixel cap, the dirty rect is small.
+        HostProtocol.write(hostOut, HostProtocol.FRAME, 1, 0, frame(2880, 1620, 0, 0, 10, 10));
+        HostProtocol.write(hostOut, HostProtocol.FRAME, 1, 1, frame(2880, 1620, 5, 5, 10, 10)); // same size: no report
+        HostProtocol.write(hostOut, HostProtocol.FRAME, 1, 2, frame(65535, 64, 0, 0, 1, 1)); // wider than any texture
+        HostProtocol.write(hostOut, HostProtocol.FRAME, 1, 3, frame(4097, 16, 0, 0, 1, 1)); // just over 4096
+        HostProtocol.write(hostOut, HostProtocol.FRAME, 2, 0, FakeHostMain.frame(2, 4, 2)); // another screen
+        HostProtocol.write(hostOut, HostProtocol.FRAME, 1, 4, FakeHostMain.frame(1, 3, 3)); // screen 1 recovers
+        HostProtocol.writeJson(hostOut, HostProtocol.MEDIA, 1, 5, "{\"t\":2}");
+        hostOut.flush();
+        await("MEDIA after the frames", 10_000, () -> !inbound.got.isEmpty());
+        assertFalse(c.isClosed(), c.closeDetail());
+        assertEquals(Arrays.asList("1 2880x1620", "1 65535x64", "1 4097x16"), inbound.rejected);
+        assertEquals(4, one.framesRejected());
+        assertEquals(1, one.framesIn());
+        assertNull(one.rejectedSize(), "a frame of a valid size ends the rejection");
+        FrameSlot s1 = one.ring()
+            .takeLatest();
+        assertEquals(3, s1.width);
+        assertEquals((byte) 1, s1.bgra.get(0));
+        FrameSlot s2 = two.ring()
+            .takeLatest();
+        assertEquals(4, s2.width);
+        assertEquals(7, c.messagesIn(), "all six FRAMEs and the MEDIA were read in step");
+    }
+
+    /**
+     * Review finding (high): an Error escaping the listener path (a NoClassDefFoundError in game code) used to kill
+     * the reader without closing the connection, so the supervisor waited forever behind a READY status.
+     */
+    @Test
+    void anErrorFromAListenerClosesTheConnection() throws Exception {
+        inbound.stateError = new NoClassDefFoundError("simulated listener linkage error");
+        HostConnection c = open();
+        HostProtocol.writeJson(hostOut, HostProtocol.STATE, 1, 0, "{\"url\":\"x\"}");
+        hostOut.flush();
+        assertTrue(c.awaitClosed(10_000), "the connection must close when its reader dies");
+        assertEquals(HostFailure.INTERNAL_ERROR, c.closeReason());
+        assertTrue(
+            c.closeDetail()
+                .contains("NoClassDefFoundError"),
+            c.closeDetail());
+        assertFalse(c.sendPing(), "nothing is queued on a dead connection");
+    }
+
+    /** Review finding (high), the frame path: the direct-memory OutOfMemoryError FrameRing3 anticipates. */
+    @Test
+    void anOutOfMemoryErrorInTheFramePathClosesTheConnection() throws Exception {
+        inbound.frameError = new OutOfMemoryError("Direct buffer memory (simulated)");
+        HostConnection c = open();
+        HostProtocol.write(hostOut, HostProtocol.FRAME, 1, 0, FakeHostMain.frame(1, 4, 2));
         hostOut.flush();
         assertTrue(c.awaitClosed(10_000));
+        assertEquals(HostFailure.INTERNAL_ERROR, c.closeReason());
+        assertTrue(
+            c.closeDetail()
+                .contains("OutOfMemoryError"),
+            c.closeDetail());
+    }
+
+    /** Review finding (high), the writer side: an Error while writing ends the connection instead of the thread. */
+    @Test
+    void anErrorOnTheWriterThreadClosesTheConnection() throws Exception {
+        Socket broken = new Socket() {
+
+            @Override
+            public OutputStream getOutputStream() {
+                return new OutputStream() {
+
+                    @Override
+                    public void write(int b) {
+                        throw new NoClassDefFoundError("simulated writer linkage error");
+                    }
+
+                    @Override
+                    public void write(byte[] b, int off, int len) {
+                        throw new NoClassDefFoundError("simulated writer linkage error");
+                    }
+                };
+            }
+        };
+        // The reader uses the real loopback stream (idle); the writer gets the broken one.
+        HostConnection c = new HostConnection(
+            broken,
+            new DataInputStream(new BufferedInputStream(gameSide.getInputStream())),
+            inbound);
+        c.start();
+        assertTrue(c.sendPing());
+        assertTrue(c.awaitClosed(10_000), "the connection must close when its writer dies");
+        assertEquals(HostFailure.INTERNAL_ERROR, c.closeReason());
+        assertTrue(
+            c.closeDetail()
+                .contains("writer"),
+            c.closeDetail());
+    }
+
+    /**
+     * Review finding (low): a PCM header announcing more than any valid chunk (u16 frames x 8 channels x 2 bytes) is
+     * refused before anything is allocated. The old reader allocated the announced 16 MiB and then waited for it.
+     */
+    @Test
+    void pcmLongerThanAnyValidChunkIsRefusedBeforeAllocating() throws Exception {
+        assertEquals(1 << 20, PcmChunk.MAX_PAYLOAD);
+        HostConnection c = open();
+        short[] most = new short[0xFFFF * PcmChunk.MAX_CHANNELS];
+        HostProtocol.write(hostOut, HostProtocol.PCM, 5, 0, PcmChunkTest.encode(0, 48000, 8, 0xFFFF, most));
+        hostOut.writeInt(HostProtocol.MAGIC); // header only: the payload never comes
+        hostOut.writeShort(HostProtocol.PCM);
+        hostOut.writeShort(0);
+        hostOut.writeInt(5);
+        hostOut.writeInt(1);
+        hostOut.writeInt(HostProtocol.MAX_PAYLOAD);
+        hostOut.flush();
+        assertTrue(c.awaitClosed(10_000), "refused at the header, not after waiting for 16 MiB");
         assertEquals(HostFailure.PROTOCOL_ERROR, c.closeReason());
         assertTrue(
             c.closeDetail()
-                .contains("too large"),
+                .contains("PCM payload of " + HostProtocol.MAX_PAYLOAD),
             c.closeDetail());
+        assertEquals(1, inbound.pcm.size(), "the largest valid chunk still passes");
+        assertEquals(0xFFFF, inbound.pcm.get(0).frames);
+    }
+
+    /** FRAME payload: page {@code width x height}, dirty rect (x, y, w, h), w*h*4 bytes of 0x11. */
+    private static byte[] frame(int width, int height, int x, int y, int w, int h) {
+        byte[] p = new byte[HostProtocol.FrameHeader.BYTES + w * h * 4];
+        int[] head = { width, height, x, y, w, h };
+        for (int i = 0; i < head.length; i++) {
+            p[i * 2] = (byte) (head[i] >> 8);
+            p[i * 2 + 1] = (byte) head[i];
+        }
+        Arrays.fill(p, HostProtocol.FrameHeader.BYTES, p.length, (byte) 0x11);
+        return p;
     }
 
     @Test

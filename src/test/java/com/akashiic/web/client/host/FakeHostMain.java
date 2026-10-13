@@ -29,8 +29,13 @@ import java.util.regex.Pattern;
  * Args: {@code <modeFile> <recordFile> --akw-port=N --akw-parent-pid=P --akw-user-data=D --akw-log=L}. Modes:
  * {@code ok}, {@code exit-after-welcome}, {@code bad-token}, {@code bad-major}, {@code silent} (never connects),
  * {@code die} (exits at once), {@code env-token} (uses AKW_TOKEN, ignores stdin), {@code garbage} (bad magic after
- * HELLO). In every connected mode: CREATE answers with a full FRAME, a STATE and a PCM chunk; PING with PONG; QUIT
- * with BYE and exit; NAVIGATE {@code {"action":"stop"}} makes it exit (a simulated crash).
+ * HELLO), {@code hang-once} (the first launch stops reading after WELCOME, like a hung main thread that keeps its
+ * socket open; later launches behave like {@code ok}), {@code slow-pong:<ms>} (answers every PING after a delay),
+ * {@code oversize} (CREATE first gets a FRAME of a 4097x16 page, then the normal answer), {@code stubborn-hang-once}
+ * (like {@code hang-once}, but the first launch also ignores SIGTERM and starts a child process, "child PID"). In
+ * every connected mode: CREATE answers with a full FRAME, a STATE and a PCM chunk; DESTROY with a late FRAME and a
+ * STATE {@code {"late":true}}; PING with PONG; QUIT with BYE and exit; NAVIGATE {@code {"action":"stop"}} makes it exit
+ * (a simulated crash).
  */
 public final class FakeHostMain {
 
@@ -55,6 +60,13 @@ public final class FakeHostMain {
         record("start mode=" + mode + " args=" + String.join(" ", akw));
         record("env " + envReport());
         if (mode.equals("die")) System.exit(3);
+        if (mode.equals("stubborn-hang-once") && !new File(args[0] + ".hung").exists()) {
+            // Like a host whose main thread hangs: SIGTERM is not acted on, and it has a child of its own.
+            ignoreSigterm();
+            Process child = new ProcessBuilder("sleep", "300").start();
+            record("child " + ProcessControl.reflectivePid(child));
+            mode = "hang-once";
+        }
 
         String stdinToken = readLine(System.in);
         record("stdin-token " + (stdinToken == null ? "none" : "len" + stdinToken.length()));
@@ -94,15 +106,32 @@ public final class FakeHostMain {
                 }
                 record("recv " + m.type + " " + m.screenId + " " + m.seq + " " + m.text());
                 switch (m.type) {
-                    case HostProtocol.WELCOME:
+                    case HostProtocol.WELCOME: {
                         if (mode.equals("exit-after-welcome")) {
                             record("exiting");
                             System.exit(0);
                         }
+                        File hung = new File(args[0] + ".hung");
+                        if (mode.equals("hang-once") && hung.createNewFile()) {
+                            record("hanging");
+                            Thread.sleep(120_000); // never reads again; the socket stays open
+                            return;
+                        }
                         break;
+                    }
                     case HostProtocol.CREATE: {
                         int w = field(m.text(), "width");
                         int h = field(m.text(), "height");
+                        if (mode.equals("oversize")) {
+                            // A page wider than 4096 (a 1x1 dirty rect, so the payload itself is tiny).
+                            byte[] big = new byte[HostProtocol.FrameHeader.BYTES + 4];
+                            int[] head = { 4097, 16, 0, 0, 1, 1 };
+                            for (int i = 0; i < head.length; i++) {
+                                big[i * 2] = (byte) (head[i] >> 8);
+                                big[i * 2 + 1] = (byte) head[i];
+                            }
+                            HostProtocol.write(out, HostProtocol.FRAME, m.screenId, seq++, big);
+                        }
                         HostProtocol.write(out, HostProtocol.FRAME, m.screenId, seq++, frame(m.screenId, w, h));
                         HostProtocol.writeJson(
                             out,
@@ -114,6 +143,12 @@ public final class FakeHostMain {
                         out.flush();
                         break;
                     }
+                    case HostProtocol.DESTROY:
+                        // A paint that was already on its way: the game must discard it. The STATE marks its passage.
+                        HostProtocol.write(out, HostProtocol.FRAME, m.screenId, seq++, frame(m.screenId, 8, 8));
+                        HostProtocol.writeJson(out, HostProtocol.STATE, m.screenId, seq++, "{\"late\":true}");
+                        out.flush();
+                        break;
                     case HostProtocol.NAVIGATE:
                         if (m.text()
                             .contains("\"action\":\"stop\"")) {
@@ -124,6 +159,9 @@ public final class FakeHostMain {
                     case HostProtocol.PING: {
                         Matcher n = NONCE.matcher(m.text());
                         String nonce = n.find() ? n.group(1) : "0";
+                        if (mode.startsWith("slow-pong:")) {
+                            Thread.sleep(Long.parseLong(mode.substring("slow-pong:".length())));
+                        }
                         HostProtocol
                             .writeJson(out, HostProtocol.PONG, 0, seq++, "{\"nonce\":" + nonce + ",\"hostTimeMs\":1}");
                         out.flush();
@@ -140,6 +178,18 @@ public final class FakeHostMain {
                 }
             }
         }
+    }
+
+    /** Installs a SIGTERM handler that does nothing (sun.misc.Signal, by reflection: Java 8 and 9+ alike). */
+    private static void ignoreSigterm() throws ReflectiveOperationException {
+        Class<?> signal = Class.forName("sun.misc.Signal");
+        Class<?> handler = Class.forName("sun.misc.SignalHandler");
+        Object term = signal.getConstructor(String.class)
+            .newInstance("TERM");
+        Object ignore = java.lang.reflect.Proxy
+            .newProxyInstance(handler.getClassLoader(), new Class<?>[] { handler }, (proxy, method, a) -> null);
+        signal.getMethod("handle", signal, handler)
+            .invoke(null, term, ignore);
     }
 
     /** Full frame where pixel (x, y) of screen s holds bytes {s, x, y, 0xFF}. */

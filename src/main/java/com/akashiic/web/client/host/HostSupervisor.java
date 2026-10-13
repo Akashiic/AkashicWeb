@@ -12,6 +12,7 @@ import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -29,8 +30,9 @@ import com.akashiic.web.protocol.Protocol;
  * 127.0.0.1:0 with backlog 1, spawn the host with a sanitised environment, hand it a fresh token on stdin, accept
  * exactly one connection, check token (constant time) and protocol major, then hand the connection to
  * {@link Callbacks#onConnected} and report READY. When the connection ends the host is relaunched after 1, 2, 4 ... 60
- * s; five exits within ten minutes, a protocol-major mismatch or a missing engine disable it until
- * {@link #reenable()}. A JVM shutdown hook closes the socket and kills the child as a last resort.
+ * s; five exits within ten minutes (HOST_CRASH_LOOP, or HOST_LAUNCH_FAILED when not one of them got as far as
+ * starting), a protocol-major mismatch or a missing engine disable it until {@link #reenable()}. A JVM shutdown hook
+ * closes the socket and kills the child as a last resort.
  *
  * <p>
  * Status changes are reported on the supervisor thread through {@link Callbacks#onStatus}.
@@ -45,10 +47,11 @@ public final class HostSupervisor {
     static final long EXIT_GRACE_MILLIS = 2000;
     /** QUIT flush budget at shutdown. */
     static final long QUIT_FLUSH_MILLIS = 300;
-    /** Liveness ping while connected; feeds /web doctor (round trip, unanswered pings). */
-    static final long PING_INTERVAL_MILLIS = 10_000;
 
     private static final long ACCEPT_POLL_MILLIS = 100;
+    private static final boolean WINDOWS = System.getProperty("os.name", "")
+        .toLowerCase(Locale.ROOT)
+        .startsWith("windows");
     private static final Logger LOG = LogManager.getLogger("AkashicWeb/Host");
 
     /** Hooks into the browser-host layer. All are called on the supervisor thread. */
@@ -107,6 +110,8 @@ public final class HostSupervisor {
     private boolean disabled;
     private boolean sleeping;
     private Process process;
+    /** PID of {@link #process} when known (for the tree kill), else -1. */
+    private long processPid = -1;
     private HostConnection connection;
 
     private volatile HostStatus status = HostStatus.STARTING;
@@ -197,10 +202,12 @@ public final class HostSupervisor {
             }
         }
         Process p;
+        long pid;
         synchronized (monitor) {
             p = process;
+            pid = processPid;
         }
-        if (p != null) killNow(p); // the supervisor thread did not finish in time
+        if (p != null) killNow(p, pid); // the supervisor thread did not finish in time
         removeShutdownHook();
         publish(HostStatus.down(ReasonCode.OK));
     }
@@ -224,7 +231,14 @@ public final class HostSupervisor {
                 + CrashLoopGuard.DEFAULT_LIMIT);
         HostFailure f = lastFailure;
         out.add("last failure: " + (f == null ? "none" : f + " -> " + f.reason() + " (" + lastFailureDetail + ")"));
-        out.add("ping round trip: " + (lastRttMillis < 0 ? "n/a" : lastRttMillis + " ms"));
+        HostConnection c;
+        synchronized (monitor) {
+            c = connection;
+        }
+        long overdue = c == null ? -1 : c.pongOverdueMillis();
+        out.add(
+            "ping round trip: " + (lastRttMillis < 0 ? "n/a" : lastRttMillis + " ms")
+                + (overdue > config.pingIntervalMillis ? ", PONG overdue for " + overdue + " ms" : ""));
         out.add(
             "logs: " + config.hostLogFile()
                 .getAbsolutePath()
@@ -268,12 +282,24 @@ public final class HostSupervisor {
             }
             Thread.interrupted(); // drop an interrupt meant for a sleep that already ended
 
-            List<String> command = config.executable.command();
-            if (command == null || command.isEmpty()) {
-                disable(HostFailure.ENGINE_UNAVAILABLE, config.executable.unavailableReason(), "engine not ready");
+            List<String> command;
+            ReasonCode unavailable;
+            boolean noUserData;
+            try {
+                command = config.executable.command();
+                unavailable = command == null || command.isEmpty() ? config.executable.unavailableReason() : null;
+                noUserData = config.executable.userDataDir() == null;
+            } catch (Throwable t) {
+                // Boundary: the engine locator is another module's code; whatever it throws, keep supervising.
+                LOG.error("AkashicWeb: the engine locator failed", t);
+                disable(HostFailure.ENGINE_UNAVAILABLE, ReasonCode.ENGINE_ABSENT, "engine locator failed: " + t);
                 continue;
             }
-            if (config.executable.userDataDir() == null) {
+            if (command == null || command.isEmpty()) {
+                disable(HostFailure.ENGINE_UNAVAILABLE, unavailable, "engine not ready");
+                continue;
+            }
+            if (noUserData) {
                 disable(HostFailure.ENGINE_UNAVAILABLE, ReasonCode.ENGINE_ABSENT, "no user data directory");
                 continue;
             }
@@ -281,10 +307,12 @@ public final class HostSupervisor {
             RunResult r;
             try {
                 r = runOnce(command);
-            } catch (RuntimeException e) {
-                // Boundary: a bug in one run must not kill the supervisor and leave the game without a host forever.
-                LOG.error("AkashicWeb: host run failed unexpectedly", e);
-                r = new RunResult(HostFailure.PROTOCOL_ERROR, "internal: " + e, false);
+            } catch (Throwable t) {
+                // Boundary: a bug or an Error in one run (a callback's LinkageError, an OutOfMemoryError) must not kill
+                // the supervisor and leave the game without a host, or with a stale READY, for the rest of the session.
+                // runOnce's finally has already closed the connection and stopped the process.
+                LOG.error("AkashicWeb: host run failed unexpectedly", t);
+                r = new RunResult(HostFailure.INTERNAL_ERROR, "internal: " + t, false);
             }
             if (isStopping()) break;
 
@@ -295,8 +323,14 @@ public final class HostSupervisor {
                 disable(r.failure, r.failure.reason(), r.detail);
                 continue;
             }
-            if (crashGuard.recordExit(clock.nowMillis())) {
-                disable(HostFailure.CRASH_LOOP, ReasonCode.HOST_CRASH_LOOP, r.failure + ": " + r.detail);
+            long now = clock.nowMillis();
+            if (crashGuard.recordExit(now, r.failure)) {
+                if (crashGuard.allRecentWere(HostFailure.LAUNCH_FAILED, now)) {
+                    // The host never even started (antivirus block, missing file): say so instead of "crashing".
+                    disable(HostFailure.LAUNCH_FAILED, ReasonCode.HOST_LAUNCH_FAILED, r.failure + ": " + r.detail);
+                } else {
+                    disable(HostFailure.CRASH_LOOP, ReasonCode.HOST_CRASH_LOOP, r.failure + ": " + r.detail);
+                }
                 continue;
             }
             if (r.healthy) backoff.reset();
@@ -328,7 +362,7 @@ public final class HostSupervisor {
                     config.hostLogFile());
                 p = launch(args, token);
                 pid = processes.pidOf(p);
-                recordPid(pid, command.get(0));
+                recordPid(p, pid, command.get(0));
                 writeToken(p, token);
                 socket = acceptOne(server, p);
             } // The listener closes here: exactly one connection is ever accepted per launch.
@@ -337,7 +371,7 @@ public final class HostSupervisor {
             HelloInfo hello = handshake(socket, in, token);
             if (pid <= 0 && hello.pid > 0) {
                 pid = hello.pid; // Java 8 on Windows: trust the authenticated host for its own pid
-                recordPid(pid, command.get(0));
+                recordPid(p, pid, command.get(0));
             }
             try {
                 conn = new HostConnection(socket, in, inbound);
@@ -407,7 +441,7 @@ public final class HostSupervisor {
                 if (!stop) process = p;
             }
             if (stop) {
-                killNow(p); // shutdown raced with the launch: never leave this child behind
+                killNow(p, processes.pidOf(p)); // shutdown raced with the launch: never leave this child behind
                 throw new RunFailure(HostFailure.SHUTDOWN, "stopping");
             }
             return p;
@@ -478,22 +512,41 @@ public final class HostSupervisor {
         }
     }
 
+    /**
+     * Pings the host every {@link HostLaunchConfig#pingIntervalMillis} until the connection closes. A PING still
+     * unanswered after {@link HostLaunchConfig#stallIntervals} whole intervals (40 s by default: long enough for GC
+     * pauses and heavy page loads) means a hung host that keeps its socket open, so the connection is closed as
+     * {@link HostFailure#STALLED} and the normal DOWN, backoff and crash-loop path replaces the host (AGENTS.md:
+     * failure is never silent). Intervals are counted, not wall time, so a PC that slept with the game open does not
+     * get its host killed on wake-up.
+     */
     private void waitWhileConnected(HostConnection conn) {
-        boolean warnedUnresponsive = false;
+        long interval = config.pingIntervalMillis;
+        int unanswered = 0;
         while (true) {
             try {
-                if (conn.awaitClosed(PING_INTERVAL_MILLIS)) return;
+                if (conn.awaitClosed(interval)) return;
             } catch (InterruptedException e) {
                 if (isStopping()) return; // shutdown() closes the connection itself
                 continue;
             }
             lastRttMillis = conn.lastRttMillis();
-            if (conn.pongOverdue(3 * PING_INTERVAL_MILLIS) && !warnedUnresponsive) {
-                // Diagnostics only: a GC pause or a busy page can delay a PONG, so we never kill on this alone.
-                LOG.warn("AkashicWeb: the browser host has not answered a ping for 30 s");
-                warnedUnresponsive = true;
+            if (!conn.pingOutstanding()) {
+                unanswered = 0;
+                conn.sendPing();
+                continue;
             }
-            if (!conn.pongOverdue(PING_INTERVAL_MILLIS)) conn.sendPing();
+            unanswered++;
+            if (unanswered >= config.stallIntervals) {
+                LOG.warn(
+                    "AkashicWeb: the browser host has not answered a ping for {} ms; replacing it",
+                    conn.pongOverdueMillis());
+                conn.close(
+                    HostFailure.STALLED,
+                    "no PONG for " + conn.pongOverdueMillis() + " ms (" + unanswered + " ping intervals)");
+                return;
+            }
+            if (unanswered == 2) LOG.warn("AkashicWeb: the browser host is slow to answer pings");
         }
     }
 
@@ -501,21 +554,40 @@ public final class HostSupervisor {
     private String stopProcess(Process p, long pid, long graceMillis) {
         if (p == null) return null;
         if (graceMillis > 0) waitQuietly(p, graceMillis);
-        if (p.isAlive()) killNow(p);
+        if (p.isAlive()) killNow(p, pid);
         String how = p.isAlive() ? "still running after kill" : "exit code " + p.exitValue();
         if (pid > 0 && !p.isAlive()) pidFile.remove(pid);
         synchronized (monitor) {
-            if (process == p) process = null;
+            if (process == p) {
+                process = null;
+                processPid = -1;
+            }
         }
         return how;
     }
 
-    private static void killNow(Process p) {
-        p.destroy();
-        if (!waitQuietly(p, 500)) {
-            p.destroyForcibly();
-            waitQuietly(p, 1000);
+    /**
+     * Ends the host and its children. On Unix the host first gets SIGTERM ({@link Process#destroy}): its handler
+     * sends BYE and exits, and Chromium's GPU, renderer and utility children follow it. On Windows destroy() is
+     * TerminateProcess on this one process, which leaves the children running, so there (and for a host that ignored
+     * SIGTERM, e.g. a hung main thread) the whole tree is ended first through {@link ProcessControl#kill} (taskkill /T
+     * /F, or ProcessHandle descendants on Java 9+), then the process itself.
+     */
+    private void killNow(Process p, long pid) {
+        if (!WINDOWS) {
+            p.destroy();
+            if (waitQuietly(p, 500)) return;
         }
+        // Only while it still runs: once reaped, its pid may belong to someone else.
+        if (pid > 0 && p.isAlive()) {
+            try {
+                processes.kill(pid);
+            } catch (RuntimeException e) {
+                LOG.debug("AkashicWeb: tree kill of host {} failed: {}", pid, e.toString());
+            }
+        }
+        p.destroyForcibly();
+        waitQuietly(p, 1000);
     }
 
     /** Process.waitFor that finishes its bounded wait even if interrupted, then restores the interrupt. */
@@ -571,9 +643,9 @@ public final class HostSupervisor {
         if (old != null && old.kind == s.kind && old.reason == s.reason) return;
         try {
             callbacks.onStatus(s);
-        } catch (RuntimeException e) {
-            // Boundary: a broken status listener must not stop the supervisor.
-            LOG.error("AkashicWeb: host status listener failed", e);
+        } catch (Throwable t) {
+            // Boundary: whatever a status listener throws, even an Error, the supervisor keeps supervising.
+            LOG.error("AkashicWeb: host status listener failed", t);
         }
     }
 
@@ -581,15 +653,18 @@ public final class HostSupervisor {
         try {
             int killed = new StaleHostSweeper(pidFile, processes, ourPid).sweep();
             if (killed > 0) LOG.info("AkashicWeb: ended {} browser host(s) left by an earlier session", killed);
-        } catch (RuntimeException e) {
+        } catch (Throwable t) {
             // Boundary: the sweep is best effort and must never keep the host from starting.
-            LOG.warn("AkashicWeb: stale host sweep failed: {}", e.toString());
+            LOG.warn("AkashicWeb: stale host sweep failed: {}", t.toString());
         }
     }
 
-    private void recordPid(long pid, String executable) {
+    private void recordPid(Process p, long pid, String executable) {
         if (pid <= 0) return;
         hostPid = pid;
+        synchronized (monitor) {
+            if (process == p) processPid = pid;
+        }
         pidFile
             .add(new HostPidFile.Entry(pid, ourPid, System.currentTimeMillis(), ProcessControl.fileName(executable)));
     }
@@ -598,13 +673,15 @@ public final class HostSupervisor {
     private void emergencyStop() {
         HostConnection c;
         Process p;
+        long pid;
         synchronized (monitor) {
             stopping = true;
             c = connection;
             p = process;
+            pid = processPid;
         }
         if (c != null) c.close(HostFailure.SHUTDOWN, "JVM exit");
-        if (p != null) killNow(p);
+        if (p != null) killNow(p, pid);
     }
 
     private void removeShutdownHook() {

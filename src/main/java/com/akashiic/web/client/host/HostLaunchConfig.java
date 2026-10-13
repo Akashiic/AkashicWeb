@@ -13,6 +13,13 @@ public final class HostLaunchConfig {
     public static final long DEFAULT_STABLE_RUN_MILLIS = 60_000;
     /** The host's stdout/stderr file is rotated once it passes this size, before a launch. */
     public static final long STDIO_LOG_ROTATE_BYTES = 4L * 1024 * 1024;
+    /** Liveness PING period while connected; also feeds the round trip shown in /web doctor. */
+    public static final long DEFAULT_PING_INTERVAL_MILLIS = 10_000;
+    /**
+     * Ping intervals one PING may stay unanswered before the host counts as stalled (HOST_STALLED) and is replaced: 4
+     * x 10 s rides out GC pauses and heavy page loads, yet a hung host no longer freezes screens without a reason.
+     */
+    public static final int DEFAULT_STALL_INTERVALS = 4;
 
     public final HostExecutable executable;
     /** Directory for {@code host.log} (the host's own log, {@code --akw-log}) and {@code host-stdio.log}. */
@@ -22,6 +29,9 @@ public final class HostLaunchConfig {
 
     public final long connectTimeoutMillis;
     public final long stableRunMillis;
+    public final long pingIntervalMillis;
+    /** Unanswered ping intervals after which the connection is closed as {@link HostFailure#STALLED}. */
+    public final int stallIntervals;
     /** Source of the child's environment before sanitising (System.getenv() in the game, a map in tests). */
     public final Map<String, String> parentEnvironment;
 
@@ -35,6 +45,8 @@ public final class HostLaunchConfig {
         this.stateDir = b.stateDir;
         this.connectTimeoutMillis = b.connectTimeoutMillis;
         this.stableRunMillis = b.stableRunMillis;
+        this.pingIntervalMillis = b.pingIntervalMillis;
+        this.stallIntervals = b.stallIntervals;
         this.parentEnvironment = Collections.unmodifiableMap(new LinkedHashMap<>(b.parentEnvironment));
         this.locale = b.locale;
         this.userAgent = b.userAgent;
@@ -67,6 +79,8 @@ public final class HostLaunchConfig {
         private final File stateDir;
         private long connectTimeoutMillis = DEFAULT_CONNECT_TIMEOUT_MILLIS;
         private long stableRunMillis = DEFAULT_STABLE_RUN_MILLIS;
+        private long pingIntervalMillis = DEFAULT_PING_INTERVAL_MILLIS;
+        private int stallIntervals = DEFAULT_STALL_INTERVALS;
         private Map<String, String> parentEnvironment = System.getenv();
         private String locale = HostMessages.DEFAULT_LOCALE;
         private String userAgent;
@@ -85,6 +99,18 @@ public final class HostLaunchConfig {
 
         public Builder stableRunMillis(long v) {
             this.stableRunMillis = Math.max(0, v);
+            return this;
+        }
+
+        /** PING period while connected (at least 50 ms; tests shorten it). */
+        public Builder pingIntervalMillis(long v) {
+            this.pingIntervalMillis = Math.max(50, v);
+            return this;
+        }
+
+        /** Unanswered ping intervals before the host counts as stalled (at least 2). */
+        public Builder stallIntervals(int v) {
+            this.stallIntervals = Math.max(2, v);
             return this;
         }
 

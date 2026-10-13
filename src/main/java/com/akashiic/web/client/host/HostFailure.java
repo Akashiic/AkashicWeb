@@ -4,13 +4,16 @@ import com.akashiic.web.common.ReasonCode;
 
 /**
  * Why one host run ended, finer than {@link ReasonCode} so /web doctor can tell a timeout from a bad token. Each kind
- * maps to the user-facing reason code shown on placeholders. The codes marked "proposed" in the M2 report would get
- * their own ReasonCode once M4 adds them; until then they fall back to the nearest existing code.
+ * maps to the user-facing reason code shown on placeholders (merged into {@link ReasonCode} at the wave-1
+ * integration).
  */
 public enum HostFailure {
 
-    /** ProcessBuilder.start failed (missing file, antivirus, permissions). Proposed code HOST_LAUNCH_FAILED. */
-    LAUNCH_FAILED(ReasonCode.HOST_EXITED, false),
+    /**
+     * ProcessBuilder.start failed (missing file, antivirus, permissions). When every exit in the crash-loop window is
+     * a launch failure, the supervisor disables with this reason instead of HOST_CRASH_LOOP.
+     */
+    LAUNCH_FAILED(ReasonCode.HOST_LAUNCH_FAILED, false),
     /** The process exited before connecting back. */
     EXITED_BEFORE_CONNECT(ReasonCode.HOST_EXITED, false),
     /** No connection within the connect timeout. */
@@ -23,10 +26,21 @@ public enum HostFailure {
     PROTOCOL_MAJOR(ReasonCode.PROTOCOL_MISMATCH, true),
     /** The socket reached EOF or reset: the host exited or crashed. */
     CONNECTION_LOST(ReasonCode.HOST_EXITED, false),
-    /** The host broke the framing after the handshake. Proposed code HOST_PROTOCOL_ERROR. */
-    PROTOCOL_ERROR(ReasonCode.HOST_EXITED, false),
-    /** The host stopped reading and our outgoing queue filled up. Proposed code HOST_STALLED. */
-    WRITE_STALLED(ReasonCode.HOST_EXITED, false),
+    /** The host broke the framing or sent an impossible message after the handshake. */
+    PROTOCOL_ERROR(ReasonCode.HOST_PROTOCOL_ERROR, false),
+    /** The host stopped reading and our outgoing queue filled up. */
+    WRITE_STALLED(ReasonCode.HOST_STALLED, false),
+    /**
+     * The host kept its connection open but left a PING unanswered for {@link HostLaunchConfig#stallIntervals} ping
+     * intervals (a hung main thread): frames are frozen, so the run ends and the host is replaced.
+     */
+    STALLED(ReasonCode.HOST_STALLED, false),
+    /**
+     * Our own reader, writer or supervisor code failed with an unexpected exception or Error (for example a
+     * direct-memory OutOfMemoryError while allocating a frame buffer). The run ends visibly and the host is relaunched
+     * instead of leaving a dead thread behind a READY status.
+     */
+    INTERNAL_ERROR(ReasonCode.HOST_EXITED, false),
     /** Five exits within ten minutes (ADR-001); stays disabled until re-enabled explicitly. */
     CRASH_LOOP(ReasonCode.HOST_CRASH_LOOP, true),
     /** The engine is not installed or not usable; the installer's reason is reported instead. */
