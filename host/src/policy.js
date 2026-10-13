@@ -395,6 +395,63 @@ function attachRequestPolicy(ses, ctx) {
   return cache;
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Document policy: print block for every frame, no service workers
+
+// window.print() opens a native OS print dialog even from an offscreen window, over the player's game,
+// and Electron has no API to veto it. The preload's guard replaces print() before page scripts, but a
+// fresh about:blank iframe gets no preload, so `frames[0].print()` used to reach the dialog (wave-1
+// review). A CSP sandbox WITHOUT allow-modals makes Blink ignore print() (and alert/confirm/prompt) in
+// the document and in every frame it creates, because sandbox flags are inherited. Everything else is
+// kept: scripts, same origin (cookies, storage), forms, popups (still gated by the window-open
+// handler), pointer lock, presentation, orientation lock, top navigation after user activation and
+// storage access. What a sandbox still takes away and no keyword restores: setting document.domain
+// (throws SecurityError) and plugins (off anyway). Measured on local pages only (AUTOMATED, Linux);
+// YouTube/Twitch compatibility needs a live check.
+const DOCUMENT_SANDBOX = 'sandbox allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox '
+  + 'allow-pointer-lock allow-presentation allow-orientation-lock allow-top-navigation-by-user-activation '
+  + 'allow-storage-access-by-user-activation';
+
+/** Response headers of a document with the sandbox policy added as one more CSP (each is enforced). */
+function withSandboxCsp(headers) {
+  const out = Object.assign({}, headers || {});
+  const key = Object.keys(out).find(k => k.toLowerCase() === 'content-security-policy') || 'Content-Security-Policy';
+  const existing = out[key] == null ? [] : Array.isArray(out[key]) ? out[key] : [String(out[key])];
+  out[key] = existing.concat([DOCUMENT_SANDBOX]);
+  return out;
+}
+
+/** True for the fetch of a service worker's main script (it carries "Service-Worker: script"). */
+function isServiceWorkerScript(requestHeaders) {
+  if (!requestHeaders) return false;
+  for (const k of Object.keys(requestHeaders)) {
+    if (k.toLowerCase() === 'service-worker' && String(requestHeaders[k]).toLowerCase() === 'script') return true;
+  }
+  return false;
+}
+
+/**
+ * Adds the sandbox CSP to every document response (main frame and iframes) and refuses service worker
+ * scripts: a service worker serves documents from inside the renderer, which never pass through
+ * onHeadersReceived, so it could undo the print block (and it outlives the page). ctx: isExempt(wcId),
+ * log.
+ */
+function attachDocumentPolicy(ses, ctx) {
+  let swRefused = 0;
+  ses.webRequest.onHeadersReceived({ urls: ['<all_urls>'], types: ['mainFrame', 'subFrame'] }, (details, callback) => {
+    const wcId = details.webContentsId;
+    if (wcId != null && ctx.isExempt(wcId)) return callback({});
+    return callback({ responseHeaders: withSandboxCsp(details.responseHeaders) });
+  });
+  ses.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'], types: ['script'] }, (details, callback) => {
+    if (!isServiceWorkerScript(details.requestHeaders)) return callback({});
+    callback({ cancel: true });
+    // Not an EVENT: sites register workers on every page load and the player can do nothing about it.
+    if (++swRefused <= 3 && ctx.log) ctx.log.info('service worker script refused (' + swRefused + ')');
+    return undefined;
+  });
+}
+
 /** Deny-all permissions (both handlers, as Electron requires for complete handling). */
 function attachPermissionPolicy(ses, ctx) {
   ses.setPermissionRequestHandler((wc, permission, callback) => {
@@ -415,5 +472,5 @@ module.exports = {
   MAX_URL, VERDICT_TTL_MS, FAILURE_TTL_MS, MAX_CACHED_HOSTS, parseIPv4, parseIPv6, isInternalIPv4, isInternalIPv6,
   isInternalAddress, isInternalHostname, isIpLiteral, hostMatches, checkNavigation, checkRequest, decidePermission,
   LNA_PERMISSIONS, BENIGN_PERMISSIONS, attachRequestPolicy, attachPermissionPolicy, resolveVerdict, withTimeout,
-  isProxiedAnswer, SessionNetCache,
+  isProxiedAnswer, SessionNetCache, DOCUMENT_SANDBOX, withSandboxCsp, isServiceWorkerScript, attachDocumentPolicy,
 };

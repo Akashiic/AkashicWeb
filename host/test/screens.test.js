@@ -193,6 +193,143 @@ test('input on one document does not allow a popup from the next one (navigation
   }
 });
 
+const { CHANNELS } = require('../src/page/screen-preload');
+const { engineMuted } = require('../src/audio');
+
+test('engineMuted: game mute, zero gain, spatial hold, and a document that has not taken a gain below 1', () => {
+  const base = { muted: false, volume: 0.5, spatialHold: false, awaitingPage: false };
+  assert.strictEqual(engineMuted(base), false);
+  assert.strictEqual(engineMuted(Object.assign({}, base, { muted: true })), true);
+  assert.strictEqual(engineMuted(Object.assign({}, base, { volume: 0 })), true);
+  assert.strictEqual(engineMuted(Object.assign({}, base, { volume: NaN })), true);
+  assert.strictEqual(engineMuted(Object.assign({}, base, { spatialHold: true, volume: 1 })), true);
+  assert.strictEqual(engineMuted(Object.assign({}, base, { awaitingPage: true })), true);
+  assert.strictEqual(engineMuted(Object.assign({}, base, { awaitingPage: true, volume: 1 })), false, 'gain 1: nothing to turn down');
+});
+
+test('a new document is engine-muted until its preload has taken the gain (did-navigate before akw-init)', () => {
+  let now = 1000;
+  const f = fakeContext({ now: () => now });
+  const sm = new ScreenManager(f.ctx);
+  try {
+    sm.create(1, spec({ volume: 0.3 }));
+    const wc = f.windows[0].webContents;
+    const init = wc.ipcHandlers.get(CHANNELS.INIT);
+    assert.deepStrictEqual(init({ senderFrame: wc.mainFrame }), { volume: 0.3, sampling: true });
+    assert.strictEqual(wc.muted, false);
+    // Navigation: started, committed, the new document's preload not heard yet -> muted.
+    now += 10;
+    wc.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false, url: 'https://b.example/' });
+    now += 50;
+    wc.emit('did-navigate', {}, 'https://b.example/');
+    assert.strictEqual(wc.muted, true, 'muted while the gain cannot be applied');
+    now += 5;
+    init({ senderFrame: { parent: wc.mainFrame } }); // an iframe's preload does not count
+    assert.strictEqual(wc.muted, true);
+    init({ senderFrame: wc.mainFrame });
+    assert.strictEqual(wc.muted, false, 'unmuted once the document holds the gain');
+    // INIT before did-navigate (IPC order is not guaranteed): never muted.
+    now += 10;
+    wc.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false, url: 'https://c.example/' });
+    now += 10;
+    init({ senderFrame: wc.mainFrame });
+    wc.emit('did-navigate', {}, 'https://c.example/');
+    assert.strictEqual(wc.muted, false);
+    // Same-document navigations do not create a new document.
+    now += 10;
+    wc.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true, url: 'https://c.example/#x' });
+    wc.emit('did-navigate', {}, 'https://c.example/');
+    assert.strictEqual(wc.muted, false);
+    // Still waiting when loading stops: the main frame is asked again.
+    now += 10;
+    wc.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false, url: 'https://d.example/' });
+    wc.emit('did-navigate', {}, 'https://d.example/');
+    wc.emit('did-stop-loading');
+    assert.deepStrictEqual(wc.mainFrame.sent.filter(s => s[0] === CHANNELS.REINIT), [[CHANNELS.REINIT]]);
+    assert.strictEqual(wc.muted, true, 'stays muted while no preload answers (fail safe)');
+  } finally {
+    sm.destroyAll();
+  }
+});
+
+test('AUDIO reaches every frame\'s preload at once; volume 0 or muted is an engine mute', () => {
+  const f = fakeContext();
+  const sm = new ScreenManager(f.ctx);
+  try {
+    const s = sm.create(1, spec());
+    const wc = f.windows[0].webContents;
+    const child = { send: (...a) => child.sent.push(a), sent: [], detached: false, isDestroyed: () => false };
+    wc.mainFrame.framesInSubtree = [wc.mainFrame, child];
+    s.setAudio({ muted: false, volume: 0.25 });
+    assert.deepStrictEqual(child.sent.pop(), [CHANNELS.VOLUME, 0.25]);
+    assert.deepStrictEqual(wc.mainFrame.sent.pop(), [CHANNELS.VOLUME, 0.25]);
+    assert.strictEqual(wc.muted, false);
+    s.setAudio({ muted: false, volume: 0 });
+    assert.strictEqual(wc.muted, true);
+    s.setAudio({ muted: true, volume: 0.8 });
+    assert.strictEqual(wc.muted, true);
+    s.setAudio({ muted: false, volume: 0.8 });
+    assert.strictEqual(wc.muted, false);
+  } finally {
+    sm.destroyAll();
+  }
+});
+
+test('MEDIA sampling follows painting or audible, on every screen (followers too)', () => {
+  const f = fakeContext();
+  const sm = new ScreenManager(f.ctx);
+  try {
+    const s = sm.create(1, spec());
+    const wc = f.windows[0].webContents;
+    s.render({ fps: 5, painting: false });
+    assert.deepStrictEqual(wc.mainFrame.sent.filter(m => m[0] === CHANNELS.SAMPLING).pop(), [CHANNELS.SAMPLING, false]);
+    s.render({ fps: 30, painting: true });
+    assert.deepStrictEqual(wc.mainFrame.sent.filter(m => m[0] === CHANNELS.SAMPLING).pop(), [CHANNELS.SAMPLING, true]);
+    // A preload's sample becomes MEDIA for the game.
+    wc.ipcListeners.get(CHANNELS.MEDIA)({ senderFrame: wc.mainFrame }, { score: 7, sample: { mediaTime: 3, rate: 1, paused: false } });
+    const media = f.sent.filter(m => m.name === 'MEDIA');
+    assert.strictEqual(media.length, 1);
+    assert.strictEqual(media[0].payload.mediaTime, 3);
+  } finally {
+    sm.destroyAll();
+  }
+});
+
+class FakeCapture {
+  constructor(o) {
+    this.o = o;
+    FakeCapture.last = this;
+  }
+
+  start() {}
+
+  stop() { this.stopped = true; }
+}
+
+test('SPATIAL: engine-muted from CREATE until the capture runs, and again after a capture error', () => {
+  const f = fakeContext({ CaptureClass: FakeCapture });
+  const sm = new ScreenManager(f.ctx);
+  try {
+    const s = sm.create(1, spec({ audio: 'spatial', volume: 1 }));
+    const wc = f.windows[0].webContents;
+    assert.strictEqual(wc.muted, true, 'before getDisplayMedia resolves, local playback is not suppressed');
+    assert.strictEqual(wc.mutes[0], true, 'muted before anything could play');
+    s.setAudio({ muted: false, volume: 1 });
+    assert.strictEqual(wc.muted, true, 'AUDIO does not lift it while the capture is starting');
+    FakeCapture.last.o.onStarted({ sampleRate: 48000 });
+    assert.strictEqual(wc.muted, false, 'capturing: local echo off keeps the speakers silent');
+    FakeCapture.last.o.onError('capture track ended');
+    assert.strictEqual(wc.muted, true, 'muted again at once');
+    assert.strictEqual(f.events().pop().kind, 'capture-error');
+    s.setAudio({ muted: false, volume: 1 });
+    assert.strictEqual(wc.muted, true, 'stays muted until the game re-creates the screen (OS mode)');
+    sm.create(1, spec({ audio: 'os', volume: 0.5 }));
+    assert.strictEqual(f.windows[1].webContents.muted, false);
+  } finally {
+    sm.destroyAll();
+  }
+});
+
 test('RESIZE beyond the cap keeps the current size and answers EVENT screen-limit', async () => {
   const f = fakeContext();
   const sm = new ScreenManager(f.ctx);

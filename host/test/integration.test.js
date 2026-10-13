@@ -516,38 +516,138 @@ test('spatial capture produces 48 kHz stereo PCM (Linux only, optional feature)'
   assert.ok(ptsB > ptsA, 'pts increases');
 });
 
-test('behind a loopback proxy: pages load (detector skips the proxy address); DNS failure is dns-via-proxy', { skip: SKIP, timeout: 90000 }, async t => {
-  // A local filtering proxy, antivirus web shield or "game booster" answers on 127.0.0.1. Wave 1 took the
-  // proxy's address in details.ip for the site's and blanked every page as 'internal-ip'.
-  let proxyHits = 0;
-  const proxy = net.createServer(c => {
-    proxyHits++;
-    c.on('error', () => {});
-    c.once('data', () => c.end('HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 38\r\nConnection: close\r\n\r\n<title>public-page</title><p>hello</p>'));
+/**
+ * A "public web site" for the host, served through a loopback HTTP proxy. The names are mapped to a
+ * public address with --host-resolver-rules, so the host's internal-address check passes and the
+ * pages are real http documents (response headers, CSP), which local file: fixtures are not. It also
+ * plays the part of a local filtering proxy / antivirus web shield / "game booster" on 127.0.0.1.
+ */
+function publicSite() {
+  const site = { hits: 0, paths: [], held: [], tone: toneWav(4) };
+  const pages = {
+    '/': '<title>public-page</title><p>hello</p>',
+    // Still loading forever (an image that never arrives) while autoplay audio plays.
+    '/vol.html': '<!doctype html><title>vol</title><audio id=a src="/tone.wav" autoplay loop></audio><img src="/slow.png">'
+      + '<script>const a=document.getElementById("a");setInterval(()=>{document.title="vol:"+a.volume.toFixed(2)+"|p:"+a.paused},40)</script>',
+    // print() from the main frame, from a fresh about:blank iframe (no preload there) and through frames[0].
+    '/print.html': '<!doctype html><title>print-start</title><body><script>setTimeout(()=>{let n=0;'
+      + 'const f=document.createElement("iframe");document.body.appendChild(f);'
+      + 'const fresh=String(f.contentWindow.print).includes("native")?"native":"guarded";'
+      + 'f.contentWindow.print();n++;frames[0].print();n++;window.print();n++;'
+      + 'document.title="printed:"+n+"|fresh:"+fresh+"|main:"+(String(window.print).includes("native")?"native":"guarded")},300)</script></body>',
+    // Registration from the page (main-world guard) and from a fresh iframe (no guard: network block).
+    '/sw.html': '<!doctype html><title>sw-start</title><body><script>const r={};'
+      + 'const done=()=>{if(r.main&&r.frame)document.title="sw:"+r.main+"|frame:"+r.frame};'
+      + 'if(!navigator.serviceWorker){document.title="sw:unavailable"}else{'
+      + 'navigator.serviceWorker.register("/sw.js").then(()=>{r.main="registered";done()},()=>{r.main="refused";done()});'
+      + 'const f=document.createElement("iframe");document.body.appendChild(f);'
+      + 'f.contentWindow.navigator.serviceWorker.register("/sw.js?frame").then(()=>{r.frame="registered";done()},()=>{r.frame="refused";done()})}'
+      + '</script></body>',
+  };
+  site.server = require('http').createServer((req, res) => {
+    site.hits++;
+    const p = new URL(req.url, 'http://x').pathname;
+    site.paths.push(p);
+    if (p === '/slow.png') {
+      site.held.push(res); // never answered: the page keeps loading
+      return;
+    }
+    if (p === '/tone.wav') {
+      res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': site.tone.length });
+      res.end(site.tone);
+      return;
+    }
+    if (p === '/sw.js') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      res.end('self.addEventListener("fetch", () => {});');
+      return;
+    }
+    const body = pages[p];
+    res.writeHead(body ? 200 : 404, { 'Content-Type': 'text/html' });
+    res.end(body || 'not found');
   });
-  await new Promise(r => proxy.listen(0, '127.0.0.1', r));
+  return new Promise(resolve => site.server.listen(0, '127.0.0.1', () => { site.port = site.server.address().port; resolve(site); }));
+}
+
+test('public site through a loopback proxy: preload (volume, MEDIA while loading), print and SW blocks, proxy detector', { skip: SKIP, timeout: 120000 }, async t => {
+  const site = await publicSite();
   const game = new Game();
   const port = await game.listen();
+  const numbers = {};
   t.after(async () => {
+    for (const r of site.held) r.destroy();
     await game.close();
-    proxy.close();
+    site.server.close();
+    console.log('# public site numbers: ' + JSON.stringify(numbers));
   });
-  game.spawnHost(port, { extraArgs: ['--proxy-server=http://127.0.0.1:' + proxy.address().port,
-    '--host-resolver-rules=MAP public.akw.test 93.184.216.34, MAP nx.akw.test ~NOTFOUND'] });
+  game.spawnHost(port, { extraArgs: ['--proxy-server=http://127.0.0.1:' + site.port,
+    '--host-resolver-rules=MAP public.akw.test 93.184.216.34, MAP nx.akw.test ~NOTFOUND',
+    // A secure context for the http test site (service workers exist only there); unpackaged runs only.
+    '--unsafely-treat-insecure-origin-as-secure=http://public.akw.test'] });
   await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
   game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: [] }, locale: 'pt-BR' });
   game.send(P.T.CREATE, 1, { width: 320, height: 180, fps: 10, url: 'http://public.akw.test/', session: 'shared', audio: 'os', volume: 0 });
-  await titleOf(game, 1, title => title === 'public-page', 'page through the proxy', 15000);
-  await sleep(1500);
-  const internalIp = game.messages.filter(m => m.type === P.T.EVENT && m.json.detail && m.json.detail.reason === 'internal-ip');
-  assert.deepStrictEqual(internalIp.map(m => m.json), [], 'not mistaken for an internal hit');
-  const last = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1).pop();
-  assert.strictEqual(last.json.url, 'http://public.akw.test/', 'not blanked');
-  assert.ok(proxyHits >= 1);
-  const since = game.mark();
-  game.send(P.T.NAVIGATE, 1, { url: 'http://nx.akw.test/' });
-  const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'blocked-url', 8000, 'dns-via-proxy', since);
-  assert.strictEqual(ev.json.detail.reason, 'dns-via-proxy');
+
+  await t.test('behind a loopback proxy a page loads and is not blanked (the detector skips the proxy address)', async () => {
+    // Wave 1 took the proxy's 127.0.0.1 in details.ip for the site's and blanked every page as 'internal-ip'.
+    await titleOf(game, 1, title => title === 'public-page', 'page through the proxy', 15000);
+    await sleep(1500);
+    const internalIp = game.messages.filter(m => m.type === P.T.EVENT && m.json.detail && m.json.detail.reason === 'internal-ip');
+    assert.deepStrictEqual(internalIp.map(m => m.json), [], 'not mistaken for an internal hit');
+    const last = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1).pop();
+    assert.strictEqual(last.json.url, 'http://public.akw.test/', 'not blanked');
+  });
+
+  await t.test('a name that does not resolve behind a proxy is refused as dns-via-proxy', async () => {
+    const since = game.mark();
+    game.send(P.T.NAVIGATE, 1, { url: 'http://nx.akw.test/' });
+    const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'blocked-url', 8000, 'dns-via-proxy', since);
+    assert.strictEqual(ev.json.detail.reason, 'dns-via-proxy');
+  });
+
+  await t.test('CREATE volume 0.1 on a page that is still loading: the element is at 0.1 within 500 ms, MEDIA flows', async () => {
+    // Wave 1 waited for did-stop-loading (executeJavaScript), so the element played at 1.00 all load long.
+    const since = game.mark();
+    game.send(P.T.CREATE, 2, { width: 320, height: 180, fps: 10, url: 'http://public.akw.test/vol.html', session: 'shared', audio: 'os', volume: 0.1 });
+    const first = await game.waitFor(m => m.type === P.T.STATE && m.screenId === 2 && /^vol:/.test(m.json.title), 15000, 'first volume report', since);
+    const at = await titleOf(game, 2, title => title.startsWith('vol:0.10'), 'volume 0.10', 500 + 1000, since);
+    numbers.volumeAppliedAfterFirstReportMs = at.at - first.at;
+    assert.ok(at.at - first.at <= 500, 'volume 0.1 within 500 ms of the page script running: ' + (at.at - first.at) + ' ms');
+    assert.strictEqual(at.json.loading, true, 'while the page is still loading');
+    const reports = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 2 && m.idx >= since && /^vol:/.test(m.json.title)).map(m => m.json.title);
+    assert.ok(!reports.some(r => r.startsWith('vol:1.00|p:false')), 'never played at the page default 1.00: ' + reports.join(' '));
+    // A later AUDIO applies at once too, still during the load.
+    const audioAt = Date.now();
+    const s2 = game.mark();
+    game.send(P.T.AUDIO, 2, { muted: false, volume: 0.2 });
+    const v2 = await titleOf(game, 2, title => title.startsWith('vol:0.20'), 'volume 0.20', 3000, s2);
+    numbers.audioUpdateMs = v2.at - audioAt;
+    assert.ok(v2.at - audioAt <= 500, 'AUDIO applied within 500 ms: ' + (v2.at - audioAt));
+    assert.strictEqual(v2.json.loading, true);
+    // MEDIA is sampled during the load as well.
+    const playing = await game.waitFor(m => m.type === P.T.MEDIA && m.screenId === 2 && m.json.paused === false, 5000, 'MEDIA while loading', since);
+    assert.ok(playing.json.duration > 3 && playing.json.duration < 5, 'duration ' + playing.json.duration);
+    const st = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 2).pop();
+    assert.strictEqual(st.json.loading, true, 'the slow image is still pending');
+    game.send(P.T.DESTROY, 2, null);
+  });
+
+  await t.test('print() in the main frame, a fresh about:blank iframe and frames[0] returns at once (CSP sandbox, guard)', async () => {
+    // Wave 1: a fresh iframe kept the native print() and the call blocked the renderer (native dialog).
+    const since = game.mark();
+    game.send(P.T.NAVIGATE, 1, { url: 'http://public.akw.test/print.html' });
+    const st = await titleOf(game, 1, title => title.startsWith('printed:'), 'all print() calls returned', 8000, since);
+    assert.match(st.json.title, /^printed:3\|fresh:\w+\|main:guarded$/);
+    assert.ok(!game.messages.some(m => m.type === P.T.EVENT && m.idx >= since && m.json.kind === 'unresponsive'));
+  });
+
+  await t.test('a page cannot register a service worker (it could serve documents without the sandbox header)', async () => {
+    const since = game.mark();
+    game.send(P.T.NAVIGATE, 1, { url: 'http://public.akw.test/sw.html' });
+    const st = await titleOf(game, 1, title => title.startsWith('sw:') && title !== 'sw-start', 'registration answered', 8000, since);
+    assert.strictEqual(st.json.title, 'sw:refused|frame:refused');
+    assert.ok(!site.paths.includes('/sw.js'), 'the worker script never reached the site');
+  });
 });
 
 test('lifecycle: parent PID gone, missing token, forbidden switch', { skip: SKIP, timeout: 90000 }, async t => {

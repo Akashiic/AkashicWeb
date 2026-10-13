@@ -14,7 +14,6 @@ const ENV_TOKEN = require('./token').takeEnvToken(process.env);
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
-const crypto = require('crypto');
 const { app, Menu } = require('electron');
 const pkg = require('../package.json');
 const P = require('./protocol');
@@ -30,7 +29,6 @@ const { CaptureRegistry } = require('./capture');
 const { SessionFactory } = require('./sessions');
 const { ScreenManager } = require('./screens');
 
-const ISOLATED_WORLD_ID = 1279; // >= 1000 as Electron recommends; 999 is contextIsolation's world
 const PARENT_POLL_MS = 2000;
 const CONNECT_TIMEOUT_MS = 5000;
 const WELCOME_TIMEOUT_MS = 10000;
@@ -218,9 +216,6 @@ function wire(socket, token) {
     registry,
     policy: () => state.policy,
     allowFile,
-    worldId: ISOLATED_WORLD_ID,
-    // Per-run random key for the state that host scripts keep inside pages (inject.js).
-    pageKey: '__akw' + crypto.randomBytes(8).toString('hex'),
     log,
   });
   router = new Router({

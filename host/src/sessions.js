@@ -9,7 +9,7 @@
 // carries a per-host generation counter, and released sessions have their storage cleared.
 
 const { session, webContents } = require('electron');
-const { attachRequestPolicy, attachPermissionPolicy } = require('./policy');
+const { attachRequestPolicy, attachPermissionPolicy, attachDocumentPolicy } = require('./policy');
 const { acceptLanguages } = require('./messages');
 
 const PRIVATE_PARTITION = 'persist:akw-private';
@@ -56,6 +56,10 @@ class SessionFactory {
       isExempt: wcId => ctx.registry.isCapturePage(wcId),
       onBlocked: ctx.onBlocked,
       onInternalIp: ctx.onInternalIp,
+    });
+    attachDocumentPolicy(ses, {
+      isExempt: wcId => ctx.registry.isCapturePage(wcId),
+      log: ctx.log,
     });
     attachPermissionPolicy(ses, {
       isCapturePage: wcId => ctx.registry.isCapturePage(wcId),

@@ -96,9 +96,10 @@ test('packaged host: only --akw-* arguments are accepted (allowlist), anything e
 
 test('unpackaged (test) host: permissive denylist; the test harness switches still pass', () => {
   const harness = ['/path/to/host', ...base.slice(1), '--akw-test-allow-file', '--host-resolver-rules=MAP a.test 127.0.0.1',
-    '--proxy-server=http://127.0.0.1:1', '--force-device-scale-factor=2', '--no-sandbox'];
+    '--proxy-server=http://127.0.0.1:1', '--force-device-scale-factor=2', '--no-sandbox', '--unsafely-treat-insecure-origin-as-secure=http://a.test'];
   assert.deepStrictEqual(findDisallowedArgs(harness, { packaged: false, platform: 'linux' }), []);
-  for (const s of ['--ignore-certificate-errors', '--disable-site-isolation-trials', '--unsafely-treat-insecure-origin-as-secure=http://a',
+  assert.deepStrictEqual(findDisallowedArgs(harness.slice(1), { packaged: true, platform: 'linux' }).length, 5, 'none of them in a packaged host');
+  for (const s of ['--ignore-certificate-errors', '--disable-site-isolation-trials',
     '--renderer-cmd-prefix=gdb', '--gpu-launcher=x', '--utility-cmd-prefix=x', '--browser-subprocess-path=/x', '--js-flags=--x']) {
     assert.strictEqual(findDisallowedArgs([s], { packaged: false, platform: 'linux' }).length, 1, s);
   }

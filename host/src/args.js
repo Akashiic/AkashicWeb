@@ -80,16 +80,16 @@ function parseArgs(argv) {
 // --proxy-server, --ignore-certificate-errors, --renderer-cmd-prefix, ...).
 //
 // UNPACKAGED (`electron <dir>`: development and the integration test, which needs --no-sandbox as root,
-// --host-resolver-rules and --proxy-server): a DENYLIST of the switches that open a debugging channel,
-// launch other code or switch web security off.
+// --host-resolver-rules, --proxy-server and --unsafely-treat-insecure-origin-as-secure for its local
+// http test site): a DENYLIST of the switches that open a debugging channel, launch other code or
+// switch web security off.
 const AKW_SWITCH_RE = /^--akw-[a-z0-9-]+(=[\s\S]*)?$/;
 const FORBIDDEN_EVERYWHERE = [
   'remote-debugging-port', 'remote-debugging-pipe', 'remote-debugging-address', 'remote-allow-origins',
   'inspect', 'inspect-brk', 'inspect-port', 'inspect-publish-uid', 'debug', 'debug-brk',
   'disable-web-security', 'allow-file-access-from-files', 'user-data-dir', 'load-extension',
   'ignore-certificate-errors', 'ignore-certificate-errors-spki-list', 'disable-site-isolation-trials',
-  'unsafely-treat-insecure-origin-as-secure', 'renderer-cmd-prefix', 'gpu-launcher', 'utility-cmd-prefix',
-  'browser-subprocess-path', 'js-flags',
+  'renderer-cmd-prefix', 'gpu-launcher', 'utility-cmd-prefix', 'browser-subprocess-path', 'js-flags',
 ];
 // The renderer sandbox is a hard requirement on Windows (ADR-013). The Linux test harness needs
 // --no-sandbox when running as root, so in unpackaged mode it is only forbidden on win32.

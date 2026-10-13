@@ -1,124 +1,59 @@
 'use strict';
-// Media clock sampling (MEDIA at 4 Hz) and follower steering (SYNC) on HTMLMediaElement, not on the
-// YouTube IFrame API, whose setPlaybackRate rounds towards 1 (ADR-012).
+// Media clock (MEDIA at 4 Hz) and follower steering (SYNC) on HTMLMediaElement, not on the YouTube
+// IFrame API, whose setPlaybackRate rounds towards 1 (ADR-012).
 //
-// The page-side functions below are serialised with Function.prototype.toString() and run inside the
-// page, so they must stay self-contained: no references to anything outside their own body except
-// their arguments and standard DOM/JS globals. They are unit-tested here with fake elements.
+// Sampling happens in the screen preload of each frame (page/screen-preload.js) from a cached set of
+// media elements, without waiting for the page load; this module is the main-process side:
+//  - sanitizeSample: a sample comes from a renderer, so only the 8 known fields are copied, numbers
+//    must be finite and are clamped, booleans are coerced; anything else drops the sample;
+//  - MediaController: keeps the latest sample of each frame, forwards the best frame's samples as
+//    MEDIA (stamped with the host monotonic clock on arrival) and sends SYNC plans to that frame;
+//  - planSync: the steering invariants the host enforces locally.
+// MEDIA is sampled on every painted or audible screen: followers need their own clock to steer.
 
 const { monoMs } = require('./clock');
+const { CHANNELS } = require('./page/screen-preload');
 
-const SAMPLE_INTERVAL_MS = 250;
-const SUBFRAME_SCAN_EVERY = 8; // ticks (2 s): looking into iframes costs one IPC per frame
+const SAMPLE_INTERVAL_MS = 250; // the preload's sampling period
+const FRESH_MS = 1000; // a frame's last sample competes for "best frame" this long
 const RATE_MIN = 0.95;
 const RATE_MAX = 1.05;
 const LIVE_EDGE_MARGIN_S = 0.5;
-const AD_SELECTORS = [
-  '.html5-video-player.ad-showing', // YouTube (unverified until the sync spike, ADR-012)
-  '[data-a-target="video-ad-label"]', // Twitch
-  '[data-a-target="video-ad-countdown"]',
-].join(',');
+const MAX_MEDIA_TIME = 1e9; // seconds; also bounds durations and live-edge distances
+const MAX_RATE = 16; // Chromium's own playbackRate ceiling
 
 // ---------------------------------------------------------------------------------------------------
-// Page-side (serialised)
+// Sample sanitising (main process)
 
-/** Index of the media element that drives the screen's clock, or -1. Candidates are plain records. */
-function akwPickMedia(cands) {
-  let best = -1;
-  let bestScore = -1;
-  for (let i = 0; i < cands.length; i++) {
-    const c = cands[i];
-    if (!c.connected) continue;
-    let score = 0;
-    if (!c.paused && !c.ended) score += 4;
-    if (c.isVideo) score += 2;
-    if (c.readyState >= 2) score += 1;
-    // Area breaks ties and favours the visible player over thumbnails and preview videos.
-    score += Math.min(0.99, c.area / 1e7);
-    if (score > bestScore) {
-      best = i;
-      bestScore = score;
-    }
-  }
-  return best;
+function finiteIn(v, min, max) {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : null;
 }
 
-/** Clock sample of one element, JSON-safe (duration -1 when unknown or infinite). */
-function akwReadSample(el, doc, adSelectors) {
-  const duration = el.duration;
-  const finite = typeof duration === 'number' && isFinite(duration);
-  let seekEnd = NaN;
-  try {
-    if (el.seekable && el.seekable.length > 0) seekEnd = el.seekable.end(el.seekable.length - 1);
-  } catch (e) { /* seekable may be unavailable mid-load */ }
-  const live = duration === Infinity || !!(doc.querySelector && doc.querySelector('.ytp-live'));
-  const behind = live && isFinite(seekEnd) ? Math.max(0, seekEnd - el.currentTime) : 0;
+/** The 8 MEDIA fields of a renderer-provided sample, or null when it is unusable. */
+function sanitizeSample(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const mediaTime = finiteIn(raw.mediaTime, 0, MAX_MEDIA_TIME);
+  const rate = finiteIn(raw.rate, 0, MAX_RATE);
+  if (mediaTime === null || rate === null) return null;
+  const duration = raw.duration === -1 ? -1 : finiteIn(raw.duration, 0, MAX_MEDIA_TIME);
+  const behind = finiteIn(raw.behindLiveEdge, 0, MAX_MEDIA_TIME);
   return {
-    mediaTime: el.currentTime,
-    paused: !!el.paused,
-    rate: el.playbackRate,
-    duration: finite ? duration : -1,
-    live,
-    behindLiveEdge: behind,
-    adShowing: !!(doc.querySelector && doc.querySelector(adSelectors)),
-    fullscreen: !!doc.fullscreenElement,
+    mediaTime,
+    paused: !!raw.paused,
+    rate,
+    duration: duration === null ? -1 : duration,
+    live: !!raw.live,
+    behindLiveEdge: behind === null ? 0 : behind,
+    adShowing: !!raw.adShowing,
+    fullscreen: !!raw.fullscreen,
   };
-}
-
-/** Finds the main media element of `doc` (open shadow roots included). */
-function akwFindMedia(doc) {
-  const els = [];
-  const visit = root => {
-    const list = root.querySelectorAll('video, audio');
-    for (let i = 0; i < list.length; i++) els.push(list[i]);
-    const all = root.querySelectorAll('*');
-    for (let i = 0; i < all.length; i++) if (all[i].shadowRoot) visit(all[i].shadowRoot);
-  };
-  visit(doc);
-  const cands = els.map(el => {
-    const r = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
-    return {
-      connected: el.isConnected !== false,
-      paused: el.paused,
-      ended: el.ended,
-      isVideo: el.tagName === 'VIDEO',
-      readyState: el.readyState,
-      area: Math.max(0, r.width) * Math.max(0, r.height),
-    };
-  });
-  const i = akwPickMedia(cands); // defined next to this function in the injected script
-  return i < 0 ? null : els[i];
-}
-
-/** Applies a steering plan (from planSync) to an element. */
-function akwApplyPlan(el, plan) {
-  if (plan.seekTo !== null && isFinite(plan.seekTo)) el.currentTime = plan.seekTo;
-  if (Math.abs(el.playbackRate - plan.rate) > 1e-4) el.playbackRate = plan.rate;
-  if (plan.pause && !el.paused) el.pause();
-  if (plan.play && el.paused) {
-    const p = el.play();
-    if (p && typeof p.catch === 'function') p.catch(() => {});
-  }
-  return true;
-}
-
-const PAGE_LIB = [akwPickMedia, akwReadSample, akwFindMedia, akwApplyPlan].map(f => f.toString()).join('\n');
-
-function sampleScript() {
-  return '(() => {' + PAGE_LIB + '\nconst el = akwFindMedia(document);\nreturn el ? akwReadSample(el, document, '
-    + JSON.stringify(AD_SELECTORS) + ') : null;\n})()';
-}
-
-function applyScript(plan) {
-  return '(() => {' + PAGE_LIB + '\nconst el = akwFindMedia(document);\nreturn el ? akwApplyPlan(el, '
-    + JSON.stringify(plan) + ') : false;\n})()';
 }
 
 // ---------------------------------------------------------------------------------------------------
 // Steering math (main process)
 
 function clampRate(rate) {
-  if (typeof rate !== 'number' || !isFinite(rate)) return 1;
+  if (typeof rate !== 'number' || !Number.isFinite(rate)) return 1;
   return Math.min(RATE_MAX, Math.max(RATE_MIN, rate));
 }
 
@@ -137,7 +72,7 @@ function planSync(cmd, sample) {
     play: !cmd.paused && sample.paused,
     pause: !!cmd.paused && !sample.paused,
   };
-  if (cmd.seek && typeof cmd.targetMediaTime === 'number' && isFinite(cmd.targetMediaTime)) {
+  if (cmd.seek && typeof cmd.targetMediaTime === 'number' && Number.isFinite(cmd.targetMediaTime)) {
     let target = Math.max(0, cmd.targetMediaTime);
     if (sample.live) {
       const edge = sample.mediaTime + Math.max(0, sample.behindLiveEdge || 0);
@@ -152,101 +87,110 @@ function planSync(cmd, sample) {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Electron wiring
+// Main-process controller
+
+function frameKey(frame) {
+  return frame.processId + ':' + frame.routingId;
+}
+
+function frameGone(frame) {
+  try {
+    return !frame || frame.detached || (typeof frame.isDestroyed === 'function' && frame.isDestroyed());
+  } catch (e) {
+    return true;
+  }
+}
 
 /**
- * Samples one screen's main media element at 4 Hz and applies SYNC plans to it. The main frame is
- * read in an isolated world; iframes (embedded players) can only be reached through
- * WebFrameMain.executeJavaScript, which runs in the page's main world (Electron 44 has no
- * isolated-world variant on WebFrameMain).
+ * MEDIA and SYNC for one screen. The preload of each frame with media sends {score, sample} at 4 Hz
+ * while sampling is on; the frame with the best element (playing > paused, video > audio, larger)
+ * among those heard from within FRESH_MS is the screen's clock, and SYNC goes to it.
  */
 class MediaController {
-  constructor(wc, options) {
-    this.wc = wc;
-    this.worldId = options.worldId;
+  /**
+   * options: onSample(sample) -> sends MEDIA; broadcast(channel, value) -> every frame's preload;
+   * now() -> host monotonic ms (default clock.monoMs).
+   */
+  constructor(options) {
     this.onSample = options.onSample;
-    this.log = options.log;
-    this.timer = null;
-    this.busy = false;
-    this.ticks = 0;
-    this.target = null; // WebFrameMain of an iframe holding the media, or null for the main frame
-    this.last = null;
-    this.fullscreen = false;
+    this.broadcast = options.broadcast || (() => {});
+    this.now = options.now || monoMs;
+    this.frames = new Map(); // frameKey -> {frame, score, sample, at}
+    this.target = null; // frameKey of the frame whose samples are forwarded
+    this.last = null; // last MEDIA sent, with t
+    this.fullscreen = false; // HTML fullscreen seen by the host (enter/leave-html-full-screen)
+    this.sampling = false;
+    this.rejected = 0;
   }
 
-  start() {
-    if (this.timer) return;
-    this.timer = setInterval(() => this.tick(), SAMPLE_INTERVAL_MS);
+  /** Turns 4 Hz sampling on or off in every frame (new frames learn it from their INIT answer). */
+  setSampling(on) {
+    const v = !!on;
+    if (v === this.sampling) return;
+    this.sampling = v;
+    if (!v) this.reset();
+    this.broadcast(CHANNELS.SAMPLING, v);
   }
 
-  stop() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-  }
-
-  /** Forget the iframe target and last sample (navigation). */
+  /** Forget frames and the last sample (navigation). */
   reset() {
+    this.frames.clear();
     this.target = null;
     this.last = null;
   }
 
-  _run(frame, code) {
-    if (this.wc.isDestroyed()) return Promise.resolve(null);
-    if (!frame) return this.wc.executeJavaScriptInIsolatedWorld(this.worldId, [{ code }]);
-    if (frame.isDestroyed() || frame.detached) return Promise.resolve(null);
-    return frame.executeJavaScript(code);
-  }
-
-  async tick() {
-    if (this.busy || this.wc.isDestroyed()) return;
-    this.busy = true;
-    try {
-      this.ticks++;
-      const t0 = monoMs();
-      let sample = await this._run(this.target, sampleScript()).catch(() => null);
-      if (!sample && this.target) this.target = null;
-      if (!sample && this.ticks % SUBFRAME_SCAN_EVERY === 0) sample = await this._scanSubframes();
-      const t1 = monoMs();
-      if (sample && typeof sample === 'object') {
-        if (this.fullscreen) sample.fullscreen = true;
-        // The sample was taken somewhere between t0 and t1; the midpoint halves the IPC error.
-        this.last = Object.assign({ t: (t0 + t1) / 2 }, sample);
-        this.onSample(this.last);
-      } else {
-        this.last = null;
-      }
-    } finally {
-      this.busy = false;
+  /** One message from a frame's preload (event.senderFrame, payload). */
+  onFrameSample(frame, payload) {
+    if (!this.sampling || frameGone(frame)) return;
+    const key = frameKey(frame);
+    if (!payload || typeof payload !== 'object' || !(typeof payload.score === 'number' && payload.score >= 0)) {
+      this.frames.delete(key); // that frame has no media (any more)
+      if (this.target === key) this.target = null;
+      return;
     }
-  }
-
-  async _scanSubframes() {
-    const main = this.wc.mainFrame;
-    if (!main) return null;
-    for (const frame of main.framesInSubtree) {
-      if (frame === main) continue;
-      const s = await this._run(frame, sampleScript()).catch(() => null);
-      if (s) {
-        this.target = frame;
-        return s;
+    const sample = sanitizeSample(payload.sample);
+    if (!sample) {
+      this.rejected++;
+      return;
+    }
+    const t = this.now();
+    this.frames.set(key, { frame, score: Math.min(100, payload.score), sample, at: t });
+    let bestKey = null;
+    let bestScore = -1;
+    for (const [k, e] of this.frames) {
+      if (t - e.at > FRESH_MS || frameGone(e.frame)) {
+        this.frames.delete(k);
+        continue;
+      }
+      if (e.score > bestScore) {
+        bestKey = k;
+        bestScore = e.score;
       }
     }
-    return null;
+    if (bestKey !== key) return; // another frame holds the better element and sends its own samples
+    this.target = key;
+    if (this.fullscreen) sample.fullscreen = true;
+    // Stamped on arrival: the renderer -> main hop is well under the ±40 ms SYNC deadband (ADR-012).
+    this.last = Object.assign({ t }, sample);
+    this.onSample(this.last);
   }
 
-  /** Applies a SYNC command; resolves true when a media element received it. */
-  async sync(cmd) {
+  /** Applies a SYNC command in the frame that holds the media; true when a plan was sent. */
+  sync(cmd) {
     const plan = planSync(cmd, this.last);
     if (!plan) return false;
-    const ok = await this._run(this.target, applyScript(plan)).catch(err => {
-      this.log.warn('sync failed', String(err && err.message));
+    const e = this.target ? this.frames.get(this.target) : null;
+    if (!e || frameGone(e.frame)) return false;
+    try {
+      e.frame.send(CHANNELS.SYNC, plan);
+      return true;
+    } catch (err) {
       return false;
-    });
-    return !!ok;
+    }
   }
 }
 
 module.exports = {
-  SAMPLE_INTERVAL_MS, RATE_MIN, RATE_MAX, LIVE_EDGE_MARGIN_S, AD_SELECTORS,
-  akwPickMedia, akwReadSample, akwFindMedia, akwApplyPlan, sampleScript, applyScript, clampRate, planSync, MediaController,
+  SAMPLE_INTERVAL_MS, FRESH_MS, RATE_MIN, RATE_MAX, LIVE_EDGE_MARGIN_S,
+  sanitizeSample, clampRate, planSync, frameKey, MediaController,
 };

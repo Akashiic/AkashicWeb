@@ -11,7 +11,8 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const P = require('../src/protocol');
 
-const HOST_DIR = path.join(__dirname, '..');
+// AKW_HOST_DIR runs the same tests against another copy of the host app (A/B runs against an older tree).
+const HOST_DIR = process.env.AKW_HOST_DIR || path.join(__dirname, '..');
 
 function childEnv() {
   // Same rule as HostSupervisor (ADR-001 amendment): no NODE_* / ELECTRON_* leaks into the host.

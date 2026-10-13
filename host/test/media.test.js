@@ -1,90 +1,10 @@
 'use strict';
+// Main-process side of MEDIA/SYNC. The page-side sampling (pickMedia, readSample, applyPlan) moved into
+// the screen preload and is tested in preload.test.js.
 const test = require('node:test');
 const assert = require('node:assert');
-const vm = require('vm');
 const Md = require('../src/media');
-
-function fakeEl(opts = {}) {
-  const el = Object.assign({
-    tagName: 'VIDEO', currentTime: 10, duration: 100, paused: false, ended: false, playbackRate: 1, readyState: 4, isConnected: true,
-    rect: { width: 1280, height: 720 }, seekable: null, calls: [],
-  }, opts);
-  el.getBoundingClientRect = () => el.rect;
-  el.pause = () => { el.calls.push('pause'); el.paused = true; };
-  el.play = () => { el.calls.push('play'); el.paused = false; return Promise.resolve(); };
-  return el;
-}
-
-function fakeDoc(els, selectors = {}, extra = {}) {
-  return Object.assign({
-    fullscreenElement: null,
-    querySelectorAll: sel => (sel === 'video, audio' ? els : sel === '*' ? [] : []),
-    querySelector: sel => (Object.keys(selectors).some(k => sel.includes(k)) ? {} : null),
-  }, extra);
-}
-
-test('pickMedia prefers playing video, then any video, then larger', () => {
-  const c = (o) => Object.assign({ connected: true, paused: true, ended: false, isVideo: true, readyState: 4, area: 1000 }, o);
-  assert.strictEqual(Md.akwPickMedia([]), -1);
-  assert.strictEqual(Md.akwPickMedia([c({ area: 9e5 }), c({ paused: false, area: 100 })]), 1);
-  assert.strictEqual(Md.akwPickMedia([c({ isVideo: false, paused: false }), c({ paused: false })]), 1);
-  assert.strictEqual(Md.akwPickMedia([c({ area: 10 }), c({ area: 5000 })]), 1);
-  assert.strictEqual(Md.akwPickMedia([c({ connected: false, paused: false }), c({})]), 1);
-  assert.strictEqual(Md.akwPickMedia([c({ paused: false, ended: true }), c({ isVideo: false, paused: false })]), 1);
-});
-
-test('readSample: VOD element', () => {
-  const s = Md.akwReadSample(fakeEl({ currentTime: 12.5, playbackRate: 1.03 }), fakeDoc([]), Md.AD_SELECTORS);
-  assert.deepStrictEqual(s, { mediaTime: 12.5, paused: false, rate: 1.03, duration: 100, live: false, behindLiveEdge: 0, adShowing: false, fullscreen: false });
-});
-
-test('readSample: live stream reports distance to the seekable end; Infinity is JSON-safe', () => {
-  const el = fakeEl({ duration: Infinity, currentTime: 500, seekable: { length: 1, end: () => 503.25 } });
-  const s = Md.akwReadSample(el, fakeDoc([]), Md.AD_SELECTORS);
-  assert.strictEqual(s.live, true);
-  assert.strictEqual(s.duration, -1);
-  assert.strictEqual(s.behindLiveEdge, 3.25);
-  assert.doesNotThrow(() => JSON.parse(JSON.stringify(s)));
-});
-
-test('readSample: YouTube live badge, ad overlay and fullscreen', () => {
-  const doc = fakeDoc([], { '.ytp-live': true, 'ad-showing': true }, { fullscreenElement: {} });
-  const s = Md.akwReadSample(fakeEl({ seekable: { length: 1, end: () => 30 }, currentTime: 29 }), doc, Md.AD_SELECTORS);
-  assert.deepStrictEqual([s.live, s.adShowing, s.fullscreen, s.behindLiveEdge], [true, true, true, 1]);
-});
-
-test('findMedia walks open shadow roots', () => {
-  const hidden = fakeEl({ rect: { width: 1920, height: 1080 } });
-  const shadow = { querySelectorAll: sel => (sel === 'video, audio' ? [hidden] : []) };
-  const doc = {
-    querySelectorAll: sel => (sel === 'video, audio' ? [fakeEl({ tagName: 'AUDIO', paused: true })] : sel === '*' ? [{ shadowRoot: shadow }, {}] : []),
-  };
-  assert.strictEqual(Md.akwFindMedia(doc), hidden);
-});
-
-test('the injected sample script is self-contained and runs in a bare page context', () => {
-  const el = fakeEl({ currentTime: 3 });
-  const ctx = vm.createContext({ document: fakeDoc([el]) });
-  const result = vm.runInContext(Md.sampleScript(), ctx);
-  assert.strictEqual(result.mediaTime, 3);
-  assert.strictEqual(vm.runInContext(Md.sampleScript(), vm.createContext({ document: fakeDoc([]) })), null);
-});
-
-test('the injected apply script seeks, steers and plays', () => {
-  const el = fakeEl({ paused: true });
-  const ctx = vm.createContext({ document: fakeDoc([el]) });
-  const ok = vm.runInContext(Md.applyScript({ rate: 1.04, seekTo: 42, play: true, pause: false }), ctx);
-  assert.strictEqual(ok, true);
-  assert.deepStrictEqual([el.currentTime, el.playbackRate, el.paused, el.calls], [42, 1.04, false, ['play']]);
-});
-
-test('applyPlan leaves an element alone when nothing changes', () => {
-  const el = fakeEl({ playbackRate: 1 });
-  Md.akwApplyPlan(el, { rate: 1, seekTo: null, play: false, pause: false });
-  assert.deepStrictEqual([el.currentTime, el.calls], [10, []]);
-  Md.akwApplyPlan(el, { rate: 1, seekTo: null, play: false, pause: true });
-  assert.deepStrictEqual(el.calls, ['pause']);
-});
+const { CHANNELS } = require('../src/page/screen-preload');
 
 const vod = { mediaTime: 50, paused: false, rate: 1, duration: 300, live: false, behindLiveEdge: 0, adShowing: false };
 const live = { mediaTime: 1000, paused: false, rate: 1, duration: -1, live: true, behindLiveEdge: 4, adShowing: false };
@@ -122,53 +42,82 @@ test('planSync: suspended while this client shows an ad; play/pause convergence 
   assert.strictEqual(Md.planSync({ targetMediaTime: 1, rate: 1, paused: false, seek: false }, null), null);
 });
 
-/** webContents stand-in: main frame plus optional iframes, each with its own media sample. */
-function fakeWc(mainSample, frameSamples = []) {
-  const main = { isDestroyed: () => false, detached: false };
-  const frames = frameSamples.map(s => ({ isDestroyed: () => false, detached: false, executeJavaScript: async () => s }));
-  main.framesInSubtree = [main].concat(frames);
-  return {
-    mainFrame: main,
-    isDestroyed: () => false,
-    executeJavaScriptInIsolatedWorld: async (world, scripts) => {
-      assert.strictEqual(world, 1279);
-      assert.strictEqual(typeof scripts[0].code, 'string');
-      return mainSample;
-    },
+test('sanitizeSample: only the 8 known fields, finite numbers clamped, booleans coerced; junk dropped', () => {
+  const hostile = {
+    mediaTime: 12.5, paused: 'yes', rate: 99, duration: Infinity, live: 1, behindLiveEdge: -4, adShowing: 0, fullscreen: null,
+    extra: 'x'.repeat(1e6), __proto__: { polluted: true }, t: 5,
   };
+  assert.deepStrictEqual(Md.sanitizeSample(hostile), {
+    mediaTime: 12.5, paused: true, rate: 16, duration: -1, live: true, behindLiveEdge: 0, adShowing: false, fullscreen: false,
+  });
+  assert.deepStrictEqual(Object.keys(Md.sanitizeSample(vod)), ['mediaTime', 'paused', 'rate', 'duration', 'live', 'behindLiveEdge', 'adShowing', 'fullscreen']);
+  for (const bad of [null, 'x', [], {}, { mediaTime: NaN, rate: 1 }, { mediaTime: 1, rate: '1' }, { mediaTime: Infinity, rate: 1 }, { mediaTime: 1 }]) {
+    assert.strictEqual(Md.sanitizeSample(bad), null, JSON.stringify(bad));
+  }
+  assert.strictEqual(Md.sanitizeSample({ mediaTime: -5, rate: 1 }).mediaTime, 0);
+  assert.strictEqual(Md.sanitizeSample({ mediaTime: 1, rate: 1, duration: -1 }).duration, -1);
+  assert.strictEqual(Md.sanitizeSample({ mediaTime: 1, rate: 1, duration: 'long' }).duration, -1);
+});
+
+function frame(id) {
+  const f = { processId: 1, routingId: id, detached: false, sent: [], isDestroyed: () => false };
+  f.send = (ch, v) => f.sent.push([ch, v]);
+  return f;
 }
 
-test('MediaController: samples the main frame, stamps t, forwards to the game', async () => {
-  const got = [];
-  const mc = new Md.MediaController(fakeWc({ mediaTime: 5, paused: false, rate: 1, duration: 9, live: false, behindLiveEdge: 0, adShowing: false, fullscreen: false }),
-    { worldId: 1279, onSample: s => got.push(s), log: { warn() {} } });
-  await mc.tick();
-  assert.strictEqual(got.length, 1);
-  assert.strictEqual(got[0].mediaTime, 5);
-  assert.strictEqual(typeof got[0].t, 'number');
+function controller(now = () => 1000) {
+  const out = [];
+  const broadcasts = [];
+  const mc = new Md.MediaController({ onSample: s => out.push(s), broadcast: (ch, v) => broadcasts.push([ch, v]), now });
+  return { mc, out, broadcasts };
+}
+
+test('MediaController: forwards the best frame\'s samples, stamped with the host clock, sanitised', () => {
+  let now = 1000;
+  const { mc, out, broadcasts } = controller(() => now);
+  const main = frame(1);
+  mc.onFrameSample(main, { score: 7, sample: vod });
+  assert.strictEqual(out.length, 0, 'nothing while sampling is off');
+  mc.setSampling(true);
+  assert.deepStrictEqual(broadcasts, [[CHANNELS.SAMPLING, true]]);
+  mc.onFrameSample(main, { score: 7, sample: Object.assign({ evil: 1 }, vod) });
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].t, 1000);
+  assert.strictEqual(out[0].evil, undefined);
   mc.fullscreen = true;
-  await mc.tick();
-  assert.strictEqual(got[1].fullscreen, true, 'HTML fullscreen seen by the host overrides the page sample');
+  now += 250;
+  mc.onFrameSample(main, { score: 7, sample: vod });
+  assert.strictEqual(out[1].fullscreen, true, 'HTML fullscreen seen by the host overrides the page sample');
+  mc.onFrameSample(main, { score: 7, sample: { mediaTime: 'NaN', rate: 1 } });
+  assert.strictEqual(out.length, 2, 'unusable samples are dropped');
 });
 
-test('MediaController: finds media inside an iframe after the periodic scan', async () => {
-  const got = [];
-  const mc = new Md.MediaController(fakeWc(null, [null, { mediaTime: 7, paused: false, rate: 1, duration: -1, live: true, behindLiveEdge: 1, adShowing: false, fullscreen: false }]),
-    { worldId: 1279, onSample: s => got.push(s), log: { warn() {} } });
-  for (let i = 0; i < 8; i++) await mc.tick();
-  assert.strictEqual(got.length, 1, 'found on the 8th tick (2 s)');
-  assert.ok(mc.target, 'remembers the iframe');
-  await mc.tick();
-  assert.strictEqual(got.length, 2, 'then sampled every tick');
+test('MediaController: an embedded player in an iframe wins over a paused main-frame element; stale frames drop out', () => {
+  let now = 1000;
+  const { mc, out } = controller(() => now);
+  mc.setSampling(true);
+  const main = frame(1);
+  const player = frame(2);
+  mc.onFrameSample(main, { score: 2.5, sample: Object.assign({}, vod, { paused: true, mediaTime: 1 }) });
+  mc.onFrameSample(player, { score: 7.1, sample: Object.assign({}, vod, { mediaTime: 77 }) });
+  now += 250;
+  mc.onFrameSample(main, { score: 2.5, sample: Object.assign({}, vod, { paused: true, mediaTime: 1 }) });
+  assert.deepStrictEqual(out.map(s => s.mediaTime), [1, 77], 'the main frame is not forwarded while the player is better');
+  now += Md.FRESH_MS + 1; // the player frame went quiet (navigated away)
+  mc.onFrameSample(main, { score: 2.5, sample: Object.assign({}, vod, { paused: true, mediaTime: 2 }) });
+  assert.strictEqual(out[out.length - 1].mediaTime, 2);
+  mc.onFrameSample(main, { score: -1 });
+  assert.strictEqual(mc.target, null);
 });
 
-test('MediaController.sync applies the plan in the frame that holds the media', async () => {
-  const wc = fakeWc({ mediaTime: 5, paused: false, rate: 1, duration: 9, live: false, behindLiveEdge: 0, adShowing: false, fullscreen: false });
-  const codes = [];
-  wc.executeJavaScriptInIsolatedWorld = async (world, scripts) => { codes.push(scripts[0].code); return codes.length === 1 ? { mediaTime: 5, paused: false, rate: 1, duration: 9, live: false, behindLiveEdge: 0, adShowing: false } : true; };
-  const mc = new Md.MediaController(wc, { worldId: 1279, onSample: () => {}, log: { warn() {} } });
-  assert.strictEqual(await mc.sync({ targetMediaTime: 1, rate: 1.01, paused: false, seek: false }), false, 'no sample yet');
-  await mc.tick();
-  assert.strictEqual(await mc.sync({ targetMediaTime: 1, rate: 1.01, paused: false, seek: false }), true);
-  assert.match(codes[1], /"rate":1\.01/);
+test('MediaController.sync sends the plan to the frame that holds the media', () => {
+  const { mc } = controller();
+  mc.setSampling(true);
+  assert.strictEqual(mc.sync({ targetMediaTime: 1, rate: 1.01, paused: false, seek: false }), false, 'no sample yet');
+  const player = frame(9);
+  mc.onFrameSample(player, { score: 7, sample: vod });
+  assert.strictEqual(mc.sync({ targetMediaTime: 1, rate: 1.01, paused: false, seek: false }), true);
+  assert.deepStrictEqual(player.sent, [[CHANNELS.SYNC, { rate: 1.01, seekTo: null, play: false, pause: false }]]);
+  player.detached = true;
+  assert.strictEqual(mc.sync({ targetMediaTime: 1, rate: 1.01, paused: false, seek: false }), false);
 });

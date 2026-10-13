@@ -1,20 +1,25 @@
 'use strict';
 // One offscreen browser per in-world screen (ADR-002): CREATE/DESTROY/NAVIGATE/INPUT/AUDIO/RENDER/
 // RESIZE/SYNC, STATE on change, EVENT on failures. Pure decisions live in policy.js, input.js,
-// media.js and frames.js; this file is the Electron wiring.
+// media.js, audio.js and frames.js; page-side work runs in the screen preload
+// (page/screen-preload.js); this file is the Electron wiring.
 
+const path = require('path');
 const P = require('./protocol');
 const { pageSizeProblem } = require('./messages');
 const { checkNavigation, resolveVerdict } = require('./policy');
 const { InputMapper } = require('./input');
-const { FrameInjector } = require('./inject');
 const { AudioController } = require('./audio');
 const { MediaController } = require('./media');
-const { guardScript } = require('./guard');
+const { CHANNELS } = require('./page/screen-preload');
 const { SpatialCapture } = require('./capture');
 const { redactUrl } = require('./log');
 const { EventLimiter } = require('./limiter');
 const { monoMs } = require('./clock');
+
+// Sandboxed, contextIsolation, contextBridge only; runs at document start in the main frame and,
+// with nodeIntegrationInSubFrames (no Node there either: the renderer is sandboxed), in iframes.
+const SCREEN_PRELOAD = path.join(__dirname, 'page', 'screen-preload.js');
 
 const MAX_SCREENS = 16; // Java's browser budget is 2-4 (ADR-012 item 7); this is only a safety cap
 const MAX_TITLE = 256;
@@ -43,6 +48,12 @@ class Screen {
     // dropped, so a slow DNS answer can never overtake a newer NAVIGATE.
     this.navGen = 0;
     this.lastActivationAt = -Infinity; // host monotonic ms of the last INPUT mouseUp/keyDown
+    // Preload handshake per document: when the main frame's preload took the state (akw-init) and
+    // when the last cross-document main-frame navigation started (audio.js awaitingPage).
+    this.navStartAt = -Infinity;
+    this.mainInitAt = -Infinity;
+    // SPATIAL capture: 'none' | 'starting' | 'active' | 'failed' (engine-muted unless 'active').
+    this.captureState = 'none';
   }
 
   now() {
@@ -62,12 +73,17 @@ class Screen {
       paintWhenInitiallyHidden: true,
       backgroundColor: '#ffffff',
       webPreferences: {
-        offscreen: true,
+        // Device scale factor 1: FRAME width/height always equal the CREATE/RESIZE size, whatever the
+        // Windows display scaling (125%/150%) (also forced process-wide in main.js).
+        offscreen: { deviceScaleFactor: 1 },
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
         nodeIntegrationInWorker: false,
-        nodeIntegrationInSubFrames: false,
+        preload: SCREEN_PRELOAD,
+        // Runs the (sandboxed, Node-free) preload in iframes too, so embedded players get the gain and
+        // the guard at document start. It grants no Node integration: the renderer is sandboxed.
+        nodeIntegrationInSubFrames: true,
         webviewTag: false,
         backgroundThrottling: false,
         session: this.sessionEntry.session,
@@ -99,19 +115,55 @@ class Screen {
       if (this.painting && !this.destroyed) ctx.scheduler.offer(this.id, image, dirty);
     });
 
-    this.injector = new FrameInjector(wc, { worldId: ctx.worldId, log: ctx.log });
-    this.injector.set('guard', guardScript(ctx.pageKey + 'g'), true);
-    this.audio = new AudioController(wc, this.injector, ctx.pageKey + 'v');
+    const broadcast = (channel, value) => this.broadcast(channel, value);
+    this.audio = new AudioController(wc, { broadcast });
+    this.media = new MediaController({ broadcast, now: () => this.now(), onSample: sample => ctx.link.send(P.T.MEDIA, this.id, sample) });
+    this._wirePreload(wc);
+    if (this.spec.audio === 'spatial') {
+      // Silent until the capture runs: before getDisplayMedia resolves, local playback is not muted.
+      this.captureState = 'starting';
+      this.audio.setSpatialHold(true);
+    }
     this.audio.set(false, this.spec.volume);
-    this.media = new MediaController(wc, {
-      worldId: ctx.worldId,
-      log: ctx.log,
-      onSample: sample => ctx.link.send(P.T.MEDIA, this.id, sample),
-    });
-    this.media.start();
+    this._updateSampling();
 
     this.load(this.spec.url || 'about:blank');
     if (this.spec.audio === 'spatial') this.startCapture();
+  }
+
+  /** IPC with the screen preload of every frame (page/screen-preload.js). */
+  _wirePreload(wc) {
+    // A document's preload asks for the current state as soon as it starts (before page scripts).
+    wc.ipc.handle(CHANNELS.INIT, event => {
+      const frame = event && event.senderFrame;
+      if (frame && !frame.parent) {
+        this.mainInitAt = this.now();
+        if (this.audio.awaitingPage) this.audio.setAwaitingPage(false);
+      }
+      return { volume: this.audio.volume, sampling: this.media.sampling };
+    });
+    wc.ipc.on(CHANNELS.MEDIA, (event, payload) => this.media.onFrameSample(event && event.senderFrame, payload));
+    wc.on('did-start-navigation', (details, url, isInPlace, isMainFrame) => {
+      const main = details && typeof details.isMainFrame === 'boolean' ? details.isMainFrame : !!isMainFrame;
+      const sameDoc = details && typeof details.isSameDocument === 'boolean' ? details.isSameDocument : !!isInPlace;
+      if (main && !sameDoc) this.navStartAt = this.now();
+    });
+  }
+
+  /** Sends to the preload of every frame (frames being torn down are skipped). */
+  broadcast(channel, value) {
+    if (this.destroyed || !this.wc || this.wc.isDestroyed()) return;
+    let frames;
+    try {
+      frames = this.wc.mainFrame.framesInSubtree;
+    } catch (e) {
+      return; // main frame being swapped: the new document asks for the state itself (akw-init)
+    }
+    for (const f of frames) {
+      try {
+        if (!f.detached && !(typeof f.isDestroyed === 'function' && f.isDestroyed())) f.send(channel, value);
+      } catch (e) { /* frame went away */ }
+    }
   }
 
   _wireNavigationPolicy(wc) {
@@ -170,7 +222,17 @@ class Screen {
       this.mapper.reset();
       // Like Chromium's user activation, input on the old document does not carry over to a new one.
       this.lastActivationAt = -Infinity;
+      // A new document: if its preload has not taken the gain yet (it asks at document start, which
+      // can arrive before or after this event), engine-mute until it has (audio.js awaitingPage).
+      if (this.mainInitAt < this.navStartAt) this.audio.setAwaitingPage(true);
       changed();
+    });
+    wc.on('did-stop-loading', () => {
+      // Still waiting for the main document's preload: ask it again (covers an INIT that raced a
+      // navigation). If no preload answers, the screen stays engine-muted: fail safe.
+      if (this.audio.awaitingPage) {
+        try { wc.mainFrame.send(CHANNELS.REINIT); } catch (e) { /* frame gone */ }
+      }
     });
     wc.on('did-navigate-in-page', (event, url, isMainFrame) => { if (isMainFrame) changed(); });
     wc.on('cursor-changed', (event, type) => {
@@ -317,13 +379,27 @@ class Screen {
 
   startCapture() {
     const ctx = this.ctx;
-    this.capture = new SpatialCapture({
+    const Capture = ctx.CaptureClass || SpatialCapture;
+    this.capture = new Capture({
       screenWc: this.wc,
       session: this.sessionEntry.session,
       registry: ctx.registry,
       log: ctx.log,
       onPcm: parts => ctx.link.send(P.T.PCM, this.id, parts),
-      onError: detail => ctx.emitEvent(this.id, 'capture-error', { detail }),
+      onStarted: () => {
+        if (this.destroyed || this.captureState !== 'starting') return;
+        // The capture now keeps local playback silent (enableLocalEcho false): lift the engine mute.
+        this.captureState = 'active';
+        this.audio.setSpatialHold(false);
+      },
+      onError: detail => {
+        if (this.destroyed) return;
+        // Engine-muted again: after a capture stops, the page would play through the speakers. The
+        // screen stays muted until the game re-creates it (in OS mode, ADR-008 fallback).
+        this.captureState = 'failed';
+        this.audio.setSpatialHold(true);
+        ctx.emitEvent(this.id, 'capture-error', { detail });
+      },
     });
     this.capture.start();
   }
@@ -357,11 +433,13 @@ class Screen {
     this._updateSampling();
   }
 
-  /** MEDIA sampling is only useful while someone can see or hear the screen. */
+  /**
+   * MEDIA sampling (4 Hz, in the preloads) on every painted or audible screen: followers need their
+   * own clock to steer, not only the controller.
+   */
   _updateSampling() {
     if (this.destroyed) return;
-    if (this.painting || this.audible) this.media.start();
-    else this.media.stop();
+    this.media.setSampling(this.painting || this.audible);
   }
 
   /** Internal address reached (detector): stop and blank the screen. */
@@ -375,8 +453,14 @@ class Screen {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    if (this.media) this.media.stop();
+    if (this.media) this.media.reset();
     if (this.capture) this.capture.stop();
+    if (this.wc && !this.wc.isDestroyed()) {
+      try {
+        this.wc.ipc.removeHandler(CHANNELS.INIT);
+        this.wc.ipc.removeAllListeners(CHANNELS.MEDIA);
+      } catch (e) { /* closing anyway */ }
+    }
     this.ctx.scheduler.remove(this.id);
     this.ctx.byWebContents.delete(this.wcId);
     if (this.win && !this.win.isDestroyed()) this.win.destroy();

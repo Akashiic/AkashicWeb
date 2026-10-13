@@ -314,6 +314,36 @@ test('permission wiring: request and check handlers agree; denials are reported'
   assert.strictEqual(picked, undefined);
 });
 
+test('document policy: every main-frame and iframe response gets a CSP sandbox without allow-modals', () => {
+  const ses = fakeSession(() => Promise.resolve({ endpoints: [] }));
+  Pol.attachDocumentPolicy(ses, { isExempt: id => id === 99, log: null });
+  assert.deepStrictEqual(ses.filters.onHeadersReceived.types, ['mainFrame', 'subFrame']);
+  let got;
+  ses.handlers.onHeadersReceived({ webContentsId: 1, responseHeaders: { 'content-security-policy': ["default-src 'self'"], 'Content-Type': ['text/html'] } }, r => { got = r; });
+  assert.deepStrictEqual(got.responseHeaders['content-security-policy'], ["default-src 'self'", Pol.DOCUMENT_SANDBOX], 'the site CSP is kept, ours added');
+  assert.deepStrictEqual(got.responseHeaders['Content-Type'], ['text/html']);
+  ses.handlers.onHeadersReceived({ webContentsId: 1, responseHeaders: undefined }, r => { got = r; });
+  assert.deepStrictEqual(got.responseHeaders, { 'Content-Security-Policy': [Pol.DOCUMENT_SANDBOX] });
+  ses.handlers.onHeadersReceived({ webContentsId: 99, responseHeaders: {} }, r => { got = r; });
+  assert.deepStrictEqual(got, {}, 'our own capture page is exempt');
+  const flags = Pol.DOCUMENT_SANDBOX.split(/\s+/);
+  assert.strictEqual(flags[0], 'sandbox');
+  assert.ok(!flags.includes('allow-modals'), 'print/alert/confirm/prompt blocked in every frame');
+  for (const f of ['allow-scripts', 'allow-same-origin', 'allow-forms', 'allow-popups']) assert.ok(flags.includes(f), f);
+  assert.ok(!flags.includes('allow-top-navigation'), 'frames may move the top page only after user activation');
+});
+
+test('document policy: service worker scripts are refused (they could serve documents without the header)', () => {
+  const ses = fakeSession(() => Promise.resolve({ endpoints: [] }));
+  Pol.attachDocumentPolicy(ses, { isExempt: () => false, log: null });
+  assert.deepStrictEqual(ses.filters.onBeforeSendHeaders.types, ['script']);
+  const answers = [];
+  ses.handlers.onBeforeSendHeaders({ url: 'https://a.example/sw.js', requestHeaders: { 'Service-Worker': 'script' } }, r => answers.push(r));
+  ses.handlers.onBeforeSendHeaders({ url: 'https://a.example/app.js', requestHeaders: { Accept: '*/*' } }, r => answers.push(r));
+  ses.handlers.onBeforeSendHeaders({ url: 'https://a.example/sw2.js', requestHeaders: { 'service-worker': 'Script' } }, r => answers.push(r));
+  assert.deepStrictEqual(answers, [{ cancel: true }, {}, { cancel: true }]);
+});
+
 test('withTimeout rejects slow promises and passes fast ones through', async () => {
   assert.strictEqual(await Pol.withTimeout(Promise.resolve(3), 50), 3);
   await assert.rejects(Pol.withTimeout(new Promise(() => {}), 20), /timeout/);
