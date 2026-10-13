@@ -32,7 +32,9 @@ function setup() {
     screens,
     log: { warn: w => warnings.push(w), info() {}, error() {} },
     onWelcome: w => calls.push(['welcome', w.protoMajor, w.policy.mode]),
+    onBadWelcome: e => calls.push(['bad-welcome', e.code || e.name]),
     onPolicy: p => calls.push(['policy', p.mode]),
+    onBadPolicy: e => calls.push(['bad-policy', e.code || e.name]),
     onPing: (id, nonce) => calls.push(['ping', id, nonce]),
     onQuit: () => calls.push(['quit']),
   });
@@ -50,6 +52,38 @@ test('only WELCOME, PING and QUIT are accepted before WELCOME', () => {
   router.route(msg(P.T.WELCOME, 0, { protoMajor: 1 }));
   assert.deepStrictEqual(calls.slice(1), [['welcome', 1, 'blocklist']]);
   assert.match(warnings[2], /duplicate-welcome/);
+});
+
+test('a malformed WELCOME fails the handshake and never opens the door to screen messages', () => {
+  for (const bad of [
+    { protoMajor: 1, policy: { mode: 'ALLOW_LIST', allow: ['youtube.com'] }, locale: 'pt-BR' }, // unknown mode
+    { protoMajor: 1, policy: { mode: 'allowlist', allow: 'youtube.com' } }, // allow not a list
+    { policy: null }, // no protoMajor
+  ]) {
+    const { router, calls } = setup();
+    router.route(msg(P.T.WELCOME, 0, bad));
+    assert.strictEqual(router.welcomed, false, JSON.stringify(bad));
+    router.route(msg(P.T.CREATE, 7, { width: 640, height: 360, url: 'https://evil.example/' }));
+    assert.deepStrictEqual(calls.map(c => c[0]), ['bad-welcome'], JSON.stringify(bad));
+  }
+  const { router, calls } = setup();
+  router.route(msg(P.T.WELCOME, 0, Buffer.from('{not json')));
+  assert.deepStrictEqual(calls, [['bad-welcome', 'SyntaxError']]);
+});
+
+test('a WELCOME without a policy means deny-all (an empty allow list), like M2 encodes null', () => {
+  const { router, calls } = setup();
+  router.route(msg(P.T.WELCOME, 0, { protoMajor: 1, policy: null }));
+  assert.deepStrictEqual(calls, [['welcome', 1, 'allowlist']]);
+});
+
+test('a malformed POLICY is reported so the host can switch to deny-all; a good one still applies', () => {
+  const { router, calls } = setup();
+  router.route(msg(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist' } }));
+  router.route(msg(P.T.POLICY, 0, { mode: 'everything' }));
+  router.route(msg(P.T.POLICY, 0, Buffer.from('[')));
+  router.route(msg(P.T.POLICY, 0, { mode: 'allowlist', allow: ['youtube.com'] }));
+  assert.deepStrictEqual(calls, [['welcome', 1, 'blocklist'], ['bad-policy', 'bad-mode'], ['bad-policy', 'SyntaxError'], ['policy', 'allowlist']]);
 });
 
 test('screen messages reach the right screen with validated payloads', () => {
@@ -99,18 +133,30 @@ test('rejection logging is rate limited after the first 20', () => {
   assert.strictEqual(warnings.length, 22, 'first 20, then the 100th and 200th');
 });
 
-test('EventLimiter: burst then steady rate per key', () => {
+test('EventLimiter: burst then steady rate per screen and per noisy kind', () => {
   let now = 0;
   const lim = new EventLimiter(3, 2, () => now);
-  assert.deepStrictEqual([1, 2, 3, 4].map(() => lim.allow('a')), [true, true, true, false]);
-  assert.strictEqual(lim.allow('b'), true, 'keys are independent');
+  assert.deepStrictEqual([1, 2, 3, 4].map(() => lim.allow(1, 'blocked-url')), [true, true, true, false]);
+  assert.strictEqual(lim.allow(2, 'blocked-url'), true, 'screens are independent');
+  assert.strictEqual(lim.allow(1, 'permission-denied'), true, 'kinds have their own bucket');
   now += 500; // +1 token
-  assert.deepStrictEqual([lim.allow('a'), lim.allow('a')], [true, false]);
+  assert.deepStrictEqual([lim.allow(1, 'blocked-url'), lim.allow(1, 'blocked-url')], [true, false]);
   now += 10000;
-  assert.deepStrictEqual([1, 2, 3, 4].map(() => lim.allow('a')), [true, true, true, false], 'never more than the burst');
+  assert.deepStrictEqual([1, 2, 3, 4].map(() => lim.allow(1, 'blocked-url')), [true, true, true, false], 'never more than the burst');
   assert.strictEqual(lim.dropped, 3);
-  lim.forget('a');
-  assert.strictEqual(lim.allow('a'), true);
+  assert.deepStrictEqual(lim.takeSuppressed(), [{ screenId: 1, kind: 'blocked-url', count: 3 }]);
+  assert.deepStrictEqual(lim.takeSuppressed(), [], 'counts reset once taken');
+  lim.forget(1);
+  assert.strictEqual(lim.allow(1, 'blocked-url'), true);
+});
+
+test('EventLimiter: failures the game must see are never dropped, whatever floods before them', () => {
+  const lim = new EventLimiter(2, 1, () => 0);
+  for (let i = 0; i < 100; i++) lim.allow(1, 'blocked-url');
+  for (const kind of ['renderer-gone', 'capture-error', 'unresponsive', 'responsive', 'load-error', 'screen-limit', 'policy-error']) {
+    for (let i = 0; i < 50; i++) assert.strictEqual(lim.allow(1, kind), true, kind);
+  }
+  assert.strictEqual(lim.takeSuppressed()[0].count, 98);
 });
 
 test('redactUrl keeps scheme, host and path only', () => {
@@ -139,6 +185,46 @@ test('file logger appends lines and rotates past the size cap', () => {
   errLog.close();
   assert.match(fs.readFileSync(path.join(dir, 'err.log'), 'utf8'), /WARN Error: boom\n {4}at /);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('captureStdio: stdout/stderr writes go into the size-capped log; echo only when asked', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { captureStdio } = require('../src/log');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'akw-log-'));
+  const file = path.join(dir, 'host.log');
+  const log = createLogger({ file, maxBytes: 400 });
+  const passed = [];
+  const out = { write: chunk => { passed.push(String(chunk)); return true; } };
+  const err = { write: chunk => { passed.push(String(chunk)); return true; } };
+  let restore = captureStdio(log, { streams: { stdout: out, stderr: err } });
+  let called = 0;
+  assert.strictEqual(out.write('hello from a stray console.log\n', () => { called++; }), true);
+  err.write(Buffer.from('(node) DeprecationWarning: x\n'));
+  for (let i = 0; i < 100; i++) err.write('flood line ' + i + ' ' + 'z'.repeat(50) + '\n');
+  restore();
+  assert.deepStrictEqual(passed, [], 'nothing reaches the real streams of a packaged host');
+  const all = (fs.existsSync(file + '.1') ? fs.readFileSync(file + '.1', 'utf8') : '') + fs.readFileSync(file, 'utf8');
+  assert.match(all, /ERR flood line 99 /);
+  assert.ok(fs.statSync(file).size < 600 && (!fs.existsSync(file + '.1') || fs.statSync(file + '.1').size < 600), 'capped by rotation');
+  restore = captureStdio(log, { streams: { stdout: out }, echo: true });
+  out.write('dev\n');
+  restore();
+  assert.deepStrictEqual(passed, ['dev\n'], 'echoed in development and test runs');
+  log.close();
+  return new Promise(r => setImmediate(r)).then(() => {
+    assert.strictEqual(called, 1, 'write callbacks still run');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+test('main.js captures stdio into the log and turns Chromium logging down to FATAL', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  assert.match(src, /captureStdio\(log, \{ echo: !app\.isPackaged \}\)/);
+  assert.match(src, /appendSwitch\('log-level', '3'\)/);
 });
 
 test('logger without a file (or with an unwritable one) does not throw', () => {

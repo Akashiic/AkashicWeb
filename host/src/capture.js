@@ -6,12 +6,15 @@
 // silent-source behaviour on Windows (enableLocalEcho=false) is untested.
 
 const path = require('path');
-const { BrowserWindow } = require('electron');
 const { monoMicros } = require('./clock');
+const { withTimeout } = require('./policy');
 const pcm = require('./pcm');
 
 const CAPTURE_HTML = path.join(__dirname, 'capture', 'capture.html');
 const CAPTURE_PRELOAD = path.join(__dirname, 'capture', 'capture-preload.js');
+// A capture page that never answers must not leave the screen waiting (and engine-muted) forever.
+const LOAD_TIMEOUT_MS = 10000;
+const START_TIMEOUT_MS = 10000;
 
 /**
  * Which screen each capture window may capture. The session's display-media handler consults it, so
@@ -56,7 +59,8 @@ class CaptureRegistry {
 
 class SpatialCapture {
   /**
-   * options: screenWc, session, registry, onPcm(parts), onError(detail), log
+   * options: screenWc, session, registry, onPcm(parts), onStarted(info), onError(detail), log;
+   * for tests: createWindow(options), loadTimeoutMs, startTimeoutMs.
    */
   constructor(options) {
     this.o = options;
@@ -67,7 +71,9 @@ class SpatialCapture {
 
   async start() {
     const o = this.o;
-    const win = new BrowserWindow({
+    // Electron is loaded here so plain-Node unit tests can import this file (they pass createWindow).
+    const create = o.createWindow || (opts => new (require('electron').BrowserWindow)(opts));
+    const win = create({
       show: false,
       width: 64,
       height: 64,
@@ -95,11 +101,15 @@ class SpatialCapture {
     wc.ipc.on('akw-pcm', (event, data) => this._onPcm(event, data));
     wc.ipc.on('akw-capture-ended', () => this._fail('capture track ended'));
     try {
-      await win.loadFile(CAPTURE_HTML);
+      await withTimeout(win.loadFile(CAPTURE_HTML), o.loadTimeoutMs || LOAD_TIMEOUT_MS);
+      if (this.stopped) return null;
       wc.stopPainting();
       // userGesture=true: getDisplayMedia needs transient activation.
-      const info = await wc.executeJavaScript('window.akwStartCapture(' + JSON.stringify(pcm.workletSource()) + ')', true);
+      const info = await withTimeout(wc.executeJavaScript('window.akwStartCapture(' + JSON.stringify(pcm.workletSource()) + ')', true),
+        o.startTimeoutMs || START_TIMEOUT_MS);
+      if (this.stopped) return null;
       o.log.info('spatial capture started', JSON.stringify(info));
+      if (o.onStarted) o.onStarted(info);
       return info;
     } catch (err) {
       this._fail('capture start failed: ' + String(err && err.message));

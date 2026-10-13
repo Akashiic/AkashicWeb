@@ -33,10 +33,11 @@
   const t = document.getElementById('t');
   const ta = document.getElementById('ta');
   const au = document.getElementById('au');
-  const state = { fetch: 'none', keydowns: 0, frameVol: '-', frameGuard: '-', fileClick: '-' };
+  const state = { fetch: 'none', img: 'none', ws: 'none', beacon: 'none', keydowns: 0, frameVol: '-', frameGuard: '-', fileClick: '-' };
   function report() {
     document.title = 'v:' + t.value + '|ta:' + JSON.stringify(ta.value) + '|sy:' + Math.round(window.scrollY)
       + '|vol:' + au.volume.toFixed(2) + '|fs:' + (document.fullscreenElement ? 1 : 0) + '|fetch:' + state.fetch
+      + '|img:' + state.img + '|ws:' + state.ws + '|beacon:' + state.beacon
       + '|kd:' + state.keydowns + '|lang:' + navigator.language + '|ua:' + (navigator.userAgent.includes('Electron') ? 'electron' : 'chrome')
       + '|pg:' + (String(window.print).includes('[native code]') ? 'native' : 'guarded')
       + '|file:' + state.fileClick + '|fvol:' + state.frameVol + '|fpg:' + state.frameGuard;
@@ -73,12 +74,34 @@
       if (document.activeElement) document.activeElement.blur();
       return;
     }
+    // #probe=<port>[&host=<name>][&kinds=fetch,img,ws,beacon]: subresource requests to a "router".
     const m = /probe=(\d+)(?:&host=([a-z0-9.-]+))?/.exec(location.hash);
     if (!m) return;
-    state.fetch = 'pending';
+    const host = m[2] || '127.0.0.1';
+    const base = 'http://' + host + ':' + m[1];
+    const kinds = (/kinds=([a-z,]+)/.exec(location.hash) || [0, 'fetch'])[1].split(',');
+    if (kinds.includes('fetch')) {
+      state.fetch = 'pending';
+      fetch(base + '/from-page', { mode: 'no-cors' })
+        .then(() => { state.fetch = 'reached'; report(); }, () => { state.fetch = 'failed'; report(); });
+    }
+    if (kinds.includes('img')) {
+      state.img = 'pending';
+      const img = new Image();
+      img.onload = () => { state.img = 'reached'; report(); };
+      img.onerror = () => { state.img = 'failed'; report(); };
+      img.src = base + '/router.png';
+    }
+    if (kinds.includes('ws')) {
+      state.ws = 'pending';
+      try {
+        const ws = new WebSocket('ws://' + host + ':' + m[1] + '/socket');
+        ws.onopen = () => { state.ws = 'open'; report(); };
+        ws.onerror = () => { state.ws = 'failed'; report(); };
+      } catch (e) { state.ws = 'threw'; }
+    }
+    if (kinds.includes('beacon')) state.beacon = navigator.sendBeacon(base + '/beacon', 'x') ? 'queued' : 'refused';
     report();
-    fetch('http://' + (m[2] || '127.0.0.1') + ':' + m[1] + '/from-page', { mode: 'no-cors' })
-      .then(() => { state.fetch = 'reached'; report(); }, () => { state.fetch = 'failed'; report(); });
   });
   setInterval(report, 500);
   report();

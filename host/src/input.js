@@ -3,14 +3,22 @@
 // of pressed mouse buttons, which Chromium needs on mouseMove to drag (text selection, scrollbars,
 // sliders such as the YouTube seek bar).
 //
-// Keyboard contract with the game:
-//  - keyDown/keyUp carry a key name: a DOM `key` value ("ArrowLeft", "Enter", "a") or an Electron
-//    accelerator name ("Left", "PageUp"). Electron turns keyDown into a RawKeyDown, which runs
-//    shortcuts and editing commands (Backspace, arrows, Ctrl+A) but never inserts text.
-//  - Text arrives only as `char` (one event per code point, accents already composed by the game).
-//    Control characters in `char` are dropped, because the matching keyDown already acted.
-//  - Enter is the exception: Blink inserts the newline / submits the form on the "\r" keypress, so a
-//    keyDown Enter without Ctrl/Alt/Meta is followed by a synthetic char "\r".
+// Input contract with the game (M5 KeyboardRouter/InputTranslator); each rule has a test:
+//  - keyDown/keyUp carry a key name: a DOM `key` value ("ArrowLeft", "Enter", "a", " ") or an Electron
+//    accelerator name ("Left", "PageUp", "Space"). Electron turns keyDown into a RawKeyDown, which runs
+//    shortcuts and editing commands (Backspace, arrows, Ctrl+A) but never inserts text. In particular
+//    keyDown "Space" inserts nothing: the game also sends char " ", which types the space.
+//  - Text arrives only as `char`, accents already composed by the game. A char event may carry several
+//    characters (a paste, up to MAX_CHARS code points): every one is typed, in order, one Chromium
+//    char event per code point (surrogate pairs stay together).
+//  - Enter: Blink inserts the newline / submits the form on the "\r" keypress, so keyDown Enter without
+//    Ctrl/Alt/Meta is followed by a synthetic char "\r", and a "\r" in char text is dropped (the game
+//    sends keyDown Enter plus char "\r" for one key press).
+//  - Line breaks inside char text (a pasted multi-line text, normalised to "\n" by the game) are typed
+//    as Shift+Enter ("\r" with Shift: Blink's InsertLineBreak), a tab as "\t"; other control
+//    characters are dropped.
+//  - wheel: deltaY > 0 scrolls up (towards the top of the page) and < 0 scrolls down, in pixels; the
+//    game sends notches x 100. Same sign as LWJGL Mouse.getDWheel() and Chromium's mouseWheel.
 
 const MOD_BITS = Object.freeze({ shift: 1, control: 2, alt: 4, meta: 8 }); // ScreenInput.MOD_* in Java
 const MOD_ALIASES = Object.freeze({
@@ -21,7 +29,9 @@ const BUTTON_MODS = Object.freeze({ left: 'leftbuttondown', middle: 'middlebutto
 const BUTTONS = ['left', 'middle', 'right'];
 const MAX_COORD = 65535;
 const MAX_WHEEL = 10000;
-const MAX_CHARS = 64;
+// Code points per char event. The game caps a paste at 512 UTF-16 units (M5 KeyboardRouter); the host
+// cap only bounds a broken or hostile caller.
+const MAX_CHARS = 4096;
 
 // DOM KeyboardEvent.key values that differ from Electron accelerator names.
 const DOM_TO_ACCELERATOR = Object.freeze({
@@ -74,12 +84,24 @@ function isControlCodePoint(cp) {
   return cp < 0x20 || (cp >= 0x7f && cp <= 0x9f);
 }
 
-/** One char event per printable code point (surrogate pairs stay together). */
+/**
+ * Chromium char events for `text`, in order: one per printable code point (surrogate pairs stay
+ * together), "\n" as Shift+"\r" (a line break), "\t" as a tab; "\r" and other controls are dropped.
+ */
 function charEvents(text, modifiers) {
   if (typeof text !== 'string') throw new InputError('bad-text');
   const out = [];
+  let count = 0;
   for (const ch of text) {
-    if (out.length >= MAX_CHARS) break;
+    if (++count > MAX_CHARS) break;
+    if (ch === '\n') {
+      out.push({ type: 'char', keyCode: '\r', modifiers: modifiers.includes('shift') ? modifiers : modifiers.concat(['shift']) });
+      continue;
+    }
+    if (ch === '\t') {
+      out.push({ type: 'char', keyCode: '\t', modifiers });
+      continue;
+    }
     if (isControlCodePoint(ch.codePointAt(0))) continue;
     out.push({ type: 'char', keyCode: ch, modifiers });
   }
@@ -141,8 +163,8 @@ class InputMapper {
       case 'wheel': {
         const x = coord(evt.x, this.width, 'x');
         const y = coord(evt.y, this.height, 'y');
-        // Chromium convention, passed through: deltaY > 0 scrolls up (towards the top of the page),
-        // the same sign as LWJGL's Mouse.getDWheel(); 120 per notch.
+        // Passed through: deltaY > 0 scrolls up (towards the top of the page), the sign of LWJGL's
+        // Mouse.getDWheel() and Chromium's mouseWheel; pixels, the game sends notches x 100.
         return [{ type: 'mouseWheel', x, y, deltaX: delta(evt.deltaX), deltaY: delta(evt.deltaY), modifiers: mods }];
       }
       case 'keyDown':
@@ -164,4 +186,4 @@ class InputMapper {
   }
 }
 
-module.exports = { MOD_BITS, InputError, InputMapper, normalizeModifiers, toAcceleratorKey, charEvents };
+module.exports = { MOD_BITS, MAX_CHARS, InputError, InputMapper, normalizeModifiers, toAcceleratorKey, charEvents };

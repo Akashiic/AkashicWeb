@@ -11,7 +11,8 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const P = require('../src/protocol');
 
-const HOST_DIR = path.join(__dirname, '..');
+// AKW_HOST_DIR runs the same tests against another copy of the host app (A/B runs against an older tree).
+const HOST_DIR = process.env.AKW_HOST_DIR || path.join(__dirname, '..');
 
 function childEnv() {
   // Same rule as HostSupervisor (ADR-001 amendment): no NODE_* / ELECTRON_* leaks into the host.
@@ -69,9 +70,9 @@ class Game {
   spawnHost(port, options = {}) {
     const electron = process.env.AKW_ELECTRON;
     const args = [
-      HOST_DIR,
+      options.hostDir || HOST_DIR,
       '--akw-port=' + port,
-      '--akw-parent-pid=' + (options.parentPid || process.pid),
+      '--akw-parent-pid=' + (options.parentPid != null ? options.parentPid : process.pid),
       '--akw-user-data=' + path.join(this.dir, 'profile'),
       '--akw-log=' + path.join(this.dir, 'host.log'),
     ].concat(options.extraArgs || []);
@@ -87,6 +88,9 @@ class Game {
     this.child.stderr.on('data', d => { this.stderr += d.toString(); });
     this.child.stdout.on('data', d => { this.stderr += d.toString(); });
     this.exited = new Promise(resolve => this.child.on('exit', (code, signal) => resolve({ code, signal })));
+    // token: false = stdin closed empty; 'hold' = stdin left open and silent (the host waits for its
+    // stdin timeout, then falls back to AKW_TOKEN); otherwise the token line, then EOF.
+    if (options.token === 'hold') return this.child;
     if (options.token !== false) this.child.stdin.write((options.token || this.token) + '\n');
     this.child.stdin.end();
     return this.child;
@@ -162,6 +166,49 @@ class Game {
   }
 }
 
+/** Linux only: PIDs of every descendant of `root` (from /proc), not including `root`. */
+function descendants(root) {
+  const parents = new Map();
+  for (const d of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(d)) continue;
+    try {
+      const st = fs.readFileSync('/proc/' + d + '/stat', 'utf8');
+      parents.set(Number(d), Number(st.slice(st.lastIndexOf(')') + 2).split(' ')[1]));
+    } catch (e) { /* exited meanwhile */ }
+  }
+  const out = new Set([root]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [pid, ppid] of parents) {
+      if (out.has(ppid) && !out.has(pid)) {
+        out.add(pid);
+        grew = true;
+      }
+    }
+  }
+  out.delete(root);
+  return [...out];
+}
+
+/** Linux only: one {pid, type, rssKb, env} record per descendant process of `root`. */
+function processTree(root) {
+  const out = [];
+  for (const pid of descendants(root)) {
+    try {
+      // Chromium children rewrite their title, so arguments may be separated by spaces, not NULs.
+      const cmd = fs.readFileSync('/proc/' + pid + '/cmdline', 'latin1').split(/[\0 ]/);
+      const comm = fs.readFileSync('/proc/' + pid + '/comm', 'utf8').trim();
+      const status = fs.readFileSync('/proc/' + pid + '/status', 'utf8');
+      const typeArg = cmd.find(a => a.startsWith('--type='));
+      const sub = cmd.find(a => a.startsWith('--utility-sub-type='));
+      const type = typeArg ? typeArg.slice(7) + (sub ? '/' + sub.slice(19) : '') : comm;
+      out.push({ pid, type, comm, rssKb: Number((/VmRSS:\s+(\d+)/.exec(status) || [0, 0])[1]), env: fs.readFileSync('/proc/' + pid + '/environ', 'latin1') });
+    } catch (e) { /* exited meanwhile */ }
+  }
+  return out;
+}
+
 /** 16-bit stereo PCM WAV with a sine tone, so the test page has real media without any download. */
 function toneWav(seconds = 6, rate = 48000, freq = 440) {
   const frames = seconds * rate;
@@ -188,4 +235,4 @@ function toneWav(seconds = 6, rate = 48000, freq = 440) {
   return Buffer.concat([h, data]);
 }
 
-module.exports = { Game, toneWav };
+module.exports = { Game, toneWav, descendants, processTree };

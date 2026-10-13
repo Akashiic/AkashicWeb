@@ -10,6 +10,19 @@ function isValidToken(t) {
 }
 
 /**
+ * Copies AKW_TOKEN out of `env` and deletes it in the same synchronous step. main.js calls this as its
+ * very first statement, so no process that Chromium starts later (GPU, network service, renderers on
+ * Windows) inherits the token; only processes started before the app's JavaScript ran can have it.
+ * Returns the raw value (validated later by readToken) or null.
+ */
+function takeEnvToken(env) {
+  if (!env || typeof env !== 'object') return null;
+  const value = env.AKW_TOKEN;
+  delete env.AKW_TOKEN;
+  return typeof value === 'string' ? value : null;
+}
+
+/**
  * Reads the token from `stream` (process.stdin in production) up to the first newline, end of
  * stream or `timeoutMs`; falls back to env.AKW_TOKEN. Resolves {token, source} or null.
  * Never rejects: a GUI-subsystem exe on Windows may have no usable stdin at all, which is exactly
@@ -45,4 +58,4 @@ function readToken(stream, env, timeoutMs = 3000) {
   });
 }
 
-module.exports = { TOKEN_RE, isValidToken, readToken };
+module.exports = { TOKEN_RE, isValidToken, takeEnvToken, readToken };

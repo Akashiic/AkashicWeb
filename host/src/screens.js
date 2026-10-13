@@ -1,22 +1,32 @@
 'use strict';
 // One offscreen browser per in-world screen (ADR-002): CREATE/DESTROY/NAVIGATE/INPUT/AUDIO/RENDER/
 // RESIZE/SYNC, STATE on change, EVENT on failures. Pure decisions live in policy.js, input.js,
-// media.js and frames.js; this file is the Electron wiring.
+// media.js, audio.js and frames.js; page-side work runs in the screen preload
+// (page/screen-preload.js); this file is the Electron wiring.
 
-const { BrowserWindow } = require('electron');
+const path = require('path');
 const P = require('./protocol');
+const { pageSizeProblem } = require('./messages');
 const { checkNavigation, resolveVerdict } = require('./policy');
 const { InputMapper } = require('./input');
-const { FrameInjector } = require('./inject');
 const { AudioController } = require('./audio');
 const { MediaController } = require('./media');
-const { guardScript } = require('./guard');
+const { CHANNELS } = require('./page/screen-preload');
 const { SpatialCapture } = require('./capture');
 const { redactUrl } = require('./log');
 const { EventLimiter } = require('./limiter');
+const { monoMs } = require('./clock');
+
+// Sandboxed, contextIsolation, contextBridge only; runs at document start in the main frame and,
+// with nodeIntegrationInSubFrames (no Node there either: the renderer is sandboxed), in iframes.
+const SCREEN_PRELOAD = path.join(__dirname, 'page', 'screen-preload.js');
 
 const MAX_SCREENS = 16; // Java's browser budget is 2-4 (ADR-012 item 7); this is only a safety cap
 const MAX_TITLE = 256;
+const SUPPRESSED_REPORT_MS = 2000; // how often counts of rate-limited EVENTs are reported
+// window.open is honoured only this soon after real input (INPUT mouseUp/keyDown) on the same screen:
+// a stand-in for Chromium's user activation, which Electron's window-open handler does not report.
+const POPUP_AFTER_INPUT_MS = 1000;
 // Net errors that are our own doing or a user stop, not a load failure worth a placeholder.
 const QUIET_LOAD_ERRORS = new Set([-3 /* ERR_ABORTED */, -20 /* ERR_BLOCKED_BY_CLIENT */]);
 
@@ -33,12 +43,27 @@ class Screen {
     this.destroyed = false;
     this.mapper = new InputMapper(spec.width, spec.height);
     this.capture = null;
+    // Navigation generation: every navigation request (load, back/forward/reload/stop, window.open)
+    // takes a new number; an answer that arrives later for an older number (a name resolution) is
+    // dropped, so a slow DNS answer can never overtake a newer NAVIGATE.
+    this.navGen = 0;
+    this.lastActivationAt = -Infinity; // host monotonic ms of the last INPUT mouseUp/keyDown
+    // Preload handshake per document: when the main frame's preload took the state (akw-init) and
+    // when the last cross-document main-frame navigation started (audio.js awaitingPage).
+    this.navStartAt = -Infinity;
+    this.mainInitAt = -Infinity;
+    // SPATIAL capture: 'none' | 'starting' | 'active' | 'failed' (engine-muted unless 'active').
+    this.captureState = 'none';
+  }
+
+  now() {
+    return this.ctx.now ? this.ctx.now() : monoMs();
   }
 
   open() {
     const ctx = this.ctx;
     this.sessionEntry = ctx.sessions.forScreen(this.id, this.spec.session);
-    this.win = new BrowserWindow({
+    this.win = (ctx.createWindow || createBrowserWindow)({
       show: false,
       width: this.spec.width,
       height: this.spec.height,
@@ -48,12 +73,17 @@ class Screen {
       paintWhenInitiallyHidden: true,
       backgroundColor: '#ffffff',
       webPreferences: {
-        offscreen: true,
+        // Device scale factor 1: FRAME width/height always equal the CREATE/RESIZE size, whatever the
+        // Windows display scaling (125%/150%) (also forced process-wide in main.js).
+        offscreen: { deviceScaleFactor: 1 },
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
         nodeIntegrationInWorker: false,
-        nodeIntegrationInSubFrames: false,
+        preload: SCREEN_PRELOAD,
+        // Runs the (sandboxed, Node-free) preload in iframes too, so embedded players get the gain and
+        // the guard at document start. It grants no Node integration: the renderer is sandboxed.
+        nodeIntegrationInSubFrames: true,
         webviewTag: false,
         backgroundThrottling: false,
         session: this.sessionEntry.session,
@@ -85,19 +115,55 @@ class Screen {
       if (this.painting && !this.destroyed) ctx.scheduler.offer(this.id, image, dirty);
     });
 
-    this.injector = new FrameInjector(wc, { worldId: ctx.worldId, log: ctx.log });
-    this.injector.set('guard', guardScript(ctx.pageKey + 'g'), true);
-    this.audio = new AudioController(wc, this.injector, ctx.pageKey + 'v');
+    const broadcast = (channel, value) => this.broadcast(channel, value);
+    this.audio = new AudioController(wc, { broadcast });
+    this.media = new MediaController({ broadcast, now: () => this.now(), onSample: sample => ctx.link.send(P.T.MEDIA, this.id, sample) });
+    this._wirePreload(wc);
+    if (this.spec.audio === 'spatial') {
+      // Silent until the capture runs: before getDisplayMedia resolves, local playback is not muted.
+      this.captureState = 'starting';
+      this.audio.setSpatialHold(true);
+    }
     this.audio.set(false, this.spec.volume);
-    this.media = new MediaController(wc, {
-      worldId: ctx.worldId,
-      log: ctx.log,
-      onSample: sample => ctx.link.send(P.T.MEDIA, this.id, sample),
-    });
-    this.media.start();
+    this._updateSampling();
 
     this.load(this.spec.url || 'about:blank');
     if (this.spec.audio === 'spatial') this.startCapture();
+  }
+
+  /** IPC with the screen preload of every frame (page/screen-preload.js). */
+  _wirePreload(wc) {
+    // A document's preload asks for the current state as soon as it starts (before page scripts).
+    wc.ipc.handle(CHANNELS.INIT, event => {
+      const frame = event && event.senderFrame;
+      if (frame && !frame.parent) {
+        this.mainInitAt = this.now();
+        if (this.audio.awaitingPage) this.audio.setAwaitingPage(false);
+      }
+      return { volume: this.audio.volume, sampling: this.media.sampling };
+    });
+    wc.ipc.on(CHANNELS.MEDIA, (event, payload) => this.media.onFrameSample(event && event.senderFrame, payload));
+    wc.on('did-start-navigation', (details, url, isInPlace, isMainFrame) => {
+      const main = details && typeof details.isMainFrame === 'boolean' ? details.isMainFrame : !!isMainFrame;
+      const sameDoc = details && typeof details.isSameDocument === 'boolean' ? details.isSameDocument : !!isInPlace;
+      if (main && !sameDoc) this.navStartAt = this.now();
+    });
+  }
+
+  /** Sends to the preload of every frame (frames being torn down are skipped). */
+  broadcast(channel, value) {
+    if (this.destroyed || !this.wc || this.wc.isDestroyed()) return;
+    let frames;
+    try {
+      frames = this.wc.mainFrame.framesInSubtree;
+    } catch (e) {
+      return; // main frame being swapped: the new document asks for the state itself (akw-init)
+    }
+    for (const f of frames) {
+      try {
+        if (!f.detached && !(typeof f.isDestroyed === 'function' && f.isDestroyed())) f.send(channel, value);
+      } catch (e) { /* frame went away */ }
+    }
   }
 
   _wireNavigationPolicy(wc) {
@@ -125,11 +191,25 @@ class Screen {
         this.blocked(v, 'will-redirect');
       }
     });
-    // No child windows (ADR-013): a popup becomes a navigation of this screen if the policy allows it.
+    // No child windows (ADR-013): a popup becomes a navigation of this screen if the policy allows it,
+    // and only right after real input on this screen. Electron has no popup blocker, so without the
+    // input rule any (ad) iframe could take the whole screen over at any time, on every client
+    // independently, away from the server's URL authority.
     wc.setWindowOpenHandler(details => {
+      const recentInput = this.now() - this.lastActivationAt <= POPUP_AFTER_INPUT_MS;
+      if (!recentInput) {
+        let host = '';
+        try { host = new URL(details.url).hostname; } catch (e) { /* malformed: reported as is */ }
+        this.blocked({ url: details.url, host, reason: 'popup' }, 'window-open');
+        return { action: 'deny' };
+      }
       const v = check(details.url, 'main');
-      if (v.ok) setImmediate(() => this.load(v.url));
-      else this.blocked(v, 'window-open');
+      if (v.ok) {
+        this.lastActivationAt = -Infinity; // one popup per input, like Chromium's activation consumption
+        setImmediate(() => this.load(v.url));
+      } else {
+        this.blocked(v, 'window-open');
+      }
       return { action: 'deny' };
     });
   }
@@ -140,7 +220,19 @@ class Screen {
     wc.on('did-navigate', () => {
       this.media.reset();
       this.mapper.reset();
+      // Like Chromium's user activation, input on the old document does not carry over to a new one.
+      this.lastActivationAt = -Infinity;
+      // A new document: if its preload has not taken the gain yet (it asks at document start, which
+      // can arrive before or after this event), engine-mute until it has (audio.js awaitingPage).
+      if (this.mainInitAt < this.navStartAt) this.audio.setAwaitingPage(true);
       changed();
+    });
+    wc.on('did-stop-loading', () => {
+      // Still waiting for the main document's preload: ask it again (covers an INIT that raced a
+      // navigation). If no preload answers, the screen stays engine-muted: fail safe.
+      if (this.audio.awaitingPage) {
+        try { wc.mainFrame.send(CHANNELS.REINIT); } catch (e) { /* frame gone */ }
+      }
     });
     wc.on('did-navigate-in-page', (event, url, isMainFrame) => { if (isMainFrame) changed(); });
     wc.on('cursor-changed', (event, type) => {
@@ -194,6 +286,8 @@ class Screen {
    */
   load(url) {
     if (this.destroyed) return;
+    const gen = ++this.navGen;
+    this.lastActivationAt = -Infinity; // a navigation the host starts is not a user gesture on the next page
     const v = checkNavigation(url, this.ctx.policy(), 'main', { allowFile: this.ctx.allowFile });
     if (!v.ok) {
       this.refuse(v, 'navigate');
@@ -203,8 +297,10 @@ class Screen {
       this._loadChecked(v.url);
       return;
     }
-    resolveVerdict(this.sessionEntry.session, v.host).then(r => {
-      if (this.destroyed) return;
+    const entry = this.sessionEntry;
+    const lookup = entry.verdict ? entry.verdict(v.host, v.url) : resolveVerdict(entry.session, v.host);
+    lookup.then(r => {
+      if (this.destroyed || gen !== this.navGen) return; // a newer navigation was requested meanwhile
       if (r.ok) this._loadChecked(v.url);
       else this.refuse({ ok: false, reason: r.reason, host: v.host, url: v.url }, 'navigate');
     });
@@ -222,6 +318,7 @@ class Screen {
 
   navigate(cmd) {
     if (cmd.url) return this.load(cmd.url);
+    this.navGen++; // back/forward/reload/stop also cancel a load still waiting for its DNS answer
     const nh = this.wc.navigationHistory;
     switch (cmd.action) {
       case 'back': if (nh.canGoBack()) nh.goBack(); break;
@@ -235,6 +332,7 @@ class Screen {
 
   input(evt) {
     const events = this.mapper.map(evt);
+    if (evt.type === 'mouseUp' || evt.type === 'keyDown') this.lastActivationAt = this.now();
     if (events.length === 0) return;
     // sendInputEvent needs a focused view for keyboard input (web-contents.md); focusing per event
     // is cheap and keeps several offscreen screens independent.
@@ -262,6 +360,12 @@ class Screen {
   }
 
   resize(cmd) {
+    const tooBig = pageSizeProblem(cmd.width, cmd.height);
+    if (tooBig) {
+      // The page keeps its current size; a bigger one could not travel as one FRAME.
+      this.ctx.emitEvent(this.id, 'screen-limit', tooBig);
+      return;
+    }
     this.spec = Object.assign({}, this.spec, { width: cmd.width, height: cmd.height });
     this.mapper.setSize(cmd.width, cmd.height);
     this.win.setContentSize(cmd.width, cmd.height);
@@ -275,13 +379,27 @@ class Screen {
 
   startCapture() {
     const ctx = this.ctx;
-    this.capture = new SpatialCapture({
+    const Capture = ctx.CaptureClass || SpatialCapture;
+    this.capture = new Capture({
       screenWc: this.wc,
       session: this.sessionEntry.session,
       registry: ctx.registry,
       log: ctx.log,
       onPcm: parts => ctx.link.send(P.T.PCM, this.id, parts),
-      onError: detail => ctx.emitEvent(this.id, 'capture-error', { detail }),
+      onStarted: () => {
+        if (this.destroyed || this.captureState !== 'starting') return;
+        // The capture now keeps local playback silent (enableLocalEcho false): lift the engine mute.
+        this.captureState = 'active';
+        this.audio.setSpatialHold(false);
+      },
+      onError: detail => {
+        if (this.destroyed) return;
+        // Engine-muted again: after a capture stops, the page would play through the speakers. The
+        // screen stays muted until the game re-creates it (in OS mode, ADR-008 fallback).
+        this.captureState = 'failed';
+        this.audio.setSpatialHold(true);
+        ctx.emitEvent(this.id, 'capture-error', { detail });
+      },
     });
     this.capture.start();
   }
@@ -315,11 +433,13 @@ class Screen {
     this._updateSampling();
   }
 
-  /** MEDIA sampling is only useful while someone can see or hear the screen. */
+  /**
+   * MEDIA sampling (4 Hz, in the preloads) on every painted or audible screen: followers need their
+   * own clock to steer, not only the controller.
+   */
   _updateSampling() {
     if (this.destroyed) return;
-    if (this.painting || this.audible) this.media.start();
-    else this.media.stop();
+    this.media.setSampling(this.painting || this.audible);
   }
 
   /** Internal address reached (detector): stop and blank the screen. */
@@ -333,8 +453,14 @@ class Screen {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    if (this.media) this.media.stop();
+    if (this.media) this.media.reset();
     if (this.capture) this.capture.stop();
+    if (this.wc && !this.wc.isDestroyed()) {
+      try {
+        this.wc.ipc.removeHandler(CHANNELS.INIT);
+        this.wc.ipc.removeAllListeners(CHANNELS.MEDIA);
+      } catch (e) { /* closing anyway */ }
+    }
     this.ctx.scheduler.remove(this.id);
     this.ctx.byWebContents.delete(this.wcId);
     if (this.win && !this.win.isDestroyed()) this.win.destroy();
@@ -352,22 +478,52 @@ class ScreenManager {
       emitEvent: (screenId, kind, detail) => this.emitEvent(screenId, kind, detail),
     });
     this.screens = new Map();
-    this.limiter = new EventLimiter();
+    this.limiter = ctx.limiter || new EventLimiter();
+    this.reportTimer = null;
   }
 
+  /**
+   * Sends an EVENT. Only page-triggerable kinds are rate limited (limiter.js); what is dropped is
+   * reported every SUPPRESSED_REPORT_MS as one EVENT of the same kind with detail {suppressed: n}.
+   */
   emitEvent(screenId, kind, detail) {
-    if (!this.limiter.allow(screenId)) return;
+    if (!this.limiter.allow(screenId, kind)) {
+      this._scheduleSuppressedReport();
+      return;
+    }
     this.ctx.link.send(P.T.EVENT, screenId, { kind, detail });
+  }
+
+  _scheduleSuppressedReport() {
+    if (this.reportTimer) return;
+    this.reportTimer = setTimeout(() => {
+      this.reportTimer = null;
+      this.reportSuppressed();
+    }, SUPPRESSED_REPORT_MS);
+    if (typeof this.reportTimer.unref === 'function') this.reportTimer.unref();
+  }
+
+  /** Sends the pending {suppressed: n} counts (also called by tests). */
+  reportSuppressed() {
+    for (const s of this.limiter.takeSuppressed()) {
+      if (s.screenId !== 0 && !this.screens.has(s.screenId)) continue;
+      this.ctx.link.send(P.T.EVENT, s.screenId, { kind: s.kind, detail: { suppressed: s.count } });
+    }
   }
 
   create(id, spec) {
     if (id === 0) throw new Error('screenId 0 is reserved for host messages');
     if (this.screens.has(id)) this.destroy(id); // CREATE resets a screen
-    if (this.screens.size >= MAX_SCREENS) {
-      this.emitEvent(id, 'load-error', { reason: 'screen-limit', limit: MAX_SCREENS });
+    const tooBig = pageSizeProblem(spec.width, spec.height);
+    if (tooBig) {
+      this.emitEvent(id, 'screen-limit', tooBig);
       return null;
     }
-    const s = new Screen(id, spec, this.ctx);
+    if (this.screens.size >= MAX_SCREENS) {
+      this.emitEvent(id, 'screen-limit', { reason: 'count', limit: MAX_SCREENS });
+      return null;
+    }
+    const s = new (this.ctx.ScreenClass || Screen)(id, spec, this.ctx);
     this.screens.set(id, s);
     try {
       s.open();
@@ -397,6 +553,8 @@ class ScreenManager {
 
   destroyAll() {
     for (const id of [...this.screens.keys()]) this.destroy(id);
+    if (this.reportTimer) clearTimeout(this.reportTimer);
+    this.reportTimer = null;
   }
 
   setPolicyNow() {
@@ -411,6 +569,12 @@ class ScreenManager {
       }
     }
   }
+}
+
+/** Real offscreen window; tests pass ctx.createWindow instead, so this module loads without Electron. */
+function createBrowserWindow(options) {
+  const { BrowserWindow } = require('electron');
+  return new BrowserWindow(options);
 }
 
 module.exports = { Screen, ScreenManager, MAX_SCREENS };

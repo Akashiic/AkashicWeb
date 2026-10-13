@@ -4,7 +4,10 @@
 //
 // Rules: nothing but WELCOME, PING and QUIT is accepted before WELCOME; screen messages for an unknown
 // screen are dropped; unknown types are ignored (forward compatibility within a major); a malformed
-// message is logged and dropped, never fatal (only broken framing closes the link, see link.js).
+// message is logged and dropped (only broken framing closes the link, see link.js).
+// Two exceptions fail closed instead of being dropped, because both carry the site policy:
+//  - a malformed WELCOME is a failed handshake (onBadWelcome; the host exits with EXIT.HANDSHAKE);
+//  - a malformed POLICY switches the host to deny-all (onBadPolicy), it never keeps an older policy.
 
 const P = require('./protocol');
 const M = require('./messages');
@@ -13,8 +16,8 @@ const LOG_EVERY = 100; // after the first few, log one in N rejections so a floo
 
 class Router {
   /**
-   * deps: screens {create(id, spec), get(id), destroy(id)}, onWelcome(welcome), onPolicy(policy),
-   * onPing(screenId, nonce), onQuit(), log
+   * deps: screens {create(id, spec), get(id), destroy(id)}, onWelcome(welcome), onBadWelcome(error),
+   * onPolicy(policy), onBadPolicy(error), onPing(screenId, nonce), onQuit(), log
    */
   constructor(deps) {
     this.d = deps;
@@ -33,11 +36,20 @@ class Router {
   _route(msg) {
     const T = P.T;
     switch (msg.type) {
-      case T.WELCOME:
+      case T.WELCOME: {
         if (this.welcomed) return this._reject(msg, 'duplicate-welcome');
+        let welcome;
+        try {
+          welcome = M.parseWelcome(P.decodeJson(msg.payload));
+        } catch (err) {
+          this._reject(msg, err.code || err.message || String(err));
+          this.d.onBadWelcome(err);
+          return undefined;
+        }
         this.welcomed = true;
-        this.d.onWelcome(M.parseWelcome(P.decodeJson(msg.payload)));
+        this.d.onWelcome(welcome);
         return undefined;
+      }
       case T.PING:
         this.d.onPing(msg.screenId, M.parsePing(P.decodeJson(msg.payload)).nonce);
         return undefined;
@@ -49,9 +61,18 @@ class Router {
     }
     if (!this.welcomed) return this._reject(msg, 'before-welcome');
     switch (msg.type) {
-      case T.POLICY:
-        this.d.onPolicy(M.parsePolicy(P.decodeJson(msg.payload)));
+      case T.POLICY: {
+        let policy;
+        try {
+          policy = M.parsePolicy(P.decodeJson(msg.payload));
+        } catch (err) {
+          this._reject(msg, err.code || err.message || String(err));
+          this.d.onBadPolicy(err);
+          return undefined;
+        }
+        this.d.onPolicy(policy);
         return undefined;
+      }
       case T.CREATE:
         if (msg.screenId === 0) return this._reject(msg, 'screen-0');
         this.d.screens.create(msg.screenId, M.parseCreate(P.decodeJson(msg.payload)));

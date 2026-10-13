@@ -1,4 +1,8 @@
 'use strict';
+// First statement on purpose: the AKW_TOKEN fallback is copied and removed from the environment before
+// any other code runs, so no child process that Chromium starts later can inherit it (token.js).
+const ENV_TOKEN = require('./token').takeEnvToken(process.env);
+
 // AkashicWebHost: the out-of-process browser of the AkashicWeb mod (ADR-001/002). It runs inside the
 // official, unmodified Electron build from resources/app/, renders every in-world screen offscreen
 // and talks to exactly one Minecraft client over one loopback TCP connection (docs/PROTOCOL.md).
@@ -10,23 +14,21 @@
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
-const crypto = require('crypto');
 const { app, Menu } = require('electron');
 const pkg = require('../package.json');
 const P = require('./protocol');
-const { EXIT, parseArgs, findForbiddenSwitches } = require('./args');
+const { EXIT, parseArgs, findDisallowedArgs, findForbiddenEnv } = require('./args');
 const { readToken } = require('./token');
-const { createLogger } = require('./log');
+const { createLogger, captureStdio, stdStream } = require('./log');
 const { Link } = require('./link');
 const { FrameScheduler, imagePayloads } = require('./frames');
 const { Router } = require('./router');
-const { stockChromeUserAgent } = require('./messages');
+const { stockChromeUserAgent, denyAllPolicy } = require('./messages');
 const { monoMs } = require('./clock');
 const { CaptureRegistry } = require('./capture');
 const { SessionFactory } = require('./sessions');
 const { ScreenManager } = require('./screens');
 
-const ISOLATED_WORLD_ID = 1279; // >= 1000 as Electron recommends; 999 is contextIsolation's world
 const PARENT_POLL_MS = 2000;
 const CONNECT_TIMEOUT_MS = 5000;
 const WELCOME_TIMEOUT_MS = 10000;
@@ -37,10 +39,11 @@ const EXIT_GRACE_MS = 3000;
 const state = {
   link: null,
   screens: null,
+  sessions: null,
   scheduler: null,
   shuttingDown: false,
   timers: [],
-  policy: { mode: 'blocklist', allow: [], block: [] },
+  policy: denyAllPolicy(), // until WELCOME carries a readable policy (fail closed)
   userAgent: null,
   locale: 'pt-BR',
   frameErrors: 0,
@@ -53,11 +56,24 @@ let args;
 try {
   args = parseArgs(process.argv);
 } catch (err) {
-  process.stderr.write('AkashicWebHost: ' + err.message + '\n');
+  const stderr = stdStream('stderr'); // no log file yet: the arguments that name it are broken
+  try { if (stderr) stderr.write('AkashicWebHost: ' + err.message + '\n'); } catch (e) { /* nowhere to report */ }
   app.exit(EXIT.BAD_ARGS);
 }
 
-const log = createLogger({ file: args && args.logFile, echo: app.isPackaged ? null : process.stderr });
+// The host owns its output: the --akw-log file is size-capped (log.js); the game stores the host's
+// stdout/stderr without a cap. JavaScript writes to stdout/stderr go into the log (echoed only in
+// unpackaged development/test runs), and Chromium's own logging is turned down to FATAL, which also
+// reaches the child processes (native writes cannot be redirected from JavaScript; measured: the lines
+// logged before this point remain).
+const devStderr = app.isPackaged ? null : stdStream('stderr');
+// The logger's own echo (development and test runs only), bound before stdio is captured below.
+const rawStderr = devStderr ? { write: devStderr.write.bind(devStderr) } : null;
+const log = createLogger({ file: args && args.logFile, echo: rawStderr });
+captureStdio(log, { echo: !app.isPackaged });
+if (!app.commandLine.hasSwitch('enable-logging') && !app.commandLine.hasSwitch('log-level')) {
+  app.commandLine.appendSwitch('log-level', '3');
+}
 
 // Electron shows a modal error dialog for uncaught main-process exceptions; on a player's PC that
 // would pop over the game, so log and exit instead and let the game relaunch us. Installed first so
@@ -69,11 +85,16 @@ process.on('uncaughtException', err => {
 process.on('unhandledRejection', err => log.warn('unhandled rejection', err));
 for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => shutdown('signal-' + sig, EXIT.OK));
 
-const forbidden = args ? findForbiddenSwitches(process.argv.concat(process.execArgv || []), process.platform) : [];
+// Packaged (renamed, installed) hosts accept only --akw-* arguments; unpackaged test runs use a denylist.
+const forbidden = args
+  ? findDisallowedArgs(process.argv.slice(1).concat(process.execArgv || []), { packaged: app.isPackaged, platform: process.platform })
+    .concat(findForbiddenEnv(process.env, app.isPackaged))
+  : [];
 const allowFile = !!(args && args.testAllowFile && !app.isPackaged);
 
 if (args && forbidden.length > 0) {
-  log.error('refusing to run with forbidden switches: ' + forbidden.join(', '));
+  log.error('refusing to run with forbidden ' + (app.isPackaged ? 'arguments (packaged host: only --akw-* is accepted)' : 'switches')
+    + ': ' + forbidden.join(', '));
   app.exit(EXIT.FORBIDDEN_SWITCH);
 } else if (args && configureApp()) {
   main().catch(err => {
@@ -99,6 +120,9 @@ function configureApp() {
   // key would toggle a public screen, and Windows would show our page title in its overlay).
   app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,MediaSessionService');
   app.commandLine.appendSwitch('lang', 'pt-BR'); // WELCOME's locale also sets Accept-Language per session
+  // FRAME width/height must equal the CREATE/RESIZE size on any display scaling (Windows 125%/150%):
+  // device scale factor 1 for the whole process, on top of offscreen.deviceScaleFactor in screens.js.
+  app.commandLine.appendSwitch('force-device-scale-factor', '1');
   if (!args.gpu) app.disableHardwareAcceleration();
   // Every renderer sandboxed, whatever a window asks for (ADR-013). The one exception is a Linux
   // tier-2 / test launch with --no-sandbox (refused on Windows by args.js): Chromium then cannot
@@ -133,8 +157,7 @@ async function main() {
   log.info('AkashicWebHost ' + pkg.version + ' electron ' + process.versions.electron + ' chrome ' + process.versions.chrome
     + ' ' + process.platform + '-' + process.arch + (args.gpu ? ' gpu' : ' software') + (allowFile ? ' TEST-allow-file' : ''));
   watchParent();
-  const tokenResult = await readToken(stdinOrNull(), process.env);
-  delete process.env.AKW_TOKEN; // renderers and helpers inherit the environment; the token stays here
+  const tokenResult = await readToken(stdinOrNull(), { AKW_TOKEN: ENV_TOKEN });
   if (!tokenResult) {
     log.error('no valid token on stdin or in AKW_TOKEN');
     return shutdown('no-token', EXIT.NO_TOKEN);
@@ -171,8 +194,13 @@ function wire(socket, token) {
     },
   });
   state.link = link;
-  state.scheduler = new FrameScheduler({ blocked: () => link.blocked || link.closed, send: sendFrame });
-  const sessions = new SessionFactory({
+  state.scheduler = new FrameScheduler({
+    blocked: () => link.blocked || link.closed,
+    send: sendFrame,
+    // The scheduler already asked for a full frame next time; only the first few are logged.
+    onError: (screenId, err) => { if (++state.frameErrors <= 5) log.warn('frame of screen ' + screenId + ' dropped: ' + err.message); },
+  });
+  const sessions = state.sessions = new SessionFactory({
     policy: () => state.policy,
     allowFile,
     userAgent: () => state.userAgent || app.userAgentFallback,
@@ -205,9 +233,6 @@ function wire(socket, token) {
     registry,
     policy: () => state.policy,
     allowFile,
-    worldId: ISOLATED_WORLD_ID,
-    // Per-run random key for the state that host scripts keep inside pages (inject.js).
-    pageKey: '__akw' + crypto.randomBytes(8).toString('hex'),
     log,
   });
   router = new Router({
@@ -227,9 +252,24 @@ function wire(socket, token) {
         + welcome.policy.block.length + ' block), locale ' + welcome.locale);
       return undefined;
     },
+    onBadWelcome: err => {
+      // A WELCOME the host cannot read is a failed handshake, not a reason to run with a guessed policy.
+      clearTimeout(welcomeTimer);
+      log.error('malformed WELCOME: ' + (err && (err.code || err.message)));
+      shutdown('bad-welcome', EXIT.HANDSHAKE);
+    },
     onPolicy: policy => {
       state.policy = policy;
       state.screens.setPolicyNow();
+    },
+    onBadPolicy: err => {
+      // The game meant to change the policy; keeping the old one could keep a looser one. Deny all
+      // until a readable POLICY arrives, and tell the game.
+      const error = String((err && (err.code || err.message)) || 'malformed').slice(0, 120);
+      log.warn('malformed POLICY (' + error + '): switching to deny-all');
+      state.policy = denyAllPolicy();
+      state.screens.setPolicyNow();
+      state.screens.emitEvent(0, 'policy-error', { error, applied: 'deny-all' });
     },
     onPing: (screenId, nonce) => link.send(P.T.PONG, screenId, { nonce, hostTimeMs: monoMs() }),
     onQuit: () => shutdown('quit', EXIT.OK),
@@ -240,6 +280,8 @@ function wire(socket, token) {
 
   link.send(P.T.HELLO, 0, {
     token,
+    // The game's stale-host sweep needs the host's own PID; Java 8 on Windows cannot read a child's PID.
+    pid: process.pid,
     protoMajor: P.PROTO_MAJOR,
     protoMinor: P.PROTO_MINOR,
     hostVersion: pkg.version,
@@ -251,25 +293,23 @@ function wire(socket, token) {
   log.info('connected, HELLO sent');
 }
 
+/** Sends one frame; exceptions propagate to the scheduler, which requests a full frame next time. */
 function sendFrame(screenId, image, rect) {
   const link = state.link;
-  try {
-    const size = image.getSize();
-    const payloads = imagePayloads(image, size.width, size.height, rect);
-    let ok = true;
-    for (const parts of payloads) ok = link.send(P.T.FRAME, screenId, parts);
-    return ok;
-  } catch (err) {
-    if (++state.frameErrors <= 5) log.warn('frame dropped: ' + err.message);
-    return !link.blocked;
-  }
+  const size = image.getSize();
+  const payloads = imagePayloads(image, size.width, size.height, rect);
+  let ok = true;
+  for (const parts of payloads) ok = link.send(P.T.FRAME, screenId, parts);
+  return ok;
 }
 
 function logStats() {
   const s = state.scheduler ? state.scheduler.stats : {};
+  const p = state.sessions ? state.sessions.stats : {};
   log.info('stats: screens=' + (state.screens ? state.screens.screens.size : 0) + ' frames offered=' + s.offered
-    + ' sent=' + s.sent + ' merged=' + s.merged + ' bytesOut=' + (state.link ? state.link.bytesOut : 0)
-    + ' eventsDropped=' + (state.screens ? state.screens.limiter.dropped : 0));
+    + ' sent=' + s.sent + ' merged=' + s.merged + ' errors=' + s.errors + ' bytesOut=' + (state.link ? state.link.bytesOut : 0)
+    + ' eventsDropped=' + (state.screens ? state.screens.limiter.dropped : 0)
+    + ' partitions created=' + p.created + ' reused=' + p.reused + ' broken=' + p.broken);
 }
 
 // A GPU or network service crash is restarted by Chromium; a crash loop means the host cannot work,
@@ -310,6 +350,11 @@ function stdinOrNull() {
 }
 
 function watchParent() {
+  if (args.parentPid === 0) {
+    // 0 = the game could not tell its own PID: rely on socket EOF alone.
+    log.info('parent PID unknown: parent poll disabled');
+    return;
+  }
   const check = () => {
     try {
       process.kill(args.parentPid, 0);

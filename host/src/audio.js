@@ -1,87 +1,69 @@
 'use strict';
 // OS-mode audio (ADR-007): Chromium plays to the default device; the game pushes one gain
-// (distance x Minecraft master x records) that the page applies to every media element, and the
-// engine-level mute (webContents.setAudioMuted) is the only hard guarantee. Muting never depends on
-// page JS: volume 0 also mutes at the engine.
+// (distance x Minecraft master x records) that the screen preload (page/screen-preload.js) applies to
+// every media element of every frame from document start, and the engine-level mute
+// (webContents.setAudioMuted) is the only hard guarantee. Muting never depends on page JS.
+//
+// The engine mute is on when any of these holds (engineMuted):
+//  - the game muted the screen, or its gain is 0;
+//  - SPATIAL capture is not running (from CREATE until the capture has started, and after it stopped
+//    or failed): local playback is then not suppressed by the capture (enableLocalEcho false), so the
+//    page would play through the speakers at full page volume (wave-1 review);
+//  - the current document's preload has not yet taken the gain (awaitingPage) and the gain is below 1:
+//    whatever cannot be turned down yet is silenced instead (fail safe if the preload does not run).
 
-/**
- * Page-side, serialised and run in every frame (see inject.js). Installs once per document under
- * `key`, then only updates the target volume. Re-applies every 100 ms because sites rewrite
- * element.volume, rescans open shadow roots every second, and tracks new elements immediately via a
- * MutationObserver and capture-phase media events. Detached `new Audio()` objects and WebAudio are
- * not reachable from here; only the engine mute covers them.
- */
-function akwVolume(key, volume) {
-  const g = globalThis;
-  let st = g[key];
-  if (!st) {
-    st = { v: 1, els: new Set() };
-    Object.defineProperty(g, key, { value: st, enumerable: false, configurable: false, writable: false });
-    const isMedia = n => !!n && (n.tagName === 'VIDEO' || n.tagName === 'AUDIO');
-    const enforce = el => {
-      try {
-        if (Math.abs(el.volume - st.v) > 0.001) el.volume = st.v;
-      } catch (e) { /* element in a bad state; next tick retries */ }
-    };
-    const track = el => {
-      st.els.add(el);
-      enforce(el);
-    };
-    const scan = root => {
-      root.querySelectorAll('video, audio').forEach(track);
-      root.querySelectorAll('*').forEach(n => { if (n.shadowRoot) scan(n.shadowRoot); });
-    };
-    st.scan = () => { if (g.document) scan(g.document); };
-    st.enforceAll = () => {
-      st.els.forEach(el => {
-        if (!el.isConnected && el.paused) st.els.delete(el);
-        else enforce(el);
-      });
-    };
-    if (g.document) {
-      const onEvent = e => { if (isMedia(e.target)) track(e.target); };
-      ['play', 'playing', 'loadstart', 'loadedmetadata', 'volumechange'].forEach(t => g.document.addEventListener(t, onEvent, true));
-      if (typeof g.MutationObserver === 'function') {
-        new g.MutationObserver(records => {
-          records.forEach(r => r.addedNodes.forEach(n => {
-            if (isMedia(n)) track(n);
-            else if (n.querySelectorAll) n.querySelectorAll('video, audio').forEach(track);
-          }));
-        }).observe(g.document, { childList: true, subtree: true });
-      }
-    }
-    let ticks = 0;
-    setInterval(() => {
-      st.enforceAll();
-      if (++ticks % 10 === 0) st.scan();
-    }, 100);
-  }
-  st.v = Math.min(1, Math.max(0, Number(volume) || 0));
-  st.scan();
-  st.enforceAll();
-  return st.els.size;
-}
+const { CHANNELS } = require('./page/screen-preload');
 
-function volumeScript(key, volume) {
-  return '(' + akwVolume.toString() + ')(' + JSON.stringify(key) + ',' + JSON.stringify(volume) + ')';
+/** Pure engine-mute decision. */
+function engineMuted(s) {
+  return !!(s.muted || !(s.volume > 0) || s.spatialHold || (s.awaitingPage && s.volume < 1));
 }
 
 /** Engine mute plus page volume for one screen. */
 class AudioController {
-  constructor(wc, injector, key) {
+  /**
+   * @param wc webContents of the screen (setAudioMuted, isDestroyed)
+   * @param options broadcast(channel, value): sends to every frame's preload
+   */
+  constructor(wc, options = {}) {
     this.wc = wc;
-    this.injector = injector;
-    this.key = key;
+    this.broadcast = options.broadcast || (() => {});
     this.muted = false;
     this.volume = 1;
+    this.spatialHold = false;
+    this.awaitingPage = false;
+    this.engine = null; // last value given to setAudioMuted
   }
 
+  /** Game state from CREATE/AUDIO: engine mute decision, then the gain to every frame. */
   set(muted, volume) {
     this.muted = !!muted;
-    this.volume = Math.min(1, Math.max(0, volume));
-    if (!this.wc.isDestroyed()) this.wc.setAudioMuted(this.muted || this.volume <= 0);
-    this.injector.set('volume', volumeScript(this.key, this.volume));
+    const v = Number(volume);
+    this.volume = Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
+    this._apply();
+    this.broadcast(CHANNELS.VOLUME, this.volume);
+  }
+
+  setSpatialHold(on) {
+    this.spatialHold = !!on;
+    this._apply();
+  }
+
+  setAwaitingPage(on) {
+    this.awaitingPage = !!on;
+    this._apply();
+  }
+
+  isEngineMuted() {
+    return this.engine === true;
+  }
+
+  _apply() {
+    const m = engineMuted(this);
+    if (m === this.engine || this.wc.isDestroyed()) return;
+    this.engine = m;
+    this.wc.setAudioMuted(m);
   }
 }
 
-module.exports = { akwVolume, volumeScript, AudioController };
+module.exports = { engineMuted, AudioController };

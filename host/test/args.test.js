@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
-const { parseArgs, findForbiddenSwitches, EXIT, ArgError } = require('../src/args');
+const { parseArgs, findForbiddenSwitches, findDisallowedArgs, findForbiddenEnv, EXIT, ArgError } = require('../src/args');
 
 const ABS = path.resolve('/tmp/akw-profile');
 const LOG = path.resolve('/tmp/akw.log');
@@ -23,6 +23,13 @@ test('optional flags', () => {
   assert.strictEqual(a.gpu, true);
   assert.strictEqual(a.testAllowFile, true);
   assert.strictEqual(parseArgs(base.slice(0, 4)).logFile, null);
+});
+
+test('--akw-parent-pid=0 means "unknown" (the parent poll is skipped), not an error', () => {
+  const a = parseArgs(base.map(s => (s.startsWith('--akw-parent-pid=') ? '--akw-parent-pid=0' : s)));
+  assert.strictEqual(a.parentPid, 0);
+  assert.throws(() => parseArgs(base.map(s => (s.startsWith('--akw-parent-pid=') ? '--akw-parent-pid=00' : s))), /bad-parent-pid/);
+  assert.throws(() => parseArgs(base.map(s => (s.startsWith('--akw-parent-pid=') ? '--akw-parent-pid=-1' : s))), /bad-parent-pid/);
 });
 
 test('rejects missing or invalid values with a code', () => {
@@ -61,6 +68,47 @@ test('forbidden switches: --no-sandbox only refused on Windows, any spelling', (
 
 test('non-switch arguments and look-alikes are not flagged', () => {
   assert.deepStrictEqual(findForbiddenSwitches(['--inspector-mode', '--debugging', 'inspect', '--akw-log=/tmp/--inspect'], 'linux'), []);
+});
+
+test('packaged host: only --akw-* arguments are accepted (allowlist), anything else is named', () => {
+  const javaArgs = base.slice(1).concat(['--akw-gpu']);
+  assert.deepStrictEqual(findDisallowedArgs(javaArgs, { packaged: true, platform: 'win32' }), []);
+  for (const [extra, name] of [
+    ['--host-resolver-rules=MAP * 127.0.0.1', 'host-resolver-rules'],
+    ['--proxy-server=http://127.0.0.1:8080', 'proxy-server'],
+    ['--ignore-certificate-errors', 'ignore-certificate-errors'],
+    ['--renderer-cmd-prefix=calc.exe', 'renderer-cmd-prefix'],
+    ['--no-sandbox', 'no-sandbox'],
+    ['--enable-logging', 'enable-logging'],
+    ['--log-file=C:\\x.log', 'log-file'],
+    ['--js-flags=--allow-natives-syntax', 'js-flags'],
+    ['/remote-debugging-port=9222', 'remote-debugging-port'],
+    ['-inspect', 'inspect'],
+    ['C:\\some\\app', '<argument>'],
+    ['--AKW-PORT=1', 'AKW-PORT'],
+    ['--akw_port=1', 'akw_port'],
+  ]) {
+    assert.deepStrictEqual(findDisallowedArgs(javaArgs.concat([extra]), { packaged: true, platform: 'win32' }), [name], extra);
+  }
+  // Node options reach process.execArgv; they are not --akw-* either.
+  assert.deepStrictEqual(findDisallowedArgs(javaArgs.concat(['--inspect=9229']), { packaged: true, platform: 'linux' }), ['inspect']);
+});
+
+test('unpackaged (test) host: permissive denylist; the test harness switches still pass', () => {
+  const harness = ['/path/to/host', ...base.slice(1), '--akw-test-allow-file', '--host-resolver-rules=MAP a.test 127.0.0.1',
+    '--proxy-server=http://127.0.0.1:1', '--force-device-scale-factor=2', '--no-sandbox', '--unsafely-treat-insecure-origin-as-secure=http://a.test'];
+  assert.deepStrictEqual(findDisallowedArgs(harness, { packaged: false, platform: 'linux' }), []);
+  assert.deepStrictEqual(findDisallowedArgs(harness.slice(1), { packaged: true, platform: 'linux' }).length, 5, 'none of them in a packaged host');
+  for (const s of ['--ignore-certificate-errors', '--disable-site-isolation-trials',
+    '--renderer-cmd-prefix=gdb', '--gpu-launcher=x', '--utility-cmd-prefix=x', '--browser-subprocess-path=/x', '--js-flags=--x']) {
+    assert.strictEqual(findDisallowedArgs([s], { packaged: false, platform: 'linux' }).length, 1, s);
+  }
+});
+
+test('packaged host: logging and Node environment variables are refused, unpackaged ignores them', () => {
+  assert.deepStrictEqual(findForbiddenEnv({ PATH: 'x', ELECTRON_ENABLE_LOGGING: '1', NODE_OPTIONS: '--inspect' }, true), ['ELECTRON_ENABLE_LOGGING', 'NODE_OPTIONS']);
+  assert.deepStrictEqual(findForbiddenEnv({ ELECTRON_ENABLE_LOGGING: '1' }, false), []);
+  assert.deepStrictEqual(findForbiddenEnv({ PATH: 'x' }, true), []);
 });
 
 test('exit codes are stable (HostSupervisor maps them)', () => {

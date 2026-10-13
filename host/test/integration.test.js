@@ -55,7 +55,7 @@ function titleOf(game, screenId, pred, label, timeoutMs = 8000, since = 0) {
 function prepareSite(game) {
   const site = path.join(game.dir, 'site');
   fs.mkdirSync(site, { recursive: true });
-  for (const f of ['page.html', 'page2.html', 'frame.html']) fs.copyFileSync(path.join(__dirname, 'fixtures', f), path.join(site, f));
+  for (const f of fs.readdirSync(path.join(__dirname, 'fixtures'))) fs.copyFileSync(path.join(__dirname, 'fixtures', f), path.join(site, f));
   fs.writeFileSync(path.join(site, 'tone.wav'), toneWav());
   return pathToFileURL(path.join(site, 'page.html')).href;
 }
@@ -74,7 +74,7 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
   });
 
   const t0 = Date.now();
-  game.spawnHost(port, { extraArgs: ['--akw-test-allow-file', '--host-resolver-rules=MAP rebind.akw.test 127.0.0.1'] });
+  game.spawnHost(port, { extraArgs: ['--akw-test-allow-file', '--host-resolver-rules=MAP rebind.akw.test 127.0.0.1, MAP slow.akw.test 93.184.216.34'] });
 
   await t.test('HELLO carries the stdin token and the engine identity', async () => {
     const hello = await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
@@ -84,6 +84,12 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     assert.strictEqual(hello.json.engine, 'electron');
     assert.match(hello.json.engineVersion, /^44\./);
     assert.match(hello.json.chromeVersion, /^152\./);
+    // HELLO.pid is the host's own browser process (the stale-host sweep needs it on Java 8/Windows).
+    assert.ok(Number.isInteger(hello.json.pid) && hello.json.pid > 0, 'pid ' + hello.json.pid);
+    if (process.platform === 'linux') {
+      const cmd = fs.readFileSync('/proc/' + hello.json.pid + '/cmdline', 'latin1');
+      assert.ok(cmd.includes('--akw-port=' + port) && !cmd.includes('--type='), 'HELLO.pid is the browser process');
+    }
   });
 
   game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: ['blocked.example'] }, locale: 'pt-BR', userAgent: STOCK_UA });
@@ -164,12 +170,45 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     await titleOf(game, 1, title => title.includes('|ta:"a\\nb"|'), 'textarea "a\\nb"', 8000, since);
   });
 
-  await t.test('INPUT: wheel with negative deltaY scrolls down (Chromium sign)', async () => {
+  await t.test('INPUT: keyDown "Space" types nothing itself; with the game\'s char " " exactly one space', async () => {
     const since = game.mark();
-    game.send(P.T.INPUT, 1, { type: 'wheel', x: 320, y: 180, deltaX: 0, deltaY: -240 });
-    const st = await titleOf(game, 1, title => /\|sy:[1-9]/.test(title), 'scrolled', 8000, since);
+    game.send(P.T.INPUT, 1, { type: 'mouseDown', x: 60, y: 270, button: 'left', clickCount: 1 });
+    game.send(P.T.INPUT, 1, { type: 'mouseUp', x: 60, y: 270, button: 'left', clickCount: 1 });
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: 'End', modifiers: ['control'] }); // caret to the end
+    game.send(P.T.INPUT, 1, { type: 'keyUp', keyCode: 'End', modifiers: ['control'] });
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: 'Space', modifiers: [] });
+    game.send(P.T.INPUT, 1, { type: 'char', text: ' ' });
+    game.send(P.T.INPUT, 1, { type: 'keyUp', keyCode: 'Space', modifiers: [] });
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: ' ', modifiers: [] }); // DOM name of the same key
+    game.send(P.T.INPUT, 1, { type: 'keyUp', keyCode: ' ', modifiers: [] });
+    game.send(P.T.INPUT, 1, { type: 'char', text: 'c' });
+    await titleOf(game, 1, title => title.includes('|ta:"a\\nb c"|'), 'textarea "a\\nb c"', 8000, since);
+  });
+
+  await t.test('INPUT: a char event carrying a paste types every character, line breaks and tab included', async () => {
+    const since = game.mark();
+    // > 64 code points (the wave-1 cap), two line breaks, a tab, accents and an astral character.
+    const paste = 'linha um, ação e café\nsegunda linha\tcom tab 😀\nterceira ' + 'z'.repeat(40);
+    assert.ok([...paste].length > 64);
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: 'a', modifiers: ['control'] }); // select all
+    game.send(P.T.INPUT, 1, { type: 'keyUp', keyCode: 'a', modifiers: ['control'] });
+    game.send(P.T.INPUT, 1, { type: 'char', text: paste });
+    await titleOf(game, 1, title => title.includes('|ta:' + JSON.stringify(paste) + '|'), 'pasted text in the textarea', 8000, since);
+    // Empty the textarea again so the page title (cut at 256 characters in STATE) keeps every field.
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: 'a', modifiers: ['control'] });
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: 'Backspace', modifiers: [] });
+    await titleOf(game, 1, title => title.includes('|ta:""|'), 'textarea emptied', 8000, game.mark());
+  });
+
+  await t.test('INPUT: wheel deltaY < 0 scrolls down and > 0 up, notches x 100', async () => {
+    const since = game.mark();
+    game.send(P.T.INPUT, 1, { type: 'wheel', x: 320, y: 180, deltaX: 0, deltaY: -100 }); // one notch down
+    const st = await titleOf(game, 1, title => /\|sy:[1-9]/.test(title), 'scrolled down', 8000, since);
     results.wheelScrollY = Number(/\|sy:(\d+)/.exec(st.json.title)[1]);
-    game.send(P.T.INPUT, 1, { type: 'wheel', x: 320, y: 180, deltaX: 0, deltaY: 2400 });
+    await sleep(600); // let the smooth scroll settle
+    const settled = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1).pop();
+    results.wheelOneNotchPx = Number(/\|sy:(\d+)/.exec(settled.json.title)[1]);
+    game.send(P.T.INPUT, 1, { type: 'wheel', x: 320, y: 180, deltaX: 0, deltaY: 100 * 30 }); // 30 notches up
     await titleOf(game, 1, title => title.includes('|sy:0|'), 'scrolled back to top', 8000, game.mark());
   });
 
@@ -234,19 +273,26 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     assert.ok(st.json.url.startsWith(pageUrl), 'still on the test page: ' + st.json.url);
   });
 
-  await t.test('response detector: a subresource NAME that resolves to loopback blanks the screen', async () => {
-    // Subresources are not DNS-checked by the host (that is Chromium's Local Network Access job on
-    // public pages). A file: page is not a public context, so here the request does reach the
-    // listener and measure 3 (the details.ip detector) must catch it: stop, blank, EVENT.
+  await t.test('fetch, img, WebSocket and beacon to a NAME resolving to loopback are cancelled before connecting', async () => {
+    // Electron 44 disables Chromium's Local Network Access checks, so denying the LNA permissions
+    // protects nothing (wave-1 review). The host resolves every request's name itself: none of these
+    // subresources may reach the loopback "router". (The details.ip detector, which only notices a
+    // request after it reached the address, is covered by policy.test.js.)
     const since = game.mark();
-    game.send(P.T.NAVIGATE, 1, { url: pageUrl + '#probe=' + internal.port + '&host=rebind.akw.test' });
-    const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'blocked-url' && m.json.detail.reason === 'internal-ip', 8000, 'internal-ip event', since);
-    assert.strictEqual(ev.json.detail.ip, '127.0.0.1');
-    await game.waitFor(m => m.type === P.T.STATE && m.screenId === 1 && m.json.url === 'about:blank', 8000, 'screen blanked', since);
-    results.detectorSinkHits = internal.hits;
-    assert.strictEqual(internal.hits, 1, 'exactly the one request the detector reports');
-    game.send(P.T.NAVIGATE, 1, { url: pageUrl });
-    await titleOf(game, 1, title => title.startsWith('v:'), 'test page reloaded', 8000, game.mark());
+    const hitsBefore = internal.hits;
+    game.send(P.T.NAVIGATE, 1, { url: pageUrl + '#probe=' + internal.port + '&host=rebind.akw.test&kinds=fetch,img,ws,beacon' });
+    await titleOf(game, 1, title => title.includes('|fetch:failed|') && title.includes('|img:failed|') && title.includes('|ws:failed|'), 'fetch, img and ws failed', 8000, since);
+    const vias = new Set();
+    await game.waitFor(m => {
+      if (m.type !== P.T.EVENT || m.screenId !== 1 || m.json.kind !== 'blocked-url' || m.json.detail.reason !== 'internal-dns') return false;
+      vias.add(m.json.detail.via);
+      return ['request-xhr', 'request-image', 'request-webSocket', 'request-ping'].every(v => vias.has(v));
+    }, 8000, 'internal-dns events for xhr, image, webSocket and ping', since);
+    await sleep(800);
+    results.lnaSinkHits = internal.hits - hitsBefore;
+    assert.strictEqual(internal.hits - hitsBefore, 0, 'nothing reached the loopback listener');
+    const st = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1).pop();
+    assert.ok(st.json.url.startsWith(pageUrl), 'still on the test page: ' + st.json.url);
   });
 
   await t.test('window.open stays in the same window; links to internal hosts are refused', async () => {
@@ -270,13 +316,28 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     assert.strictEqual(ev.json.detail.via, 'request-mainFrame');
     assert.strictEqual(ev.json.detail.reason, 'internal-dns');
     await sleep(300);
-    assert.strictEqual(internal.hits, results.detectorSinkHits, 'the blocked link reached nothing');
+    assert.strictEqual(internal.hits, 0, 'the blocked link reached nothing');
     since = game.mark();
     game.send(P.T.NAVIGATE, 1, { url: pageUrl.replace('page.html', 'page2.html') });
     await game.waitFor(m => m.type === P.T.STATE && m.screenId === 1 && m.json.url.endsWith('page2.html') && !m.json.loading, 8000, 'page2 again', since);
     since = game.mark();
     game.send(P.T.NAVIGATE, 1, { url: pageUrl });
     await titleOf(game, 1, title => title.startsWith('v:'), 'back on page 1', 8000, since);
+  });
+
+  await t.test('window.open from an iframe without user input is denied (EVENT blocked-url, reason popup)', async () => {
+    const since = game.mark();
+    const popupPage = pageUrl.replace('page.html', 'popup.html');
+    game.send(P.T.NAVIGATE, 1, { url: popupPage });
+    const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'blocked-url' && m.json.detail.reason === 'popup', 8000, 'popup refused', since);
+    assert.strictEqual(ev.json.detail.via, 'window-open');
+    assert.match(ev.json.detail.url, /page2\.html\?hijacked$/);
+    await sleep(700);
+    const urls = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1 && m.idx >= since).map(m => m.json.url);
+    assert.ok(!urls.some(u => u.includes('hijacked')), 'the iframe did not take the screen over: ' + urls.join(' '));
+    assert.strictEqual(urls[urls.length - 1], popupPage);
+    game.send(P.T.NAVIGATE, 1, { url: pageUrl });
+    await titleOf(game, 1, title => title.startsWith('v:'), 'back on page 1', 8000, game.mark());
   });
 
   await t.test('HTML fullscreen fills the page without resizing the offscreen view', async () => {
@@ -298,6 +359,20 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     game.send(P.T.INPUT, 1, { type: 'mouseDown', x: 470, y: 315, button: 'left', clickCount: 1 });
     game.send(P.T.INPUT, 1, { type: 'mouseUp', x: 470, y: 315, button: 'left', clickCount: 1 });
     await titleOf(game, 1, title => title.includes('|file:prevented|'), 'file input click prevented', 8000, since);
+  });
+
+  await t.test('NAVIGATE order: a newer NAVIGATE wins over an older one still waiting for its DNS answer', async () => {
+    const since = game.mark();
+    const second = pageUrl.replace('page.html', 'page2.html') + '?second';
+    game.send(P.T.NAVIGATE, 1, { url: 'http://slow.akw.test/first' }); // resolved first (host-resolver-rules)
+    game.send(P.T.NAVIGATE, 1, { url: second }); // no DNS: loads at once
+    await game.waitFor(m => m.type === P.T.STATE && m.screenId === 1 && m.json.url === second && !m.json.loading, 8000, 'second page', since);
+    await sleep(1500);
+    const urls = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1 && m.idx >= since).map(m => m.json.url);
+    assert.ok(!urls.some(u => u.includes('slow.akw.test')), 'the older NAVIGATE never loaded: ' + urls.join(' '));
+    assert.strictEqual(urls[urls.length - 1], second);
+    game.send(P.T.NAVIGATE, 1, { url: pageUrl });
+    await titleOf(game, 1, title => title.startsWith('v:'), 'back on page 1', 8000, game.mark());
   });
 
   await t.test('slow game: full-page frames are replaced, not queued, while the game does not read for 4 s', async () => {
@@ -347,6 +422,24 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     assert.deepStrictEqual(frameHeader(f), { width: 320, height: 240, x: 0, y: 0, w: 320, h: 240 });
   });
 
+  await t.test('CREATE/RESIZE beyond the page cap (4096 per side, 4,194,301 px) answer EVENT screen-limit', async () => {
+    let since = game.mark();
+    game.send(P.T.CREATE, 5, { width: 2048, height: 2048, fps: 5, url: pageUrl, session: 'shared', audio: 'os', volume: 0 });
+    let ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 5, 5000, 'screen-limit for CREATE', since);
+    assert.strictEqual(ev.json.kind, 'screen-limit');
+    assert.deepStrictEqual(ev.json.detail, { reason: 'size', width: 2048, height: 2048, maxWidth: 4096, maxHeight: 4096, maxPixels: 4194301 });
+    since = game.mark();
+    game.send(P.T.RESIZE, 1, { width: 4096, height: 1100 });
+    ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'screen-limit', 5000, 'screen-limit for RESIZE', since);
+    assert.strictEqual(ev.json.detail.reason, 'size');
+    game.send(P.T.NAVIGATE, 1, { url: pageUrl + '#busy' }); // repaint continuously, to see the size
+    await sleep(800);
+    assert.strictEqual(frames(game, 5, since).length, 0, 'no screen 5');
+    const after = frames(game, 1, since);
+    assert.ok(after.length > 0, 'screen 1 still paints');
+    for (const m of after) assert.strictEqual(frameHeader(m).width, 320, 'screen 1 kept its size');
+  });
+
   await t.test('two screens render independently in separate sessions', async () => {
     const since = game.mark();
     game.send(P.T.CREATE, 2, { width: 256, height: 144, fps: 15, url: pageUrl, session: 'shared', audio: 'os', volume: 0 });
@@ -363,6 +456,18 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     const since = game.mark();
     await sleep(1000);
     assert.strictEqual(frames(game, 2, since).length, 0);
+  });
+
+  await t.test('a malformed POLICY switches the host to deny-all and is reported (EVENT policy-error)', async () => {
+    let since = game.mark();
+    game.send(P.T.POLICY, 0, { mode: 'ALLOW_LIST', allow: ['example.com'] });
+    const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 0 && m.json.kind === 'policy-error', 5000, 'policy-error', since);
+    assert.strictEqual(ev.json.detail.applied, 'deny-all');
+    since = game.mark();
+    game.send(P.T.NAVIGATE, 1, { url: 'http://example.com/' });
+    const blocked = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'blocked-url', 5000, 'deny-all refusal', since);
+    assert.strictEqual(blocked.json.detail.reason, 'not-allowed');
+    game.send(P.T.POLICY, 0, { mode: 'blocklist', allow: [], block: ['blocked.example'] });
   });
 
   await t.test('the host exits when the game closes the socket', async () => {
@@ -411,6 +516,267 @@ test('spatial capture produces 48 kHz stereo PCM (Linux only, optional feature)'
   assert.ok(ptsB > ptsA, 'pts increases');
 });
 
+/**
+ * A "public web site" for the host, served through a loopback HTTP proxy. The names are mapped to a
+ * public address with --host-resolver-rules, so the host's internal-address check passes and the
+ * pages are real http documents (response headers, CSP), which local file: fixtures are not. It also
+ * plays the part of a local filtering proxy / antivirus web shield / "game booster" on 127.0.0.1.
+ */
+function publicSite() {
+  const site = { hits: 0, paths: [], held: [], tone: toneWav(4) };
+  const pages = {
+    '/': '<title>public-page</title><p>hello</p>',
+    // Still loading forever (an image that never arrives) while autoplay audio plays.
+    '/vol.html': '<!doctype html><title>vol</title><audio id=a src="/tone.wav" autoplay loop></audio><img src="/slow.png">'
+      + '<script>const a=document.getElementById("a");setInterval(()=>{document.title="vol:"+a.volume.toFixed(2)+"|p:"+a.paused},40)</script>',
+    // print() from the main frame, from a fresh about:blank iframe (no preload there) and through frames[0].
+    '/print.html': '<!doctype html><title>print-start</title><body><script>setTimeout(()=>{let n=0;'
+      + 'const f=document.createElement("iframe");document.body.appendChild(f);'
+      + 'const fresh=String(f.contentWindow.print).includes("native")?"native":"guarded";'
+      + 'f.contentWindow.print();n++;frames[0].print();n++;window.print();n++;'
+      + 'document.title="printed:"+n+"|fresh:"+fresh+"|main:"+(String(window.print).includes("native")?"native":"guarded")},300)</script></body>',
+    // A download started by the page itself (renderer-initiated, subject to the document's sandbox).
+    '/dl.html': '<!doctype html><title>dl</title><script>setTimeout(()=>{location.href="/file.bin"},200)</script>',
+    // Registration from the page (main-world guard) and from a fresh iframe (no guard: network block).
+    '/sw.html': '<!doctype html><title>sw-start</title><body><script>const r={};'
+      + 'const done=()=>{if(r.main&&r.frame)document.title="sw:"+r.main+"|frame:"+r.frame};'
+      + 'if(!navigator.serviceWorker){document.title="sw:unavailable"}else{'
+      + 'navigator.serviceWorker.register("/sw.js").then(()=>{r.main="registered";done()},()=>{r.main="refused";done()});'
+      + 'const f=document.createElement("iframe");document.body.appendChild(f);'
+      + 'f.contentWindow.navigator.serviceWorker.register("/sw.js?frame").then(()=>{r.frame="registered";done()},()=>{r.frame="refused";done()})}'
+      + '</script></body>',
+  };
+  site.userAgents = new Set();
+  site.server = require('http').createServer((req, res) => {
+    site.hits++;
+    const p = new URL(req.url, 'http://x').pathname;
+    site.paths.push(p);
+    site.userAgents.add(req.headers['user-agent']);
+    if (p === '/slow.png') {
+      site.held.push(res); // never answered: the page keeps loading
+      return;
+    }
+    if (p === '/tone.wav') {
+      res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': site.tone.length });
+      res.end(site.tone);
+      return;
+    }
+    if (p === '/sw.js') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      res.end('self.addEventListener("fetch", () => {});');
+      return;
+    }
+    if (p === '/file.bin') {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="file.bin"' });
+      res.end(Buffer.alloc(1024));
+      return;
+    }
+    const body = pages[p];
+    res.writeHead(body ? 200 : 404, { 'Content-Type': 'text/html' });
+    res.end(body || 'not found');
+  });
+  return new Promise(resolve => site.server.listen(0, '127.0.0.1', () => { site.port = site.server.address().port; resolve(site); }));
+}
+
+test('public site through a loopback proxy: preload (volume, MEDIA while loading), print and SW blocks, proxy detector', { skip: SKIP, timeout: 120000 }, async t => {
+  const site = await publicSite();
+  const game = new Game();
+  const port = await game.listen();
+  const numbers = {};
+  t.after(async () => {
+    for (const r of site.held) r.destroy();
+    await game.close();
+    site.server.close();
+    console.log('# public site numbers: ' + JSON.stringify(numbers));
+  });
+  game.spawnHost(port, { extraArgs: ['--proxy-server=http://127.0.0.1:' + site.port,
+    '--host-resolver-rules=MAP public.akw.test 93.184.216.34, MAP nx.akw.test ~NOTFOUND',
+    // A secure context for the http test site (service workers exist only there); unpackaged runs only.
+    '--unsafely-treat-insecure-origin-as-secure=http://public.akw.test'] });
+  await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
+  game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: [] }, locale: 'pt-BR' });
+  game.send(P.T.CREATE, 1, { width: 320, height: 180, fps: 10, url: 'http://public.akw.test/', session: 'shared', audio: 'os', volume: 0 });
+
+  await t.test('behind a loopback proxy a page loads and is not blanked (the detector skips the proxy address)', async () => {
+    // Wave 1 took the proxy's 127.0.0.1 in details.ip for the site's and blanked every page as 'internal-ip'.
+    await titleOf(game, 1, title => title === 'public-page', 'page through the proxy', 15000);
+    await sleep(1500);
+    const internalIp = game.messages.filter(m => m.type === P.T.EVENT && m.json.detail && m.json.detail.reason === 'internal-ip');
+    assert.deepStrictEqual(internalIp.map(m => m.json), [], 'not mistaken for an internal hit');
+    const last = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1).pop();
+    assert.strictEqual(last.json.url, 'http://public.akw.test/', 'not blanked');
+    // This WELCOME carries no userAgent: the host keeps its stock Chrome UA (never Electron's).
+    assert.deepStrictEqual([...site.userAgents], [require('../src/messages').stockChromeUserAgent(process.platform, '152')]);
+  });
+
+  await t.test('a name that does not resolve behind a proxy is refused as dns-via-proxy', async () => {
+    const since = game.mark();
+    game.send(P.T.NAVIGATE, 1, { url: 'http://nx.akw.test/' });
+    const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'blocked-url', 8000, 'dns-via-proxy', since);
+    assert.strictEqual(ev.json.detail.reason, 'dns-via-proxy');
+  });
+
+  await t.test('CREATE volume 0.1 on a page that is still loading: the element is at 0.1 within 500 ms, MEDIA flows', async () => {
+    // Wave 1 waited for did-stop-loading (executeJavaScript), so the element played at 1.00 all load long.
+    const since = game.mark();
+    game.send(P.T.CREATE, 2, { width: 320, height: 180, fps: 10, url: 'http://public.akw.test/vol.html', session: 'shared', audio: 'os', volume: 0.1 });
+    const first = await game.waitFor(m => m.type === P.T.STATE && m.screenId === 2 && /^vol:/.test(m.json.title), 15000, 'first volume report', since);
+    const at = await titleOf(game, 2, title => title.startsWith('vol:0.10'), 'volume 0.10', 500 + 1000, since);
+    numbers.volumeAppliedAfterFirstReportMs = at.at - first.at;
+    assert.ok(at.at - first.at <= 500, 'volume 0.1 within 500 ms of the page script running: ' + (at.at - first.at) + ' ms');
+    assert.strictEqual(at.json.loading, true, 'while the page is still loading');
+    const reports = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 2 && m.idx >= since && /^vol:/.test(m.json.title)).map(m => m.json.title);
+    assert.ok(!reports.some(r => r.startsWith('vol:1.00|p:false')), 'never played at the page default 1.00: ' + reports.join(' '));
+    // A later AUDIO applies at once too, still during the load.
+    const audioAt = Date.now();
+    const s2 = game.mark();
+    game.send(P.T.AUDIO, 2, { muted: false, volume: 0.2 });
+    const v2 = await titleOf(game, 2, title => title.startsWith('vol:0.20'), 'volume 0.20', 3000, s2);
+    numbers.audioUpdateMs = v2.at - audioAt;
+    assert.ok(v2.at - audioAt <= 500, 'AUDIO applied within 500 ms: ' + (v2.at - audioAt));
+    assert.strictEqual(v2.json.loading, true);
+    // MEDIA is sampled during the load as well.
+    const playing = await game.waitFor(m => m.type === P.T.MEDIA && m.screenId === 2 && m.json.paused === false, 5000, 'MEDIA while loading', since);
+    assert.ok(playing.json.duration > 3 && playing.json.duration < 5, 'duration ' + playing.json.duration);
+    const st = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 2).pop();
+    assert.strictEqual(st.json.loading, true, 'the slow image is still pending');
+    game.send(P.T.DESTROY, 2, null);
+  });
+
+  await t.test('print() in the main frame, a fresh about:blank iframe and frames[0] returns at once (CSP sandbox, guard)', async () => {
+    // Wave 1: a fresh iframe kept the native print() and the call blocked the renderer (native dialog).
+    const since = game.mark();
+    game.send(P.T.NAVIGATE, 1, { url: 'http://public.akw.test/print.html' });
+    const st = await titleOf(game, 1, title => title.startsWith('printed:'), 'all print() calls returned', 8000, since);
+    assert.match(st.json.title, /^printed:3\|fresh:\w+\|main:guarded$/);
+    assert.ok(!game.messages.some(m => m.type === P.T.EVENT && m.idx >= since && m.json.kind === 'unresponsive'));
+  });
+
+  await t.test('a download the page starts under the sandbox header is cancelled and reported (EVENT download-cancelled)', async () => {
+    const since = game.mark();
+    game.send(P.T.NAVIGATE, 1, { url: 'http://public.akw.test/dl.html' });
+    const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'download-cancelled', 8000, 'download-cancelled', since);
+    assert.strictEqual(ev.json.detail.filename, 'file.bin');
+  });
+
+  await t.test('a page cannot register a service worker (it could serve documents without the sandbox header)', async () => {
+    const since = game.mark();
+    game.send(P.T.NAVIGATE, 1, { url: 'http://public.akw.test/sw.html' });
+    const st = await titleOf(game, 1, title => title.startsWith('sw:') && title !== 'sw-start', 'registration answered', 8000, since);
+    assert.strictEqual(st.json.title, 'sw:refused|frame:refused');
+    assert.ok(!site.paths.includes('/sw.js'), 'the worker script never reached the site');
+  });
+});
+
+test('display scaling: FRAME size equals the CREATE/RESIZE size and the page sees devicePixelRatio 1', { skip: SKIP, timeout: 90000 }, async t => {
+  // A 200% display is simulated with --force-device-scale-factor=2 (unpackaged test run). Windows
+  // 125%/150% scaling itself is not reproducible here; on Linux Electron's OSR stayed at 1x even
+  // without the fix (measured), so this guards the contract rather than reproducing a failure.
+  const game = new Game();
+  const port = await game.listen();
+  const site = path.join(game.dir, 'site');
+  fs.mkdirSync(site, { recursive: true });
+  fs.writeFileSync(path.join(site, 'dpr.html'), '<!doctype html><title>dpr</title><body style="background:#123"><script>'
+    + 'setInterval(()=>{document.title="dpr:"+devicePixelRatio+"|w:"+innerWidth+"|h:"+innerHeight},100)</script></body>');
+  t.after(() => game.close());
+  game.spawnHost(port, { extraArgs: ['--akw-test-allow-file', '--force-device-scale-factor=2'] });
+  await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
+  game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: [] }, locale: 'pt-BR' });
+  game.send(P.T.CREATE, 1, { width: 640, height: 360, fps: 10, url: pathToFileURL(path.join(site, 'dpr.html')).href, session: 'shared', audio: 'os', volume: 0 });
+  await titleOf(game, 1, title => title === 'dpr:1|w:640|h:360', 'devicePixelRatio 1 at 640x360', 15000);
+  const since = game.mark();
+  await sleep(500);
+  const got = frames(game, 1, 0);
+  assert.ok(got.length > 0);
+  for (const m of got) assert.deepStrictEqual([frameHeader(m).width, frameHeader(m).height], [640, 360]);
+  game.send(P.T.RESIZE, 1, { width: 320, height: 240 });
+  const f = await game.waitFor(m => m.type === P.T.FRAME && m.screenId === 1 && frameHeader(m).width !== 640, 8000, 'resized frame', since);
+  assert.deepStrictEqual(frameHeader(f), { width: 320, height: 240, x: 0, y: 0, w: 320, h: 240 });
+  assert.strictEqual(f.payload.length, 12 + 320 * 240 * 4);
+});
+
+test('the host owns its output: no Chromium log lines on stderr once the app runs', { skip: SKIP, timeout: 60000 }, async t => {
+  // The game stores the host's stdout/stderr without a size cap; the host's own capped log is --akw-log.
+  // Chromium logs ERROR and above to stderr by default; the host turns that down to FATAL at startup.
+  // Third-party libraries writing to stderr themselves (ALSA without a sound card, Linux only) and the
+  // lines Chromium logs before the app's JavaScript runs cannot be controlled and are not counted.
+  const game = new Game();
+  const port = await game.listen();
+  t.after(() => game.close());
+  game.spawnHost(port, { extraArgs: ['--akw-test-allow-file'] });
+  await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
+  game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: [] }, locale: 'pt-BR' });
+  // A screen (renderer, GPU, network service and the browser's platform services such as D-Bus on Linux
+  // start logging); no outbound request is made.
+  game.send(P.T.CREATE, 1, { width: 320, height: 180, fps: 5, url: '', session: 'shared', audio: 'os', volume: 0 });
+  await sleep(3000);
+  const lines = game.stderr.split('\n');
+  const start = lines.findIndex(l => l.startsWith('[akw-host]'));
+  assert.ok(start >= 0, 'the host ran');
+  const chromium = lines.slice(start).filter(l => /^\[\d+:\d+\/\d+\.\d+:(INFO|WARNING|ERROR|VERBOSE\d*):/.test(l));
+  assert.deepStrictEqual(chromium, [], 'Chromium log lines after the app started');
+});
+
+test('CREATE/DESTROY churn reuses cleared partitions: flat memory, nothing carried over', { skip: SKIP || (process.platform !== 'linux' && 'needs /proc'), timeout: 180000 }, async t => {
+  // Wave 1 made a new partition per SHARED CREATE; Electron never frees one, so the host grew by about
+  // 0.7 MB per CREATE/DESTROY. Now partitions are pooled and cleared before reuse.
+  const game = new Game();
+  const port = await game.listen();
+  const site = path.join(game.dir, 'site');
+  fs.mkdirSync(site, { recursive: true });
+  // Leaves 100 kB in localStorage; reports whether the previous screen's value is still there.
+  fs.writeFileSync(path.join(site, 'churn.html'), '<!doctype html><title>c</title><script>const prev=localStorage.getItem("akw");'
+    + 'localStorage.setItem("akw","x".repeat(100000));document.title="prev:"+(prev===null?"none":"leak")</script>');
+  const url = pathToFileURL(path.join(site, 'churn.html')).href;
+  const numbers = {};
+  t.after(async () => {
+    await game.close();
+    console.log('# churn numbers: ' + JSON.stringify(numbers));
+  });
+  game.spawnHost(port, { extraArgs: ['--akw-test-allow-file'] });
+  const hello = await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
+  game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist', allow: [], block: [] }, locale: 'pt-BR' });
+  const { processTree } = require('./harness');
+  const rssMb = () => {
+    const procs = processTree(game.child.pid);
+    // The browser (main) process: HELLO.pid, or the one launched with our --akw-port and no --type.
+    const browser = procs.find(p => p.pid === hello.json.pid)
+      || procs.find(p => {
+        try {
+          const cmd = fs.readFileSync('/proc/' + p.pid + '/cmdline', 'latin1');
+          return cmd.includes('--akw-port=' + port) && !cmd.includes('--type=') && !cmd.includes('xvfb');
+        } catch (e) {
+          return false;
+        }
+      });
+    assert.ok(browser, 'browser process found');
+    const network = procs.filter(p => /network/i.test(p.type)).reduce((a, p) => a + p.rssKb, 0);
+    return { browser: Math.round(browser.rssKb / 1024), network: Math.round(network / 1024) };
+  };
+  const titles = [];
+  const cycle = async n => {
+    for (let i = 0; i < n; i++) {
+      const since = game.mark();
+      game.send(P.T.CREATE, 1, { width: 160, height: 90, fps: 5, url, session: 'shared', audio: 'os', volume: 0 });
+      const st = await game.waitFor(m => m.type === P.T.STATE && m.screenId === 1 && /^prev:/.test(m.json.title) && !m.json.loading, 10000, 'churn page', since);
+      titles.push(st.json.title);
+      game.send(P.T.DESTROY, 1, null);
+      await sleep(60);
+    }
+    await sleep(2000);
+  };
+  await cycle(10);
+  const before = rssMb();
+  await cycle(80);
+  const after = rssMb();
+  numbers.before = before;
+  numbers.after80 = after;
+  numbers.browserGrowthMbPer100 = +(((after.browser - before.browser) / 80) * 100).toFixed(1);
+  numbers.partitionsCreated = (game.hostLog().match(/new partition akw-/g) || []).length;
+  assert.deepStrictEqual([...new Set(titles)], ['prev:none'], 'no localStorage carried from one screen to the next');
+  assert.ok(after.browser - before.browser < 20, 'browser process grew ' + (after.browser - before.browser) + ' MB over 80 cycles');
+});
+
 test('lifecycle: parent PID gone, missing token, forbidden switch', { skip: SKIP, timeout: 90000 }, async t => {
   await t.test('exits within ~2 s poll after the parent process dies', async () => {
     const game = new Game();
@@ -429,6 +795,24 @@ test('lifecycle: parent PID gone, missing token, forbidden switch', { skip: SKIP
       assert.ok(bye && bye.json.reason === 'parent-gone', 'BYE parent-gone');
     } finally {
       parent.kill('SIGKILL');
+      await game.close();
+    }
+  });
+
+  await t.test('--akw-parent-pid=0 (unknown) runs without the parent poll and quits on QUIT', async () => {
+    const game = new Game();
+    const port = await game.listen();
+    try {
+      game.spawnHost(port, { parentPid: 0 });
+      await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO with parent pid 0');
+      game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: null, locale: 'pt-BR' });
+      await sleep(2500); // longer than one poll period
+      assert.strictEqual(game.child.exitCode, null, 'still running');
+      assert.match(game.hostLog(), /parent poll disabled/);
+      game.send(P.T.QUIT, 0, null);
+      const exit = await Promise.race([game.exited, sleep(10000).then(() => null)]);
+      assert.ok(exit && exit.code === 0, 'QUIT exit ' + JSON.stringify(exit));
+    } finally {
       await game.close();
     }
   });
@@ -471,6 +855,26 @@ test('lifecycle: parent PID gone, missing token, forbidden switch', { skip: SKIP
       const exit = await Promise.race([game.exited, sleep(15000).then(() => null)]);
       assert.ok(exit, 'host did not exit');
       assert.strictEqual(exit.code, 65);
+    } finally {
+      await game.close();
+    }
+  });
+
+  await t.test('a malformed WELCOME ends the host with HANDSHAKE at once (fail closed)', async () => {
+    const game = new Game();
+    const port = await game.listen();
+    try {
+      game.spawnHost(port);
+      await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
+      const sentAt = Date.now();
+      game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'ALLOW_LIST', allow: ['youtube.com'] }, locale: 'pt-BR' });
+      game.send(P.T.CREATE, 9, { width: 320, height: 180, url: 'https://evil.example/' });
+      const exit = await Promise.race([game.exited, sleep(10000).then(() => null)]);
+      assert.ok(exit, 'host did not exit');
+      assert.strictEqual(exit.code, 68);
+      assert.ok(Date.now() - sentAt < 5000, 'exited at once, not after the 10 s WELCOME timeout');
+      assert.ok(game.messages.some(m => m.type === P.T.BYE && m.json.reason === 'bad-welcome'));
+      assert.ok(!game.messages.some(m => m.screenId === 9), 'the CREATE was never served');
     } finally {
       await game.close();
     }

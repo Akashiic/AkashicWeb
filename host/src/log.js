@@ -66,11 +66,27 @@ function createLogger(options = {}) {
     }
   };
 
+  /** Text written to stdout/stderr (captureStdio): file only, the caller decides about echoing. */
+  const raw = (source, text) => {
+    if (fd == null) return;
+    const body = String(text).replace(/\n+$/, '');
+    if (!body) return;
+    try {
+      const buf = Buffer.from(new Date().toISOString() + ' ' + (source === 'stdout' ? 'OUT' : 'ERR') + ' ' + body + '\n', 'utf8');
+      fs.writeSync(fd, buf);
+      size += buf.length;
+      if (size > maxBytes) rotate();
+    } catch (e) {
+      fd = null;
+    }
+  };
+
   open();
   return {
     info: (...a) => write('INFO', a),
     warn: (...a) => write('WARN', a),
     error: (...a) => write('ERROR', a),
+    raw,
     close: () => {
       if (fd != null) {
         try { fs.closeSync(fd); } catch (e) { /* already closed */ }
@@ -84,7 +100,49 @@ function safeJson(v) {
   try { return JSON.stringify(v); } catch (e) { return String(v); }
 }
 
-/** Logger that drops everything, for unit tests. */
-const NULL_LOG = Object.freeze({ info() {}, warn() {}, error() {}, close() {} });
+/**
+ * The host owns its output (M2 writes the host's stdout/stderr to a file it does not cap): everything
+ * JavaScript writes to process.stdout/process.stderr (Electron and Node warnings, stray console output)
+ * goes into the size-capped --akw-log file instead. With `echo` (development and test runs only) it is
+ * also passed through to the real stream. Native writes by Chromium to the same file descriptors cannot
+ * be caught from JavaScript: main.js turns Chromium's own logging down to FATAL (--log-level=3).
+ * Returns a function that restores the streams.
+ */
+function captureStdio(logger, options = {}) {
+  const streams = options.streams || { stdout: stdStream('stdout'), stderr: stdStream('stderr') };
+  const restore = [];
+  for (const name of Object.keys(streams)) {
+    const stream = streams[name];
+    if (!stream || typeof stream.write !== 'function') continue;
+    const original = stream.write;
+    const pass = options.echo ? original.bind(stream) : null;
+    stream.write = function write(chunk, encoding, callback) {
+      try {
+        logger.raw(name, Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
+      } catch (e) { /* logging is best effort */ }
+      if (pass) return pass(chunk, encoding, callback);
+      const cb = typeof encoding === 'function' ? encoding : callback;
+      if (typeof cb === 'function') process.nextTick(cb);
+      return true;
+    };
+    restore.push(() => { stream.write = original; });
+  }
+  return () => restore.forEach(r => r());
+}
 
-module.exports = { createLogger, redactUrl, NULL_LOG };
+/**
+ * process.stdout/stderr, or null: a GUI-subsystem executable on Windows may have no usable handle, and
+ * Node creates these streams lazily, so the first access can throw there.
+ */
+function stdStream(name) {
+  try {
+    return process[name] || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Logger that drops everything, for unit tests. */
+const NULL_LOG = Object.freeze({ info() {}, warn() {}, error() {}, raw() {}, close() {} });
+
+module.exports = { createLogger, captureStdio, stdStream, redactUrl, NULL_LOG };

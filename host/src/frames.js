@@ -107,12 +107,12 @@ function imagePayloads(image, pageW, pageH, rect, maxPayload = P.MAX_PAYLOAD) {
 class FrameScheduler {
   /**
    * @param {object} io send(screenId, image, rect) -> boolean (true if the link can take more),
-   *   blocked() -> boolean
+   *   blocked() -> boolean, optional onError(screenId, err)
    */
   constructor(io) {
     this.io = io;
     this.screens = new Map();
-    this.stats = { offered: 0, sent: 0, merged: 0 };
+    this.stats = { offered: 0, sent: 0, merged: 0, errors: 0 };
   }
 
   _state(screenId) {
@@ -179,7 +179,15 @@ class FrameScheduler {
     st.pending = null;
     this.lastFlushed = screenId;
     this.stats.sent++;
-    this.io.send(screenId, image, damage);
+    try {
+      this.io.send(screenId, image, damage);
+    } catch (err) {
+      // The frame (toBitmap, crop, size mismatch) and the damage merged into it are lost; the game
+      // canvas would keep stale pixels there, so the next paint of this screen is sent whole.
+      st.needFull = true;
+      this.stats.errors++;
+      if (this.io.onError) this.io.onError(screenId, err);
+    }
   }
 }
 
