@@ -4,13 +4,23 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
+
+import com.akashiic.web.client.host.JsonParser;
 
 class UrlPolicyTest {
 
@@ -126,6 +136,47 @@ class UrlPolicyTest {
         assertEquals(ReasonCode.OK, reason("http://[64:ff9b::808:808]/"));
         assertEquals(ReasonCode.OK, reason("http://[2002:808:808::1]/"));
         assertEquals(ReasonCode.OK, reason("http://[2606:4700:4700::1111]/"));
+    }
+
+    /**
+     * W3-0: one rule set on both sides. Every vector in {@code shared/address-vectors.json}, which host/test/
+     * policy.test.js asserts too, as an address ({@link UrlPolicy#isInternal}) and as the host of a URL
+     * ({@link UrlPolicy#check}).
+     */
+    @Test
+    void sharedAddressVectors() throws Exception {
+        File file = sharedFile("address-vectors.json");
+        assertNotNull(file, "shared/address-vectors.json not found above " + System.getProperty("user.dir"));
+        Object parsed = JsonParser.parse(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+        assertTrue(parsed instanceof List, "a JSON array");
+        List<?> vectors = (List<?>) parsed;
+        assertTrue(vectors.size() >= 60, "at least 60 vectors: " + vectors.size());
+        Set<String> seen = new HashSet<>();
+        for (Object o : vectors) {
+            Map<?, ?> v = (Map<?, ?>) o;
+            String address = (String) v.get("address");
+            boolean internal = (Boolean) v.get("internal");
+            String what = address + " (" + v.get("note") + ")";
+            assertTrue(seen.add(address), "duplicate " + address);
+            boolean v6 = address.indexOf(':') >= 0;
+            InetAddress literal = v6 ? UrlPolicy.parseLiteral("[" + address + "]")
+                : InetAddress.getByAddress(UrlPolicy.parseIpv4(address));
+            assertEquals(internal, UrlPolicy.isInternal(literal), "address " + what);
+            String host = v6 ? "[" + address + "]" : address;
+            assertEquals(
+                internal ? ReasonCode.URL_INTERNAL : ReasonCode.OK,
+                reason("http://" + host + "/"),
+                "url " + what);
+        }
+    }
+
+    /** {@code shared/<name>} of the repository: walks up from the working directory (the project dir under Gradle). */
+    static File sharedFile(String name) {
+        for (File d = new File(System.getProperty("user.dir")).getAbsoluteFile(); d != null; d = d.getParentFile()) {
+            File f = new File(new File(d, "shared"), name);
+            if (f.isFile()) return f;
+        }
+        return null;
     }
 
     /** Review finding: '§' (Minecraft formatting) survived into stored URLs and from there into chat. */

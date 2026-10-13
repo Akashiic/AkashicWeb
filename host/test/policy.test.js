@@ -2,6 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('events');
+const fs = require('fs');
+const path = require('path');
 const Pol = require('../src/policy');
 
 const BLOCK = { mode: 'blocklist', allow: [], block: ['bad.example'] };
@@ -23,6 +25,29 @@ test('IPv6: loopback, ULA, link-local, multicast, mapped/compat/NAT64/6to4 embed
   const external = ['2001:4860:4860::8888', '2606:4700:4700::1111', '::ffff:8.8.8.8', '64:ff9b::808:808', '2002:0808:0808::1', '2800:3f0:4001:810::200e'];
   for (const a of internal) assert.strictEqual(Pol.isInternalAddress(a), true, a);
   for (const a of external) assert.strictEqual(Pol.isInternalAddress(a), false, a);
+});
+
+// The game's UrlPolicy.isInternal asserts the same file (UrlPolicyTest): both sides apply one rule set.
+test('shared address vectors (shared/address-vectors.json), as resolved addresses, hostnames and URLs', () => {
+  const file = path.join(__dirname, '..', '..', 'shared', 'address-vectors.json');
+  const vectors = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.ok(Array.isArray(vectors) && vectors.length >= 60, 'at least 60 vectors');
+  const seen = new Set();
+  for (const v of vectors) {
+    assert.strictEqual(typeof v.address, 'string', JSON.stringify(v));
+    assert.strictEqual(typeof v.internal, 'boolean', JSON.stringify(v));
+    assert.ok(typeof v.note === 'string' && v.note.length > 0, JSON.stringify(v));
+    assert.ok(!seen.has(v.address), 'duplicate ' + v.address);
+    seen.add(v.address);
+    const what = v.address + ' (' + v.note + ')';
+    assert.strictEqual(Pol.isInternalAddress(v.address), v.internal, 'address ' + what);
+    const host = v.address.includes(':') ? '[' + v.address + ']' : v.address;
+    assert.strictEqual(Pol.isInternalHostname(host), v.internal, 'hostname ' + what);
+    const nav = Pol.checkNavigation('http://' + host + '/', BLOCK, 'main');
+    assert.deepStrictEqual([nav.ok, nav.reason], v.internal ? [false, 'internal'] : [true, undefined], 'navigation ' + what);
+    const req = Pol.checkRequest('https://' + host + '/x.js', 'script', BLOCK);
+    assert.strictEqual(req.ok, !v.internal, 'request ' + what);
+  }
 });
 
 test('unparseable addresses fail closed', () => {

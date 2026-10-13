@@ -1,8 +1,9 @@
 'use strict';
 // Site policy and internal-address block for every screen session (ADR-013 and its amendment).
-// The pure checks mirror the server's UrlPolicy (AkashicFM UrlPolicy.isInternal, copied in spirit:
-// same ranges plus IPv6 ULA/link-local/NAT64/6to4). The attach* functions take Electron objects as
-// arguments so this module never imports Electron and its pure part runs under plain Node.
+// The address checks apply the same rule set as the game's UrlPolicy.isInternal (docs/PROTOCOL.md
+// section 1, "Internal addresses"); both are tested against shared/address-vectors.json. The attach*
+// functions take Electron objects as arguments so this module never imports Electron and its pure
+// part runs under plain Node.
 //
 // Why the host resolves every request itself: the ADR-013 amendment's measure 1 (deny Chromium's
 // Local Network Access permissions so Chromium blocks public pages from reaching LAN/loopback) does
@@ -96,10 +97,12 @@ function isInternalIPv6(w) {
   if ((w[0] & 0xffc0) === 0xfec0) return true; // fec0::/10 old site-local
   if ((w[0] & 0xff00) === 0xff00) return true; // multicast
   if (zeros(0, 5) && w[5] === 0xffff) return isInternalIPv4(v4FromWords(w[6], w[7])); // ::ffff:a.b.c.d
+  if (zeros(0, 4) && w[4] === 0xffff && w[5] === 0) return isInternalIPv4(v4FromWords(w[6], w[7])); // ::ffff:0:a.b.c.d translated
   if (zeros(0, 6)) return isInternalIPv4(v4FromWords(w[6], w[7])); // ::a.b.c.d (deprecated compat)
   if (w[0] === 0x64 && w[1] === 0xff9b && zeros(2, 6)) return isInternalIPv4(v4FromWords(w[6], w[7])); // NAT64
   if (w[0] === 0x64 && w[1] === 0xff9b && w[2] === 1) return true; // 64:ff9b:1::/48 local-use NAT64
   if (w[0] === 0x2002) return isInternalIPv4(v4FromWords(w[1], w[2])); // 6to4
+  if (w[0] === 0x2001 && w[1] === 0) return true; // 2001::/32 Teredo, refused whole (it tunnels to any IPv4)
   if (w[0] === 0x2001 && w[1] === 0x0db8) return true; // documentation
   if (w[0] === 0x0100 && zeros(1, 4)) return true; // 100::/64 discard
   return false;
