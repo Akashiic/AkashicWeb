@@ -316,6 +316,52 @@ class BrowserHostImplTest {
         }
     }
 
+    /**
+     * Review finding (medium), end to end: a page too large to hold fails only its own screen, with a local
+     * load-error EVENT naming frame-too-large; the connection stays up and the next frame of a valid size is shown.
+     */
+    @Test
+    void aPageTooLargeFailsOnlyItsScreen() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "oversize");
+        BrowserHostImpl h = new BrowserHostImpl(
+            f.config()
+                .build(),
+            f.clock,
+            ProcessControl.forThisPlatform());
+        Events ev = new Events();
+        h.addListener(ev);
+        try {
+            h.start();
+            await("READY", 60_000, () -> h.status().kind == HostStatus.Kind.READY);
+            int id = h.createScreen(
+                new CreateSpec(64, 32, 30, "about:blank", CreateSpec.Session.SHARED, CreateSpec.Audio.OS, 0f));
+            FrameRing3 ring = (FrameRing3) h.frames(id);
+            await("the valid frame after the oversized one", 20_000, ring::hasNew);
+            assertEquals(1, ev.events.size(), ev.events.toString());
+            assertEquals(
+                id + " {\"kind\":\"load-error\",\"detail\":{\"reason\":\"frame-too-large\",\"code\":\"TEXTURE_TOO_LARGE\","
+                    + "\"width\":4097,\"height\":16,\"maxSide\":4096,\"maxPixels\":4194301}}",
+                ev.events.get(0));
+            FrameSlot slot = ring.takeLatest();
+            assertEquals(64, slot.width);
+            ring.release(slot);
+            assertEquals(HostStatus.Kind.READY, h.status().kind);
+            assertEquals(
+                1,
+                h.supervisor()
+                    .launches(),
+                "the connection survived the oversized page");
+            assertTrue(
+                h.diagnostics()
+                    .stream()
+                    .anyMatch(d -> d.startsWith("screen " + id + ": ") && d.endsWith(", too large and skipped 1")),
+                h.diagnostics()
+                    .toString());
+        } finally {
+            h.shutdown();
+        }
+    }
+
     @Test
     void pointerCoordinatesAreClampedToThePage() {
         InputEvent e = new InputEvent(InputEvent.Type.MOUSE_DOWN, -3, 900, "right", 2, 0, 0, null, 0, null);

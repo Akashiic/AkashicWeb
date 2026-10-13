@@ -234,12 +234,20 @@ public final class BrowserHostImpl implements BrowserHost {
                     + ", taken "
                     + c[2]
                     + ", requeued "
-                    + c[3]);
+                    + c[3]
+                    + rejection(r.frames));
         }
         return out;
     }
 
     // ---------------------------------------------------------------------------------------------------------------
+
+    private static String rejection(FramePipeline p) {
+        long n = p.framesRejected();
+        if (n == 0) return "";
+        String now = p.rejectedSize();
+        return ", too large and skipped " + n + (now == null ? "" : " (now " + now + ")");
+    }
 
     /** Pointer coordinates inside the page, so a rounding error at the screen edge never reaches the host as -1. */
     static InputEvent clampToPage(InputEvent e, int width, int height) {
@@ -336,6 +344,24 @@ public final class BrowserHostImpl implements BrowserHost {
 
         @Override
         public void onEvent(int screenId, String json) {
+            deliver("event", l -> l.onEvent(screenId, json));
+        }
+
+        /**
+         * A page too large to hold (for example painted at a display scale above 100%): its frames are skipped, the
+         * connection and every other screen keep running, and this screen fails visibly with a local
+         * {@code load-error} EVENT whose detail names {@code frame-too-large} and TEXTURE_TOO_LARGE.
+         */
+        @Override
+        public void onFrameRejected(int screenId, int width, int height) {
+            LOG.warn(
+                "AkashicWeb: screen {} sent a {}x{} page, larger than {} per side or {} pixels; its frames are skipped",
+                screenId,
+                width,
+                height,
+                FrameCanvas.MAX_DIMENSION,
+                FrameCanvas.MAX_PIXELS);
+            String json = HostMessages.frameTooLargeEvent(width, height);
             deliver("event", l -> l.onEvent(screenId, json));
         }
     }

@@ -30,7 +30,8 @@ import java.util.regex.Pattern;
  * {@code ok}, {@code exit-after-welcome}, {@code bad-token}, {@code bad-major}, {@code silent} (never connects),
  * {@code die} (exits at once), {@code env-token} (uses AKW_TOKEN, ignores stdin), {@code garbage} (bad magic after
  * HELLO), {@code hang-once} (the first launch stops reading after WELCOME, like a hung main thread that keeps its
- * socket open; later launches behave like {@code ok}), {@code slow-pong:<ms>} (answers every PING after a delay). In
+ * socket open; later launches behave like {@code ok}), {@code slow-pong:<ms>} (answers every PING after a delay),
+ * {@code oversize} (CREATE first gets a FRAME of a 4097x16 page, then the normal answer). In
  * every connected mode: CREATE answers with a full FRAME, a STATE and a PCM chunk; DESTROY with a late FRAME and a
  * STATE {@code {"late":true}}; PING with PONG; QUIT with BYE and exit; NAVIGATE {@code {"action":"stop"}} makes it exit
  * (a simulated crash).
@@ -113,6 +114,16 @@ public final class FakeHostMain {
                     case HostProtocol.CREATE: {
                         int w = field(m.text(), "width");
                         int h = field(m.text(), "height");
+                        if (mode.equals("oversize")) {
+                            // A page wider than 4096 (a 1x1 dirty rect, so the payload itself is tiny).
+                            byte[] big = new byte[HostProtocol.FrameHeader.BYTES + 4];
+                            int[] head = { 4097, 16, 0, 0, 1, 1 };
+                            for (int i = 0; i < head.length; i++) {
+                                big[i * 2] = (byte) (head[i] >> 8);
+                                big[i * 2 + 1] = (byte) head[i];
+                            }
+                            HostProtocol.write(out, HostProtocol.FRAME, m.screenId, seq++, big);
+                        }
                         HostProtocol.write(out, HostProtocol.FRAME, m.screenId, seq++, frame(m.screenId, w, h));
                         HostProtocol.writeJson(
                             out,
