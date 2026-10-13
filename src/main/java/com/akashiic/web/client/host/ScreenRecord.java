@@ -14,7 +14,10 @@ final class ScreenRecord {
     final CreateSpec spec;
     int width;
     int height;
-    /** Last URL asked for (CREATE's, then every NAVIGATE). */
+    /**
+     * Last URL accepted by the client-side check (CREATE's, then every accepted NAVIGATE); about:blank when CREATE's
+     * was refused, or when a replay finds it refused by the policy in force.
+     */
     String url;
 
     boolean audioSet;

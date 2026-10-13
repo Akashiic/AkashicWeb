@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -20,12 +21,19 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.akashiic.web.common.ReasonCode;
+import com.akashiic.web.common.SitePolicy;
 
 @Timeout(120)
 class BrowserHostImplTest {
 
     @TempDir
     File dir;
+
+    /**
+     * Every public site allowed, as the server's default blocklist policy is. Without a policy the client-side URL
+     * check denies everything (the server has not spoken yet), so tests that load pages set one first, like M5 does.
+     */
+    static final SitePolicy OPEN = SitePolicy.blocklist(Collections.<String>emptyList());
 
     /** Records every listener callback. */
     static final class Events implements HostListener {
@@ -69,6 +77,7 @@ class BrowserHostImplTest {
                 throw new IllegalStateException("a broken listener must not affect the others");
             }
         });
+        h.policy(OPEN);
         int id = h.createScreen(
             new CreateSpec(64, 32, 30, "https://example.com/a", CreateSpec.Session.SHARED, CreateSpec.Audio.OS, 0.5f));
         assertTrue(id > 0);
@@ -121,6 +130,7 @@ class BrowserHostImplTest {
             f.clock,
             ProcessControl.forThisPlatform());
         try {
+            h.policy(OPEN);
             h.start();
             await("READY", 60_000, () -> h.status().kind == HostStatus.Kind.READY);
             int id = h.createScreen(
@@ -188,6 +198,7 @@ class BrowserHostImplTest {
             ProcessControl.forThisPlatform());
         Events ev = new Events();
         h.addListener(ev);
+        h.policy(OPEN);
         try {
             h.start();
             await("READY", 60_000, () -> h.status().kind == HostStatus.Kind.READY);
@@ -237,17 +248,167 @@ class BrowserHostImplTest {
             ProcessControl.forThisPlatform());
         Events ev = new Events();
         h.addListener(ev);
+        h.policy(OPEN);
         int id = h.createScreen(
             new CreateSpec(64, 32, 30, "file:///etc/passwd", CreateSpec.Session.SHARED, CreateSpec.Audio.OS, 1f));
         h.navigate(id, "javascript:alert(1)");
         h.navigate(id, "https://ok.example/ with space");
         assertEquals(3, ev.events.size());
-        assertEquals(id + " {\"kind\":\"blocked-url\",\"detail\":\"scheme\"}", ev.events.get(0));
+        // The detail carries the ReasonCode next to the host-style reason (task: refuse with the matching code).
+        assertEquals(
+            id + " {\"kind\":\"blocked-url\",\"detail\":{\"reason\":\"scheme\",\"code\":\"URL_INVALID\",\"host\":\"\",\"via\":\"client\"}}",
+            ev.events.get(0));
+        assertEquals(
+            id + " {\"kind\":\"blocked-url\",\"detail\":{\"reason\":\"malformed\",\"code\":\"URL_INVALID\",\"host\":\"\",\"via\":\"client\"}}",
+            ev.events.get(2));
         h.shutdown();
         assertEquals(
             0,
             h.supervisor()
                 .launches());
+    }
+
+    /**
+     * Task item 3 (CLAUDE.md: site policy and internal-address block on both server and client): URLs are checked
+     * with the server's UrlGate before they leave the JVM. Refused ones never reach the host; the listeners get a
+     * local blocked-url EVENT with URL_INTERNAL, URL_BLOCKED or URL_INVALID; until a policy arrives everything is
+     * denied.
+     */
+    @Test
+    void urlsAreCheckedAgainstTheSitePolicyAndTheInternalBlockBeforeLeavingTheJvm() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "ok");
+        BrowserHostImpl h = new BrowserHostImpl(
+            f.config()
+                .build(),
+            f.clock,
+            ProcessControl.forThisPlatform());
+        Events ev = new Events();
+        h.addListener(ev);
+        try {
+            h.start();
+            await("READY", 60_000, () -> h.status().kind == HostStatus.Kind.READY);
+            // No policy from the server yet: deny-all, so the screen starts blank.
+            int id = h.createScreen(
+                new CreateSpec(32, 16, 30, "https://example.com/", CreateSpec.Session.SHARED, CreateSpec.Audio.OS, 0f));
+            assertEquals(
+                id + " {\"kind\":\"blocked-url\",\"detail\":{\"reason\":\"not-allowed\",\"code\":\"URL_BLOCKED\",\"host\":\"example.com\",\"via\":\"client\"}}",
+                ev.events.get(0));
+
+            h.policy(SitePolicy.blocklist(Collections.singletonList("bad.example")));
+            h.navigate(id, "https://example.com/ok");
+            h.navigate(id, "http://127.0.0.1:8080/admin");
+            h.navigate(id, "http://localhost/");
+            h.navigate(id, "http://[::1]/");
+            h.navigate(id, "http://2130706433/"); // 127.0.0.1 as one decimal number (Chromium accepts it)
+            h.navigate(id, "https://www.bad.example/");
+            h.navigate(id, "http://allowed.example\\@evil.example/");
+            h.navigate(id, "https://user@example.com/");
+            h.navigate(id, "https://example.com/" + (char) 0x200B); // invisible: normalisation drops it
+            h.navigate(id, "https://example.com/last");
+            List<String> codes = new ArrayList<>();
+            for (String e : ev.events.subList(1, ev.events.size())) {
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"code\":\"([A-Z_]+)\"")
+                    .matcher(e);
+                codes.add(m.find() ? m.group(1) : e);
+            }
+            assertEquals(
+                Arrays.asList(
+                    "URL_INTERNAL",
+                    "URL_INTERNAL",
+                    "URL_INTERNAL",
+                    "URL_INTERNAL",
+                    "URL_BLOCKED",
+                    "URL_INVALID",
+                    "URL_INVALID",
+                    "URL_INVALID"),
+                codes);
+            assertTrue(
+                ev.events.get(1)
+                    .contains("\"reason\":\"internal\",\"code\":\"URL_INTERNAL\",\"host\":\"127.0.0.1\""),
+                ev.events.get(1));
+            assertTrue(
+                ev.events.get(5)
+                    .contains("\"reason\":\"blocked\""),
+                ev.events.get(5));
+
+            await(
+                "the last allowed NAVIGATE at the host",
+                20_000,
+                () -> only(f).stream()
+                    .anyMatch(l -> l.contains("https://example.com/last")));
+            List<String> sent = new ArrayList<>();
+            for (String l : only(f)) if (l.startsWith("recv 33 ") || l.startsWith("recv 35 ")) sent.add(l);
+            assertEquals(3, sent.size(), sent.toString());
+            assertTrue(
+                sent.get(0)
+                    .contains("\"url\":\"about:blank\""),
+                sent.get(0));
+            assertTrue(
+                sent.get(1)
+                    .endsWith("{\"url\":\"https://example.com/ok\"}"),
+                sent.get(1));
+            assertTrue(
+                sent.get(2)
+                    .endsWith("{\"url\":\"https://example.com/last\"}"),
+                sent.get(2));
+        } finally {
+            h.shutdown();
+        }
+    }
+
+    /** A replay sends the URL again, so it is checked again, against the policy in force at the reconnect. */
+    @Test
+    void replayRechecksUrlsAgainstTheCurrentPolicy() throws Exception {
+        FakeHostFixture f = new FakeHostFixture(dir, "ok");
+        BrowserHostImpl h = new BrowserHostImpl(
+            f.config()
+                .build(),
+            f.clock,
+            ProcessControl.forThisPlatform());
+        Events ev = new Events();
+        h.addListener(ev);
+        try {
+            h.policy(OPEN);
+            h.start();
+            await("READY", 60_000, () -> h.status().kind == HostStatus.Kind.READY);
+            int id = h.createScreen(
+                new CreateSpec(
+                    32,
+                    16,
+                    30,
+                    "https://example.com/a",
+                    CreateSpec.Session.SHARED,
+                    CreateSpec.Audio.OS,
+                    0f));
+            assertTrue(ev.events.isEmpty(), ev.events.toString());
+            h.policy(
+                new SitePolicy(
+                    SitePolicy.Mode.ALLOWLIST,
+                    Collections.singletonList("other.example"),
+                    Collections.<String>emptyList()));
+            h.action(id, "stop"); // the fake host "crashes"; the replay meets the new policy
+            await(
+                "relaunch",
+                60_000,
+                () -> h.supervisor()
+                    .launches() == 2 && h.status().kind == HostStatus.Kind.READY);
+            await("the replay's CREATE", 20_000, () -> {
+                List<List<String>> runs = runs(f);
+                return runs.size() == 2 && runs.get(1)
+                    .stream()
+                    .anyMatch(l -> l.startsWith("recv 33 "));
+            });
+            String create = null;
+            for (String l : runs(f).get(1)) if (l.startsWith("recv 33 ")) create = l;
+            assertTrue(create.contains("\"url\":\"about:blank\""), create);
+            await("the replay's refusal", 10_000, () -> !ev.events.isEmpty());
+            assertTrue(
+                ev.events.get(0)
+                    .contains("\"code\":\"URL_BLOCKED\",\"host\":\"example.com\""),
+                ev.events.get(0));
+        } finally {
+            h.shutdown();
+        }
     }
 
     /**
