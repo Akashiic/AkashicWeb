@@ -21,8 +21,10 @@ import com.akashiic.web.common.net.ScreenInput;
  */
 public final class KeyboardRouter {
 
-    /** Clipboard text is capped; the server applies its own length cap too. */
+    /** Clipboard text is capped (UTF-16 units). */
     public static final int MAX_PASTE_CHARS = 512;
+    /** One CHAR input carries at most this much: M2's cap per INPUT char text (HostMessages.MAX_CHAR_TEXT). */
+    public static final int PASTE_CHUNK_CHARS = com.akashiic.web.client.host.HostMessages.MAX_CHAR_TEXT;
 
     public enum Action {
         NONE,
@@ -95,10 +97,25 @@ public final class KeyboardRouter {
     }
 
     /**
-     * Clipboard text as one CHAR input: line breaks normalised to "\n", other controls dropped, capped at
-     * {@link #MAX_PASTE_CHARS} without splitting a surrogate pair. Null when nothing typable is left.
+     * Clipboard text as CHAR inputs of at most {@link #PASTE_CHUNK_CHARS} each (M2 cuts a longer CHAR text at that
+     * length, so a single one would lose the rest): line breaks normalised to "\n", other controls dropped, capped at
+     * {@link #MAX_PASTE_CHARS} in total, never splitting a surrogate pair. Empty when nothing typable is left.
      */
-    public static ScreenInput paste(String clipboard) {
+    public static List<ScreenInput> paste(String clipboard) {
+        String text = pasteText(clipboard);
+        if (text == null) return Collections.emptyList();
+        List<ScreenInput> out = new ArrayList<>();
+        for (int start = 0; start < text.length();) {
+            int end = Math.min(text.length(), start + PASTE_CHUNK_CHARS);
+            if (end < text.length() && Character.isHighSurrogate(text.charAt(end - 1))) end--;
+            out.add(ScreenInput.chars(text.substring(start, end)));
+            start = end;
+        }
+        return out;
+    }
+
+    /** The cleaned clipboard text of {@link #paste}, or null when nothing typable is left. */
+    static String pasteText(String clipboard) {
         if (clipboard == null || clipboard.isEmpty()) return null;
         String text = clipboard.replace("\r\n", "\n")
             .replace('\r', '\n');
@@ -116,6 +133,6 @@ public final class KeyboardRouter {
             }
             if (c == '\n' || c == '\t' || KeyMapping.isTypable(c)) out.append(c);
         }
-        return out.length() == 0 ? null : ScreenInput.chars(out.toString());
+        return out.length() == 0 ? null : out.toString();
     }
 }

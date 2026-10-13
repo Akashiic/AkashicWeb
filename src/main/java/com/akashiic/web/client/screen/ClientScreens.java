@@ -90,6 +90,20 @@ public final class ClientScreens {
     static final long PRUNE_GRACE_MS = 3_000;
     /** The controller repeats C2SControl take at most this often while it interacts (D-016 keepalive). */
     static final long KEEPALIVE_MS = 5_000;
+    /** A take on a free screen is re-sent at most this often while unanswered (the server allows 1/s). */
+    static final long TAKE_RETRY_MS = 1_000;
+    /** After asking for a free screen we drive it optimistically for this long, waiting for the server's answer. */
+    static final long TAKE_PENDING_MS = 3_000;
+    /**
+     * How far the in-world pointer reaches, in blocks: the server's default interactRange, within which it accepts
+     * C2SControl take (D-016). Far beyond vanilla's 4.5-block reach, so the top of a tall screen is clickable.
+     */
+    public static final double POINTER_REACH = 24;
+    /** The controller hands the lock back beyond this distance (the server releases at interactRange + 4 anyway). */
+    static final double RELEASE_DISTANCE = POINTER_REACH + 2;
+    static final long RELEASE_RETRY_MS = 2_000;
+    /** Closing the screen keyboard releases the lock after this long without further use of the screen. */
+    static final long LEAVE_GRACE_MS = 5_000;
     /** At most one chat notice per screen and reason this often. */
     static final long NOTICE_INTERVAL_MS = 10_000;
     /** A crashed page is recreated after 5 s, doubling per crash of the same page up to a minute. */
@@ -117,7 +131,7 @@ public final class ClientScreens {
     private PlayerView view;
     private boolean ticked;
     private long lastTickMs;
-    private long lastHousekeepingMs;
+    private long lastHousekeepingMs = ClientScreen.NEVER;
 
     /**
      * @param clientThread how host callbacks reach the client thread ({@code ClientTaskQueue::add} in the game)
@@ -177,7 +191,7 @@ public final class ClientScreens {
             s.navigatedEpoch = state.epoch;
             return;
         }
-        if (sessionOf(state.mode) != sessionOf(old.mode)) {
+        if (sessionFor(state) != sessionFor(old)) {
             destroyBrowser(s, host); // a different session kind needs a new browser; recreated next tick
             return;
         }
@@ -382,6 +396,7 @@ public final class ClientScreens {
         updateViewMetrics(v);
         Set<ScreenKey> granted = browsersAllowed() ? grant() : Collections.<ScreenKey>emptySet();
         for (ClientScreen s : new ArrayList<>(screens.values())) {
+            updateControl(s, now);
             if (s.recreateAtMs != 0 && now >= s.recreateAtMs) {
                 s.recreateAtMs = 0;
                 if (s.failure == ReasonCode.PAGE_CRASHED) destroyBrowser(s, access.started()); // recreated below
@@ -509,50 +524,140 @@ public final class ClientScreens {
     // ------------------------------------------------------------------ player actions (client thread)
 
     /**
-     * A click from the crosshair: a page left click on this client's own browser (D-016: input never goes to the
-     * server). Applied only while the server says we are the controller, or on a PRIVATE screen. On a free screen the
-     * click asks for the lock and is not replayed once it is granted (M5 follow-up).
+     * A page click (press and release at once), e.g. from a test or a GUI button. In-world clicks use
+     * {@link #pointerDown} and {@link #pointerUp} so drags work. False when the player may not click this screen.
      */
     public boolean click(ClientScreen s, double u, double v, int button, int modifiers) {
-        if (!can(s, Rights.CLICK_TYPE)) return false;
-        takeIfFree(s);
-        int count = clicks.click(s.key, u, v, timeMs.getAsLong());
-        applyLocally(s, ScreenInput.pointer(ScreenInput.Kind.DOWN, (float) u, (float) v, button, count, modifiers));
-        applyLocally(s, ScreenInput.pointer(ScreenInput.Kind.UP, (float) u, (float) v, button, count, modifiers));
-        return true;
-    }
-
-    public boolean wheel(ClientScreen s, double u, double v, float notches, int modifiers) {
-        if (!can(s, Rights.CLICK_TYPE) || notches == 0) return false;
-        takeIfFree(s);
-        applyLocally(s, ScreenInput.wheel((float) u, (float) v, 0, notches, modifiers));
-        return true;
-    }
-
-    /** Keyboard GUI output, applied to this client's own browser like {@link #click}. */
-    public boolean type(ClientScreen s, ScreenInput input) {
-        if (input == null || !can(s, Rights.CLICK_TYPE)) return false;
-        takeIfFree(s);
-        applyLocally(s, input);
+        if (!pointerDown(s, u, v, button, modifiers)) return false;
+        pointerUp(s, u, v, button, modifiers);
         return true;
     }
 
     /**
-     * D-016: the local player's input goes straight to its own browser, only while ScreenState.controller is this
-     * player's server-side UUID (or the screen is PRIVATE). While it does, the controller repeats C2SControl take at
-     * most every {@link #KEEPALIVE_MS} so the server does not release the lock as idle.
+     * Button pressed at page (u, v). On a free screen this asks for the lock and the press is applied at once
+     * (optimistically, see {@link #drivesInput}); while someone else controls the screen nothing reaches our browser.
+     * False when the player may not click this screen (the click then falls through to the game).
      */
-    private boolean applyLocally(ClientScreen s, ScreenInput input) {
-        boolean shared = s.state().mode != ScreenMode.PRIVATE;
-        if (shared && !isController(s)) return false;
+    public boolean pointerDown(ClientScreen s, double u, double v, int button, int modifiers) {
+        if (!can(s, Rights.CLICK_TYPE)) return false;
+        long now = timeMs.getAsLong();
+        claim(s, now);
+        s.pressCount = clicks.click(s.key, u, v, now);
+        apply(
+            s,
+            ScreenInput.pointer(ScreenInput.Kind.DOWN, (float) u, (float) v, button, s.pressCount, modifiers),
+            now);
+        return true;
+    }
+
+    /** Button released at page (u, v): ends a click or a drag (seek bars, sliders, text selection). */
+    public void pointerUp(ClientScreen s, double u, double v, int button, int modifiers) {
+        long now = timeMs.getAsLong();
+        apply(
+            s,
+            ScreenInput
+                .pointer(ScreenInput.Kind.UP, (float) u, (float) v, button, Math.max(1, s.pressCount), modifiers),
+            now);
+    }
+
+    /**
+     * The crosshair moved over the page (hover menus, video controls, drags). Sent only when it lands on another page
+     * pixel, and only to a browser we drive; hovering never takes the lock and is not a keepalive.
+     */
+    public void pointerMove(ClientScreen s, double u, double v) {
+        int[] px = InputTranslator.pixel((float) u, (float) v, s.requestedW, s.requestedH);
+        if (px == null || (px[0] == s.lastPointerX && px[1] == s.lastPointerY)) return;
+        long now = timeMs.getAsLong();
+        if (apply(
+            s,
+            ScreenInput.pointer(ScreenInput.Kind.MOVE, (float) u, (float) v, ScreenInput.BUTTON_LEFT, 0, 0),
+            now)) {
+            s.lastPointerX = px[0];
+            s.lastPointerY = px[1];
+        }
+    }
+
+    public boolean wheel(ClientScreen s, double u, double v, float notches, int modifiers) {
+        if (!can(s, Rights.CLICK_TYPE) || notches == 0) return false;
+        long now = timeMs.getAsLong();
+        claim(s, now);
+        apply(s, ScreenInput.wheel((float) u, (float) v, 0, notches, modifiers), now);
+        return true;
+    }
+
+    /** Keyboard GUI output, applied to this client's own browser like {@link #pointerDown}. */
+    public boolean type(ClientScreen s, ScreenInput input) {
+        if (input == null || !can(s, Rights.CLICK_TYPE)) return false;
+        long now = timeMs.getAsLong();
+        claim(s, now);
+        apply(s, input, now);
+        return true;
+    }
+
+    /**
+     * D-016: whether the local player's input reaches its own browser now. On a PRIVATE screen every viewer drives
+     * their own browser. On a SHARED screen only the controller does, as the server says it (ScreenState.controller
+     * against S2CHello.playerUuid) - or, for {@link #TAKE_PENDING_MS} after we asked for the lock of a free screen,
+     * us optimistically: the gesture that takes a screen is applied at once instead of being swallowed. If the server
+     * gives the lock to someone else, or never answers, input stops and our page is brought back to the server's URL.
+     */
+    public boolean drivesInput(ClientScreen s) {
+        return drivesInput(s, timeMs.getAsLong());
+    }
+
+    private boolean drivesInput(ClientScreen s, long now) {
+        if (s.state().mode == ScreenMode.PRIVATE || isController(s)) return true;
+        return s.state().controller == null && now < s.takePendingUntilMs;
+    }
+
+    /**
+     * Asks for the lock of a free screen (re-sent at most every {@link #TAKE_RETRY_MS}, the server's rate), or keeps
+     * ours alive: the controller repeats take at most every {@link #KEEPALIVE_MS} while it interacts, and the server
+     * releases a lock that has seen none for controllerIdleSeconds. Never on PRIVATE screens (no lock there).
+     */
+    private void claim(ClientScreen s, long now) {
+        if (s.state().mode == ScreenMode.PRIVATE) return;
+        s.leaveAtMs = 0; // still using the screen
+        if (s.state().controller == null) {
+            if (now - s.lastTakeMs >= TAKE_RETRY_MS) {
+                control(s, true);
+                s.takePendingUntilMs = now + TAKE_PENDING_MS;
+            }
+        } else if (isController(s) && now - s.lastTakeMs >= KEEPALIVE_MS) {
+            control(s, true);
+        }
+    }
+
+    /** D-016: input goes straight to our own browser, never to the server; dropped when we do not drive it. */
+    private boolean apply(ClientScreen s, ScreenInput input, long now) {
+        if (!drivesInput(s, now)) return false;
         BrowserHost host = access.started();
         if (host == null || s.hostScreenId == 0) return false;
         InputEvent e = InputTranslator.toHost(input, s.requestedW, s.requestedH);
         if (e == null) return false;
         host.input(s.hostScreenId, e);
-        long now = timeMs.getAsLong();
-        if (shared && now - s.lastTakeMs >= KEEPALIVE_MS) control(s, true);
+        if (s.state().mode != ScreenMode.PRIVATE && !isController(s)) s.optimistic = true;
         return true;
+    }
+
+    /**
+     * The player is done with this screen: hand the lock back now so someone else can take it. Nothing to do on
+     * PRIVATE screens or when we do not hold it.
+     */
+    public void leave(ClientScreen s) {
+        if (s == null) return;
+        s.takePendingUntilMs = 0;
+        s.leaveAtMs = 0;
+        if (s.state().mode != ScreenMode.PRIVATE && isController(s)) control(s, false);
+    }
+
+    /**
+     * The player closed the screen keyboard: release the lock after {@link #LEAVE_GRACE_MS} unless they keep using the
+     * screen in the world meanwhile (closing the keyboard to click a search result must not drop and re-take the lock).
+     */
+    public void leaveSoon(ClientScreen s) {
+        if (s == null || s.state().mode == ScreenMode.PRIVATE) return;
+        s.leaveAtMs = timeMs.getAsLong() + LEAVE_GRACE_MS;
     }
 
     public void setUrl(ClientScreen s, String url) {
@@ -576,14 +681,54 @@ public final class ClientScreens {
             host.action(s.hostScreenId, action);
     }
 
+    /** C2SControl take (also the keepalive) or release. */
     public void control(ClientScreen s, boolean take) {
-        if (take) s.lastTakeMs = timeMs.getAsLong();
+        long now = timeMs.getAsLong();
+        if (take) {
+            s.lastTakeMs = now;
+        } else {
+            s.takePendingUntilMs = 0;
+            s.lastReleaseMs = now;
+        }
         server.get()
             .control(s.key, take);
     }
 
-    private void takeIfFree(ClientScreen s) {
-        if (s.state().controller == null && s.state().mode != ScreenMode.PRIVATE) control(s, true);
+    /**
+     * Our optimistic input did not become control (the server gave the lock to someone else, refused, or did not
+     * answer): stop treating the page as ours and, if our clicks moved it away from the server's URL, bring it back
+     * like any follower.
+     */
+    private void endOptimism(ClientScreen s) {
+        if (!s.optimistic) return;
+        s.optimistic = false;
+        s.takePendingUntilMs = 0;
+        BrowserHost host = access.started();
+        String page = s.page.url;
+        if (host != null && s.hostScreenId != 0
+            && hasPage(page)
+            && hasPage(s.state().url)
+            && !UrlConvergence.sameDocument(page, s.state().url)) {
+            LOG.debug("AkashicWeb: {} lock not granted; back to the server's URL", s.key);
+            navigate(s, host);
+        }
+    }
+
+    /** Per tick: settle optimistic input and hand the lock back when the controller walked away. */
+    private void updateControl(ClientScreen s, long now) {
+        if (s.state().mode == ScreenMode.PRIVATE) return;
+        if (isController(s)) {
+            s.optimistic = false;
+            s.takePendingUntilMs = 0;
+            boolean away = !Double.isInfinite(s.distance) && s.distance > RELEASE_DISTANCE;
+            boolean closed = s.leaveAtMs != 0 && now >= s.leaveAtMs;
+            if ((away || closed) && now - s.lastReleaseMs >= RELEASE_RETRY_MS) {
+                s.leaveAtMs = 0;
+                control(s, false);
+            }
+        } else if (s.optimistic && (s.state().controller != null || now >= s.takePendingUntilMs)) {
+            endOptimism(s);
+        }
     }
 
     // ------------------------------------------------------------------ internals
@@ -650,7 +795,7 @@ public final class ClientScreens {
             size[1],
             lod.fps,
             s.state().url,
-            sessionOf(s.state().mode),
+            sessionFor(s.state()),
             CreateSpec.Audio.OS,
             0f);
         int id;
@@ -813,6 +958,9 @@ public final class ClientScreens {
         s.lastSyncSent = null;
         s.localMedia = null;
         s.page = PageState.EMPTY;
+        s.lastPointerX = -1;
+        s.lastPointerY = -1;
+        s.optimistic = false;
         s.audio.invalidate();
         resetSync(s);
     }
@@ -840,6 +988,16 @@ public final class ClientScreens {
     static CreateSpec.Session sessionOf(ScreenMode mode) {
         // SHARED and CAST screens get a fresh in-memory session (no logins: the confused-deputy fix, ADR-012 item 1).
         return mode == ScreenMode.PRIVATE ? CreateSpec.Session.PRIVATE : CreateSpec.Session.SHARED;
+    }
+
+    /**
+     * The session kind for this player's browser of a screen. The persistent profile (logins) is the owner's own: any
+     * other viewer of a PRIVATE screen loads the owner's chosen URL in a fresh in-memory session, otherwise the owner
+     * could point the URL at a page acting with the visitor's logins (the confused deputy ADR-012 closed for SHARED).
+     */
+    private CreateSpec.Session sessionFor(ScreenState st) {
+        boolean owner = st.owner != null && st.owner.equals(player());
+        return st.mode == ScreenMode.PRIVATE && owner ? CreateSpec.Session.PRIVATE : CreateSpec.Session.SHARED;
     }
 
     /** Page size in CSS pixels, clamped to what we accept; a missing size falls back to 1280x720 (ADR default). */

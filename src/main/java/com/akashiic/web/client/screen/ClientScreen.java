@@ -39,11 +39,29 @@ public final class ClientScreen {
     MediaClock mediaClock;
     LocalMedia localMedia;
     SyncCommand lastSyncSent;
-    long lastSyncEvalMs;
+    long lastSyncEvalMs = NEVER;
     SyncDecision lastDecision = SyncDecision.WAITING;
     boolean wasController;
+    /**
+     * "Long ago" for the time stamps below: the monotonic clock's origin is arbitrary (System.nanoTime may even be
+     * negative), so 0 must not mean "never". Far enough from Long.MIN_VALUE that {@code now - NEVER} cannot overflow.
+     */
+    static final long NEVER = Long.MIN_VALUE / 4;
+
     /** Last C2SControl take sent for this screen (D-016 keepalive while the controller interacts). */
-    long lastTakeMs;
+    long lastTakeMs = NEVER;
+    long lastReleaseMs = NEVER;
+    /** The keyboard was closed: release the lock at this time unless the screen is used again (0 = not due). */
+    long leaveAtMs;
+    /** Until then our take of a free screen is pending and our input is applied optimistically (D-016). */
+    long takePendingUntilMs;
+    /** Input was applied while the server had not confirmed us as the controller. */
+    boolean optimistic;
+    /** Click count of the last press, reused by its release. */
+    int pressCount;
+    /** Page pixel of the last pointer move sent, so the crosshair only sends a move when it changes. */
+    int lastPointerX = -1;
+    int lastPointerY = -1;
 
     // Page
     PageState page = PageState.EMPTY;
@@ -156,24 +174,15 @@ public final class ClientScreen {
         return failure;
     }
 
+    /**
+     * M4's deep copy (every field, so members added later, like friendNames and controllerName, are never dropped
+     * here), with null strings made empty: the GUIs draw them.
+     */
     static ScreenState copyOf(ScreenState s) {
-        ScreenState c = new ScreenState();
-        c.key = s.key;
-        c.widthBlocks = s.widthBlocks;
-        c.heightBlocks = s.heightBlocks;
-        c.resolutionW = s.resolutionW;
-        c.resolutionH = s.resolutionH;
-        c.rotation = s.rotation;
-        c.url = s.url == null ? "" : s.url;
-        c.epoch = s.epoch;
-        c.owner = s.owner;
-        c.ownerName = s.ownerName == null ? "" : s.ownerName;
-        if (s.friends != null) c.friends.addAll(s.friends);
-        c.friendRights = s.friendRights;
-        c.otherRights = s.otherRights;
-        c.locked = s.locked;
-        c.controller = s.controller;
-        c.mode = s.mode;
+        ScreenState c = s.copy();
+        if (c.url == null) c.url = "";
+        if (c.ownerName == null) c.ownerName = "";
+        if (c.controllerName == null) c.controllerName = "";
         return c;
     }
 }

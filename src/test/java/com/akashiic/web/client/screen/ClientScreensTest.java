@@ -420,14 +420,14 @@ class ClientScreensTest {
         screens.onScreenState(mine);
         assertTrue(screens.click(cs, 0.25, 0.75, ScreenInput.BUTTON_LEFT, 0));
         assertEquals("control true", server.sent.get(server.sent.size() - 1), "a free screen is taken first");
-        assertTrue(host.inputs.isEmpty(), "not applied before the server grants the lock");
+        assertEquals(2, host.inputs.size(), "D-016: the click that takes a free screen is applied at once");
         mine.controller = ME;
         screens.onScreenState(mine);
         screens.click(cs, 0.25, 0.75, ScreenInput.BUTTON_LEFT, 0);
-        assertEquals(InputEvent.Type.MOUSE_DOWN, host.inputs.get(0).type);
-        assertEquals(InputEvent.Type.MOUSE_UP, host.inputs.get(1).type);
-        assertEquals(320, host.inputs.get(0).x);
-        assertEquals(2, host.inputs.get(0).clickCount, "double click");
+        assertEquals(InputEvent.Type.MOUSE_DOWN, host.inputs.get(2).type);
+        assertEquals(InputEvent.Type.MOUSE_UP, host.inputs.get(3).type);
+        assertEquals(320, host.inputs.get(2).x);
+        assertEquals(2, host.inputs.get(2).clickCount, "double click");
         assertTrue(screens.can(cs, Rights.CHANGE_URL));
     }
 

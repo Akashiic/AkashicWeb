@@ -1,7 +1,6 @@
 package com.akashiic.web.client.gui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -108,21 +107,57 @@ class KeyboardRouterTest {
         assertEquals(Action.NONE, down(Keyboard.KEY_NONE, '\uDE00').action, "lone low surrogate");
     }
 
+    /** All CHAR texts of a paste, joined. */
+    private static String pasted(String clipboard) {
+        StringBuilder b = new StringBuilder();
+        for (ScreenInput in : KeyboardRouter.paste(clipboard)) {
+            assertEquals(Kind.CHAR, in.kind);
+            b.append(in.text);
+        }
+        return b.toString();
+    }
+
     @Test
     void pasteIsSanitizedAndCapped() {
-        assertEquals("linha 1\nlinha 2\tção", KeyboardRouter.paste("linha 1\r\nlinha 2\tção\u0000").text);
-        assertNull(KeyboardRouter.paste(""));
-        assertNull(KeyboardRouter.paste("\u0001\u0002"));
-        assertNull(KeyboardRouter.paste(null));
+        assertEquals("linha 1\nlinha 2\tção", pasted("linha 1\r\nlinha 2\tção\u0000"));
+        assertTrue(
+            KeyboardRouter.paste("")
+                .isEmpty());
+        assertTrue(
+            KeyboardRouter.paste("\u0001\u0002")
+                .isEmpty());
+        assertTrue(
+            KeyboardRouter.paste(null)
+                .isEmpty());
         StringBuilder big = new StringBuilder();
         for (int i = 0; i < 2_000; i++) big.append('x');
-        assertEquals(KeyboardRouter.MAX_PASTE_CHARS, KeyboardRouter.paste(big.toString()).text.length());
+        assertEquals(KeyboardRouter.MAX_PASTE_CHARS, pasted(big.toString()).length());
         StringBuilder emoji = new StringBuilder();
         for (int i = 0; i < 300; i++) emoji.append("😀");
-        String capped = KeyboardRouter.paste(emoji.toString()).text;
+        String capped = pasted(emoji.toString());
         assertTrue(capped.length() <= KeyboardRouter.MAX_PASTE_CHARS);
         assertTrue(Character.isLowSurrogate(capped.charAt(capped.length() - 1)), "pair not split");
-        assertEquals("ab", KeyboardRouter.paste("a\uD83Db").text, "lone high surrogate dropped, next char kept");
-        assertEquals(Kind.CHAR, KeyboardRouter.paste("x").kind);
+        assertEquals("ab", pasted("a\uD83Db"), "lone high surrogate dropped, next char kept");
+    }
+
+    /** Review D-016 (g): M2 cuts one CHAR text at 256 characters, so a long paste goes out in pieces. */
+    @Test
+    void longPastesAreSplitIntoPiecesM2KeepsWhole() {
+        StringBuilder big = new StringBuilder();
+        for (int i = 0; i < 600; i++) big.append((char) ('a' + i % 26));
+        List<ScreenInput> parts = KeyboardRouter.paste(big.toString());
+        assertEquals(2, parts.size());
+        for (ScreenInput p : parts) {
+            assertTrue(
+                p.text.length() <= com.akashiic.web.client.host.HostMessages.MAX_CHAR_TEXT,
+                "fits one INPUT: " + p.text.length());
+        }
+        assertEquals(big.substring(0, KeyboardRouter.MAX_PASTE_CHARS), pasted(big.toString()));
+        StringBuilder emoji = new StringBuilder("x"); // shifts the pairs so a naive cut would split one
+        for (int i = 0; i < 200; i++) emoji.append("😀");
+        for (ScreenInput p : KeyboardRouter.paste(emoji.toString())) {
+            assertTrue(!Character.isHighSurrogate(p.text.charAt(p.text.length() - 1)), "no piece ends inside a pair");
+            assertTrue(!Character.isLowSurrogate(p.text.charAt(0)), "no piece starts inside a pair");
+        }
     }
 }

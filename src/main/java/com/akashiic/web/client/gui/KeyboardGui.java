@@ -14,9 +14,11 @@ import com.akashiic.web.common.net.ScreenInput;
 
 /**
  * Typing on a screen: while open, every LWJGL 2 keyboard event (downs, ups and repeats) goes through
- * {@link KeyboardRouter} to C2SKey; Esc closes. No darkened background, so the player watches the page while typing.
- * The mouse wheel scrolls the page. Vanilla's own key hooks (F2 screenshot, F11 fullscreen) still run, as in
- * {@link GuiScreen#handleKeyboardInput()}.
+ * {@link KeyboardRouter} straight to this client's own browser (D-016: keystrokes never leave the client); Esc closes.
+ * The first key on a free screen takes it. While someone else controls the screen the keys are dropped and the bar
+ * says who controls it. No darkened background, so the player watches the page while typing. The mouse wheel scrolls
+ * the page. Vanilla's own key hooks (F2 screenshot, F11 fullscreen) still run, as in
+ * {@link GuiScreen#handleKeyboardInput()}. A vanilla GuiScreen until the wave-3 ModularUI2 GUIs (D-017).
  */
 public final class KeyboardGui extends GuiScreen {
 
@@ -60,11 +62,9 @@ public final class KeyboardGui extends GuiScreen {
             case CLOSE:
                 mc.displayGuiScreen(null);
                 return;
-            case PASTE: {
-                ScreenInput text = KeyboardRouter.paste(getClipboardString());
-                if (text != null) screens.type(s, text);
+            case PASTE:
+                for (ScreenInput text : KeyboardRouter.paste(getClipboardString())) screens.type(s, text);
                 break;
-            }
             case SEND:
                 for (ScreenInput in : r.inputs) screens.type(s, in);
                 break;
@@ -96,10 +96,11 @@ public final class KeyboardGui extends GuiScreen {
         int barTop = height - 28;
         drawRect(0, barTop, width, height, 0xA0000000);
         drawCenteredString(fontRendererObj, I18n.format(LangKeys.GUI_KEYBOARD_HINT), width / 2, barTop + 5, 0xFFFFFF);
-        if (s != null && !screens.isController(s) && s.state().controller != null) {
+        if (s != null && !screens.drivesInput(s) && s.state().controller != null) {
+            // Someone else holds the lock: our keys stay on this client and are dropped (D-016). Say who.
             drawCenteredString(
                 fontRendererObj,
-                I18n.format(LangKeys.GUI_KEYBOARD_NOT_CONTROLLER),
+                AddressBarGui.controllerLine(screens, s.state()),
                 width / 2,
                 barTop + 16,
                 0xFFB060);
@@ -115,9 +116,11 @@ public final class KeyboardGui extends GuiScreen {
         super.drawScreen(mouseX, mouseY, partialTicks);
     }
 
+    /** Typing is over: the lock goes back after a short grace unless the player keeps using the screen in the world. */
     @Override
     public void onGuiClosed() {
         Keyboard.enableRepeatEvents(false);
+        screens.leaveSoon(screens.get(key));
     }
 
     @Override
