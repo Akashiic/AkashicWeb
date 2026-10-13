@@ -1,0 +1,90 @@
+# AkashicWeb (English). Reason texts take at most one argument (%s = detail, may be empty).
+
+# Blocks and items
+tile.akashicweb.screen.name=Web Screen
+tile.akashicweb.screen.tooltip=Build a flat rectangle (2x2 or larger), then right-click it with an empty hand.
+
+# Messages
+akashicweb.msg.formed=Screen formed: %sx%s blocks. Right-click it to open the browser.
+
+# Reason codes (akashicweb.reason.<code>)
+akashicweb.reason.ok=Done.
+akashicweb.reason.engine_absent=The browser engine is not installed.
+akashicweb.reason.download_failed=The browser engine download failed. %s
+akashicweb.reason.hash_mismatch=The downloaded browser engine is damaged (checksum mismatch). %s
+akashicweb.reason.disk_full=Not enough free disk space for the browser engine. %s
+akashicweb.reason.tls_failed=Secure connection failed while downloading the browser engine. %s
+akashicweb.reason.av_blocked=Your antivirus blocked the browser engine. %s
+akashicweb.reason.sac_blocked=Windows Smart App Control blocks the browser engine on this PC. %s
+akashicweb.reason.unsupported_os=Screens are not supported on this operating system yet. %s
+akashicweb.reason.unsupported_arch=Screens need a 64-bit x86 PC and 64-bit Java. %s
+akashicweb.reason.host_exited=The browser process stopped; it will restart. %s
+akashicweb.reason.host_crash_loop=The browser process keeps crashing; screens are paused. %s
+akashicweb.reason.host_handshake=The browser process did not start correctly. %s
+akashicweb.reason.protocol_mismatch=This AkashicWeb version does not match the server's. Update the modpack. %s
+akashicweb.reason.disabled_by_server=Screens are switched off on this server right now.
+akashicweb.reason.no_permission=You are not allowed to do that on this screen. %s
+akashicweb.reason.url_blocked=This site is not allowed on screens: %s
+akashicweb.reason.url_internal=Local and private network addresses are not allowed: %s
+akashicweb.reason.rate_limited=Too many actions, slow down. %s
+akashicweb.reason.screen_locked=This screen is locked by an admin.
+akashicweb.reason.not_controller=Someone else is controlling this screen.
+akashicweb.reason.too_far=You are too far from the screen.
+akashicweb.reason.stale_epoch=The page changed meanwhile; your action was dropped.
+akashicweb.reason.browser_budget=Too many screens around; get closer to this one. %s
+akashicweb.reason.url_invalid=That address is not valid (only http and https). %s
+akashicweb.reason.wrong_dimension=That screen is in another dimension.
+akashicweb.reason.unknown_screen=That screen does not exist (any more). %s
+akashicweb.reason.bad_packet=The server refused a damaged request. %s
+akashicweb.reason.controller_busy=Another player is controlling this screen.
+akashicweb.reason.out_of_view=Look at the screen from its front side.
+akashicweb.reason.unknown_player=Unknown player: %s
+akashicweb.reason.too_many_friends=Too many friends on this screen (maximum %s).
+akashicweb.reason.bad_resolution=That page size is not allowed: %s
+akashicweb.reason.wrong_mode=That does not work in this screen's mode.
+akashicweb.reason.fake_player=Machines cannot use screens.
+akashicweb.reason.screen_too_small=A screen needs at least %s blocks.
+akashicweb.reason.screen_too_big=A screen can be at most %s blocks.
+akashicweb.reason.screen_invalid_shape=Not a flat, solid rectangle of screen blocks (check %s).
+akashicweb.reason.screen_overlap=This would cover a screen owned by %s.
+akashicweb.reason.screen_limit=You already own the maximum number of screens (%s).
+akashicweb.reason.chunk_not_loaded=Part of the screen is not loaded (%s).
+akashicweb.reason.screen_dissolved=A screen was taken apart because its blocks were removed (%s).
+
+# Commands
+akashicweb.cmd.queued=Command queued for the server thread; see the server log for its result.
+akashicweb.cmd.players_only=Only a player in the screen's dimension can do that.
+akashicweb.cmd.no_screen=No screen found (look at one, or give x y z [side] [dim]).
+akashicweb.cmd.web.usage=/web <info|take|release|doctor>
+akashicweb.cmd.admin.usage=/webadmin <list [radius]|info|clear|lock|unlock|takeover [x y z [side] [dim]]|kill <on|off>|policy reload|doctor <player>|status>
+akashicweb.cmd.control.now=Controller now: %s
+akashicweb.cmd.info.header=Screen at %s
+akashicweb.cmd.info.size= Size %sx%s blocks, page %sx%s, rotation %s
+akashicweb.cmd.info.owner= Owner: %s
+akashicweb.cmd.info.url= URL: %s (epoch %s)
+akashicweb.cmd.info.state= Mode %s, controller %s, locked %s, friends %s
+akashicweb.cmd.info.rights= Your rights: %s (1 URL, 2 click/type, 4 friends, 8 rights, 16 resolution)
+akashicweb.cmd.info.clock= Media: %ss, rate %s, paused %s, live %s
+akashicweb.cmd.list.header=%s screens shown (%s known):
+akashicweb.cmd.list.more= ... and %s more
+akashicweb.cmd.cleared=Screen cleared: %s
+akashicweb.cmd.locked=Screen locked: %s
+akashicweb.cmd.unlocked=Screen unlocked: %s
+akashicweb.cmd.takeover=You now control the screen at %s
+akashicweb.cmd.kill.on=Kill switch ON: every client shows a placeholder.
+akashicweb.cmd.kill.off=Kill switch off: screens are back.
+akashicweb.cmd.policy.failed=Could not read the config; the previous settings stay in force.
+akashicweb.cmd.policy.reloaded=Config reloaded: %s, %s allowed, %s blocked hosts.
+akashicweb.cmd.doctor.header=AkashicWeb diagnostics for %s
+akashicweb.cmd.doctor.nothing= The server has no AkashicWeb data for this player yet.
+akashicweb.cmd.doctor.hello= Hello sent at %s
+akashicweb.cmd.doctor.no_preflight= No preflight report (opt-in).
+akashicweb.cmd.doctor.preflight= Preflight: %s
+akashicweb.cmd.doctor.counts= Totals: %s
+akashicweb.cmd.status.header=AkashicWeb status (protocol %s)
+akashicweb.cmd.status.kill= Kill switch: %s
+akashicweb.cmd.status.policy= Site policy: %s, %s allowed, %s blocked
+akashicweb.cmd.status.screens= Screens: %s loaded, %s known, %s with live state
+akashicweb.cmd.status.queue= Action queue: %s
+akashicweb.cmd.status.perms= Bukkit permissions: %s, commands registered: %s
+akashicweb.cmd.status.players= Players online: %s

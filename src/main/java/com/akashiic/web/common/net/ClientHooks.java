@@ -31,6 +31,14 @@ public interface ClientHooks {
 
     void onNotice(ReasonCode code, String[] args);
 
+    /**
+     * Added by M4: a player right-clicked a formed screen with an empty hand, on the client thread (from
+     * Block.onBlockActivated, which on Crucible runs only if no region plugin cancelled the interaction). (u, v) is the
+     * page position of the hit, or NaN when the frame was hit. M5 opens its screen GUI here; the server does nothing
+     * for this click (input travels in C2SPointer/C2SKey).
+     */
+    default void onScreenActivated(ScreenKey key, double u, double v, boolean sneaking) {}
+
     ClientHooks NOOP = new ClientHooks() {
 
         @Override

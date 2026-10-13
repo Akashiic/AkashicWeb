@@ -1,0 +1,90 @@
+# AkashicWeb (português do Brasil). Textos de motivo usam no máximo um argumento (%s = detalhe, pode ser vazio).
+
+# Blocos e itens
+tile.akashicweb.screen.name=Tela Web
+tile.akashicweb.screen.tooltip=Monte um retângulo plano (2x2 ou maior) e clique com o botão direito com a mão vazia.
+
+# Mensagens
+akashicweb.msg.formed=Tela montada: %sx%s blocos. Clique com o botão direito para abrir o navegador.
+
+# Códigos de motivo (akashicweb.reason.<código>)
+akashicweb.reason.ok=Pronto.
+akashicweb.reason.engine_absent=O motor do navegador não está instalado.
+akashicweb.reason.download_failed=Falhou o download do motor do navegador. %s
+akashicweb.reason.hash_mismatch=O motor do navegador baixado está corrompido (checksum diferente). %s
+akashicweb.reason.disk_full=Falta espaço em disco para o motor do navegador. %s
+akashicweb.reason.tls_failed=A conexão segura falhou ao baixar o motor do navegador. %s
+akashicweb.reason.av_blocked=O antivírus bloqueou o motor do navegador. %s
+akashicweb.reason.sac_blocked=O Controle Inteligente de Aplicativos do Windows bloqueia o motor do navegador neste PC. %s
+akashicweb.reason.unsupported_os=As telas ainda não funcionam neste sistema operacional. %s
+akashicweb.reason.unsupported_arch=As telas precisam de um PC x86 de 64 bits e Java de 64 bits. %s
+akashicweb.reason.host_exited=O processo do navegador parou; ele vai reiniciar. %s
+akashicweb.reason.host_crash_loop=O processo do navegador continua travando; as telas foram pausadas. %s
+akashicweb.reason.host_handshake=O processo do navegador não iniciou direito. %s
+akashicweb.reason.protocol_mismatch=Esta versão do AkashicWeb não combina com a do servidor. Atualize o modpack. %s
+akashicweb.reason.disabled_by_server=As telas estão desligadas neste servidor agora.
+akashicweb.reason.no_permission=Você não tem permissão para fazer isso nesta tela. %s
+akashicweb.reason.url_blocked=Este site não é permitido nas telas: %s
+akashicweb.reason.url_internal=Endereços locais e de rede privada não são permitidos: %s
+akashicweb.reason.rate_limited=Ações demais, vá com calma. %s
+akashicweb.reason.screen_locked=Esta tela foi bloqueada por um admin.
+akashicweb.reason.not_controller=Outra pessoa está controlando esta tela.
+akashicweb.reason.too_far=Você está longe demais da tela.
+akashicweb.reason.stale_epoch=A página mudou nesse meio-tempo; sua ação foi descartada.
+akashicweb.reason.browser_budget=Telas demais por perto; aproxime-se desta. %s
+akashicweb.reason.url_invalid=Esse endereço não é válido (só http e https). %s
+akashicweb.reason.wrong_dimension=Essa tela está em outra dimensão.
+akashicweb.reason.unknown_screen=Essa tela não existe (mais). %s
+akashicweb.reason.bad_packet=O servidor recusou um pedido danificado. %s
+akashicweb.reason.controller_busy=Outro jogador está controlando esta tela.
+akashicweb.reason.out_of_view=Olhe para a tela pela frente.
+akashicweb.reason.unknown_player=Jogador desconhecido: %s
+akashicweb.reason.too_many_friends=Amigos demais nesta tela (máximo %s).
+akashicweb.reason.bad_resolution=Esse tamanho de página não é permitido: %s
+akashicweb.reason.wrong_mode=Isso não funciona no modo desta tela.
+akashicweb.reason.fake_player=Máquinas não podem usar as telas.
+akashicweb.reason.screen_too_small=Uma tela precisa de pelo menos %s blocos.
+akashicweb.reason.screen_too_big=Uma tela pode ter no máximo %s blocos.
+akashicweb.reason.screen_invalid_shape=Não é um retângulo plano e completo de blocos de tela (confira %s).
+akashicweb.reason.screen_overlap=Isso cobriria uma tela de %s.
+akashicweb.reason.screen_limit=Você já tem o número máximo de telas (%s).
+akashicweb.reason.chunk_not_loaded=Parte da tela não está carregada (%s).
+akashicweb.reason.screen_dissolved=Uma tela foi desmontada porque blocos dela foram removidos (%s).
+
+# Comandos
+akashicweb.cmd.queued=Comando enfileirado para a thread do servidor; veja o resultado no log do servidor.
+akashicweb.cmd.players_only=Só um jogador na dimensão da tela pode fazer isso.
+akashicweb.cmd.no_screen=Nenhuma tela encontrada (olhe para uma, ou informe x y z [lado] [dim]).
+akashicweb.cmd.web.usage=/web <info|take|release|doctor>
+akashicweb.cmd.admin.usage=/webadmin <list [raio]|info|clear|lock|unlock|takeover [x y z [lado] [dim]]|kill <on|off>|policy reload|doctor <jogador>|status>
+akashicweb.cmd.control.now=Controle agora: %s
+akashicweb.cmd.info.header=Tela em %s
+akashicweb.cmd.info.size= Tamanho %sx%s blocos, página %sx%s, rotação %s
+akashicweb.cmd.info.owner= Dono: %s
+akashicweb.cmd.info.url= URL: %s (época %s)
+akashicweb.cmd.info.state= Modo %s, controle %s, bloqueada %s, amigos %s
+akashicweb.cmd.info.rights= Seus direitos: %s (1 URL, 2 clicar/digitar, 4 amigos, 8 direitos, 16 resolução)
+akashicweb.cmd.info.clock= Mídia: %ss, velocidade %s, pausada %s, ao vivo %s
+akashicweb.cmd.list.header=%s telas mostradas (%s conhecidas):
+akashicweb.cmd.list.more= ... e mais %s
+akashicweb.cmd.cleared=Tela limpa: %s
+akashicweb.cmd.locked=Tela bloqueada: %s
+akashicweb.cmd.unlocked=Tela desbloqueada: %s
+akashicweb.cmd.takeover=Agora você controla a tela em %s
+akashicweb.cmd.kill.on=Kill switch LIGADO: todos os clientes mostram uma tela de espera.
+akashicweb.cmd.kill.off=Kill switch desligado: as telas voltaram.
+akashicweb.cmd.policy.failed=Não foi possível ler o config; as configurações anteriores continuam valendo.
+akashicweb.cmd.policy.reloaded=Config recarregado: %s, %s hosts permitidos, %s bloqueados.
+akashicweb.cmd.doctor.header=Diagnóstico do AkashicWeb para %s
+akashicweb.cmd.doctor.nothing= O servidor ainda não tem dados do AkashicWeb deste jogador.
+akashicweb.cmd.doctor.hello= Hello enviado às %s
+akashicweb.cmd.doctor.no_preflight= Sem relatório de preflight (opcional).
+akashicweb.cmd.doctor.preflight= Preflight: %s
+akashicweb.cmd.doctor.counts= Totais: %s
+akashicweb.cmd.status.header=Estado do AkashicWeb (protocolo %s)
+akashicweb.cmd.status.kill= Kill switch: %s
+akashicweb.cmd.status.policy= Política de sites: %s, %s permitidos, %s bloqueados
+akashicweb.cmd.status.screens= Telas: %s carregadas, %s conhecidas, %s com estado ativo
+akashicweb.cmd.status.queue= Fila de ações: %s
+akashicweb.cmd.status.perms= Permissões Bukkit: %s, comandos registrados: %s
+akashicweb.cmd.status.players= Jogadores online: %s
