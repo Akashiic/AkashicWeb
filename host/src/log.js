@@ -109,7 +109,7 @@ function safeJson(v) {
  * Returns a function that restores the streams.
  */
 function captureStdio(logger, options = {}) {
-  const streams = options.streams || { stdout: process.stdout, stderr: process.stderr };
+  const streams = options.streams || { stdout: stdStream('stdout'), stderr: stdStream('stderr') };
   const restore = [];
   for (const name of Object.keys(streams)) {
     const stream = streams[name];
@@ -130,7 +130,19 @@ function captureStdio(logger, options = {}) {
   return () => restore.forEach(r => r());
 }
 
+/**
+ * process.stdout/stderr, or null: a GUI-subsystem executable on Windows may have no usable handle, and
+ * Node creates these streams lazily, so the first access can throw there.
+ */
+function stdStream(name) {
+  try {
+    return process[name] || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 /** Logger that drops everything, for unit tests. */
 const NULL_LOG = Object.freeze({ info() {}, warn() {}, error() {}, raw() {}, close() {} });
 
-module.exports = { createLogger, captureStdio, redactUrl, NULL_LOG };
+module.exports = { createLogger, captureStdio, stdStream, redactUrl, NULL_LOG };

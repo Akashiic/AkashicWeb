@@ -19,7 +19,7 @@ const pkg = require('../package.json');
 const P = require('./protocol');
 const { EXIT, parseArgs, findDisallowedArgs, findForbiddenEnv } = require('./args');
 const { readToken } = require('./token');
-const { createLogger, captureStdio } = require('./log');
+const { createLogger, captureStdio, stdStream } = require('./log');
 const { Link } = require('./link');
 const { FrameScheduler, imagePayloads } = require('./frames');
 const { Router } = require('./router');
@@ -56,7 +56,8 @@ let args;
 try {
   args = parseArgs(process.argv);
 } catch (err) {
-  process.stderr.write('AkashicWebHost: ' + err.message + '\n');
+  const stderr = stdStream('stderr'); // no log file yet: the arguments that name it are broken
+  try { if (stderr) stderr.write('AkashicWebHost: ' + err.message + '\n'); } catch (e) { /* nowhere to report */ }
   app.exit(EXIT.BAD_ARGS);
 }
 
@@ -65,8 +66,10 @@ try {
 // unpackaged development/test runs), and Chromium's own logging is turned down to FATAL, which also
 // reaches the child processes (native writes cannot be redirected from JavaScript; measured: the lines
 // logged before this point remain).
-const rawStderr = { write: process.stderr.write.bind(process.stderr) }; // the logger's own echo (dev only)
-const log = createLogger({ file: args && args.logFile, echo: app.isPackaged ? null : rawStderr });
+const devStderr = app.isPackaged ? null : stdStream('stderr');
+// The logger's own echo (development and test runs only), bound before stdio is captured below.
+const rawStderr = devStderr ? { write: devStderr.write.bind(devStderr) } : null;
+const log = createLogger({ file: args && args.logFile, echo: rawStderr });
 captureStdio(log, { echo: !app.isPackaged });
 if (!app.commandLine.hasSwitch('enable-logging') && !app.commandLine.hasSwitch('log-level')) {
   app.commandLine.appendSwitch('log-level', '3');
