@@ -114,7 +114,7 @@ public final class EngineLocatorImpl implements EngineLocator {
         if (p != null) sb.append(" [")
             .append(p.how)
             .append(": ")
-            .append(p.base)
+            .append(p.display)
             .append(']');
         PlatformGate.Decision d = decision;
         if (d != null && d.kind == PlatformGate.Kind.WINDOWS_X64 && sac != SmartAppControl.State.UNKNOWN) {
@@ -129,7 +129,7 @@ public final class EngineLocatorImpl implements EngineLocator {
     public ConsentInfo consentInfo() {
         EngineTarget t = target;
         InstallPaths p = paths;
-        return t == null ? null : ConsentInfo.of(t, p == null ? null : p.engineRoot());
+        return t == null ? null : ConsentInfo.of(t, p == null ? null : p.base);
     }
 
     @Override
@@ -166,14 +166,14 @@ public final class EngineLocatorImpl implements EngineLocator {
         target = cfg.targets.apply(decision.kind);
         try {
             paths = resolvePaths();
-            for (File d : paths.importDirs()) FileOps.ensureDir(d); // so players can find the folder
+            FileOps.ensureDir(paths.importDir()); // so players can find the folder
         } catch (InstallException e) {
             fail(EngineState.Kind.FAILED, e.failure, e.detail);
             return;
         }
         if (useInstalledEngine()) return;
         if (decision.kind == PlatformGate.Kind.WINDOWS_X64 && sacBlocks()) return;
-        File imported = ImportScanner.find(paths.importDirs(), target);
+        File imported = ImportScanner.find(paths.importDir(), target);
         boolean resumePending = new File(paths.downloadDir(), target.assetName + ".state.json").isFile();
         if (imported != null || resumePending) {
             // The player consented before (a partial download exists) or chose to import by hand.
@@ -242,7 +242,7 @@ public final class EngineLocatorImpl implements EngineLocator {
                 return;
             }
             if (decision.kind == PlatformGate.Kind.WINDOWS_X64 && sacBlocks()) return;
-            File zip = importZip != null ? importZip : ImportScanner.find(paths.importDirs(), target);
+            File zip = importZip != null ? importZip : ImportScanner.find(paths.importDir(), target);
             File dir = newInstaller().install(zip, this::progress);
             ready(dir, EngineStore.readMarker(dir), zip != null ? "installed from import" : "downloaded and installed");
         } catch (InstallException e) {
@@ -298,7 +298,7 @@ public final class EngineLocatorImpl implements EngineLocator {
 
     private InstallPaths resolvePaths() throws InstallException {
         if (cfg.baseDirOverride != null) {
-            return new InstallPaths(cfg.baseDirOverride, cfg.baseDirOverride, "override");
+            return new InstallPaths(cfg.baseDirOverride, "override", cfg.baseDirOverride.getPath());
         }
         boolean windows = decision.kind == PlatformGate.Kind.WINDOWS_X64;
         InstallPaths.Inputs in = new InstallPaths.Inputs(
@@ -342,10 +342,13 @@ public final class EngineLocatorImpl implements EngineLocator {
     }
 
     private void set(EngineState s, String why) {
+        InstallPaths p = paths;
+        // Details end up in logs and /web doctor lines that players paste for support: no expanded profile paths.
+        String safe = p != null ? p.redact(why) : why;
         lastProgress = -1f;
-        detail = why;
+        detail = safe;
         state = s;
-        LOG.info("Engine state {} ({})", s, why);
+        LOG.info("Engine state {} ({})", s, safe);
     }
 
     /**

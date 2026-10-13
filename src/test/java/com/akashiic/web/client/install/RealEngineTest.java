@@ -48,7 +48,7 @@ class RealEngineTest {
         File dir = new File(System.getenv("AKW_ENGINE_ZIP_DIR"));
         int found = 0;
         for (EngineTarget t : new EngineTarget[] { EngineManifest.WIN32_X64, EngineManifest.LINUX_X64 }) {
-            File zip = ImportScanner.find(java.util.Collections.singletonList(dir), t);
+            File zip = ImportScanner.find(dir, t);
             if (zip == null) continue;
             found++;
             installAndCheck(zip, t);
@@ -59,7 +59,7 @@ class RealEngineTest {
     private void installAndCheck(File zip, EngineTarget t) throws Exception {
         String keep = System.getenv("AKW_ENGINE_KEEP_DIR");
         File base = new File(keep != null && !keep.isEmpty() ? new File(keep) : tmp, "base-" + t.platform);
-        InstallPaths paths = new InstallPaths(base, base, "test");
+        InstallPaths paths = new InstallPaths(base, "test", base.getPath());
         HostApp.Source app = HostApp.classpath(getClass().getClassLoader());
         EngineInstaller installer = new EngineInstaller(
             paths,

@@ -2,8 +2,7 @@ package com.akashiic.web.client.install;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Function;
@@ -12,15 +11,18 @@ import java.util.function.Predicate;
 /**
  * Where the engine lives (ADR-011): outside {@code mods/} (Technic deletes it on pack updates), outside the game and
  * working directories, never in Documents or OneDrive (synced, and Controlled Folder Access guards Documents), shared
- * by every instance and mod version of this user.
+ * by every instance and mod version of this user, and private to this user.
  * <ul>
- * <li>Windows: {@code %LOCALAPPDATA%\AkashicWeb}. If that path has non-ASCII characters (C:\Users\João), its 8.3
- * short form is tried, then {@code %PROGRAMDATA%\AkashicWeb}, and only then the non-ASCII path itself.</li>
+ * <li>Windows: {@code %LOCALAPPDATA%\AkashicWeb}. When that path has non-ASCII characters (C:\Users\João), its 8.3
+ * short form is used if Windows has one, else the non-ASCII path itself: Java and Electron both use the wide-character
+ * Windows APIs, and the browser profile has to live in that folder anyway. If LOCALAPPDATA is missing, relative, or
+ * inside OneDrive or Documents, {@code %USERPROFILE%\AppData\Local} is tried instead.</li>
  * <li>Linux: {@code $XDG_DATA_HOME/AkashicWeb}, or {@code ~/.local/share/AkashicWeb}.</li>
  * </ul>
- * Layout under the base: {@code engine/<engineId>-<hash8>/}, {@code download/}, {@code import/},
- * {@code install.lock}; under the per-user base (the same folder unless the ProgramData fallback was used):
- * {@code profiles/<instance hash>/}.
+ * There is deliberately no machine-wide fallback such as {@code %PROGRAMDATA%}: by default every local user may create
+ * folders there, so another account could pre-create the folder, or plant files in it, whose executable this player
+ * then runs. Layout under the base: {@code engine/<engineId>-<hash8>/}, {@code download/}, {@code import/},
+ * {@code profiles/<instance hash>/}, {@code install.lock}.
  */
 public final class InstallPaths {
 
@@ -57,17 +59,28 @@ public final class InstallPaths {
         }
     }
 
-    /** Engine, downloads, the install lock and the primary import folder. */
+    /** Engine, downloads, the import folder, browser profiles and the install lock. */
     public final File base;
-    /** Per-user folder for browser profiles and a second import folder; equals {@link #base} except on fallback. */
-    public final File userBase;
-    /** How the base was chosen, for {@code /web doctor} (e.g. "LOCALAPPDATA", "8.3 short path"). */
+    /** How the base was chosen, for {@code /web doctor} (e.g. "LOCALAPPDATA", "LOCALAPPDATA (8.3 short path)"). */
     public final String how;
+    /**
+     * The base as players and logs see it, without the expanded profile path (which usually holds the player's real
+     * name): {@code %LOCALAPPDATA%\AkashicWeb}, {@code ~/.local/share/AkashicWeb}. Explorer's address bar accepts the
+     * Windows form as it is.
+     */
+    public final String display;
+    /** The user's home folder, replaced by a placeholder in {@link #redact}; null to leave it. */
+    private final String userHome;
 
-    public InstallPaths(File base, File userBase, String how) {
+    public InstallPaths(File base, String how, String display) {
+        this(base, how, display, null);
+    }
+
+    InstallPaths(File base, String how, String display, String userHome) {
         this.base = base;
-        this.userBase = userBase;
         this.how = how;
+        this.display = display;
+        this.userHome = userHome;
     }
 
     public File engineRoot() {
@@ -79,19 +92,16 @@ public final class InstallPaths {
     }
 
     /**
-     * Manual import folders (ADR-011): the player saves the official zip in {@code %LOCALAPPDATA%\AkashicWeb\import}
-     * when the download itself cannot work. On the ProgramData fallback both folders are scanned, so the pt-BR guide
-     * stays right.
+     * Manual import folder (ADR-011): the player saves the official zip in {@code %LOCALAPPDATA%\AkashicWeb\import}
+     * when the download itself cannot work.
      */
-    public List<File> importDirs() {
-        File primary = new File(base, "import");
-        File user = new File(userBase, "import");
-        return primary.equals(user) ? Collections.singletonList(primary) : Arrays.asList(primary, user);
+    public File importDir() {
+        return new File(base, "import");
     }
 
-    /** Root of the per-instance browser profiles; always per user. */
+    /** Root of the per-instance browser profiles. */
     public File profilesDir() {
-        return new File(userBase, "profiles");
+        return new File(base, "profiles");
     }
 
     /** Held while installing so two game instances never extract into the same folders at once. */
@@ -99,66 +109,127 @@ public final class InstallPaths {
         return new File(base, "install.lock");
     }
 
+    /** A folder under the base as players see it, e.g. {@code %LOCALAPPDATA%\AkashicWeb\import}. */
+    public String display(File f) {
+        return redact(f.getPath());
+    }
+
     /**
-     * Picks the base folder. Never returns a path inside the game directory or a relative path.
+     * {@code text} with every spelling of the base path replaced by {@link #display} and the user's home folder by a
+     * placeholder, so logs and {@code /web doctor} lines that players paste for support do not carry their name.
+     */
+    public String redact(String text) {
+        if (text == null) return null;
+        String out = text;
+        for (String path : spellings(base)) {
+            if (!path.isEmpty()) out = out.replace(path, display);
+        }
+        if (userHome != null && userHome.length() > 3) {
+            for (String path : spellings(new File(userHome))) out = out.replace(path, homePlaceholder());
+        }
+        return out;
+    }
+
+    private String homePlaceholder() {
+        return display.startsWith("%") ? "%USERPROFILE%" : "~";
+    }
+
+    /** The path as given and, if different, canonical (an 8.3 short base expands to its long form there). */
+    private static List<String> spellings(File f) {
+        List<String> out = new ArrayList<>();
+        out.add(f.getPath());
+        try {
+            String canonical = f.getCanonicalPath();
+            if (!canonical.equals(f.getPath())) out.add(canonical);
+        } catch (IOException e) {
+            // Boundary: a path that cannot be canonicalized is only redacted in the form it was given.
+        }
+        // Longest first, so a base inside the home folder is replaced as a whole before the home part.
+        out.sort((a, b) -> b.length() - a.length());
+        return out;
+    }
+
+    /**
+     * Picks the base folder. Never returns a path inside the game directory, a relative path, or a folder other local
+     * users can write to.
      *
-     * @throws InstallException INSTALL_DIR_NOT_WRITABLE when no candidate can be written
+     * @throws InstallException INSTALL_DIR_NOT_WRITABLE when no candidate can be used
      */
     public static InstallPaths resolve(Inputs in) throws InstallException {
         return in.windows ? resolveWindows(in) : resolveLinux(in);
     }
 
     private static InstallPaths resolveWindows(Inputs in) throws InstallException {
+        List<String> refused = new ArrayList<>();
         String local = absolute(in.facts.env("LOCALAPPDATA"), true);
-        if (local == null && in.userHome != null) local = child(child(in.userHome, "AppData", true), "Local", true);
-        String localBase = local == null ? null : child(local, APP_FOLDER, true);
-        boolean localAllowed = localBase != null && allowed(localBase, in);
-        if (localAllowed && isAscii(localBase) && in.usable.test(new File(localBase))) {
-            return new InstallPaths(new File(localBase), new File(localBase), "LOCALAPPDATA");
+        if (local != null) {
+            InstallPaths p = tryLocalAppData(in, local, "LOCALAPPDATA", "%LOCALAPPDATA%", refused);
+            if (p != null) return p;
         }
-        String shortBase = null;
-        if (localAllowed && !isAscii(localBase)) {
-            String shortLocal = in.shortPath.apply(new File(local));
-            if (shortLocal != null && isAscii(shortLocal)) {
-                String candidate = child(shortLocal, APP_FOLDER, true);
-                if (allowed(candidate, in) && in.usable.test(new File(candidate))) shortBase = candidate;
+        if (in.userHome != null && absolute(in.userHome, true) != null) {
+            String profileLocal = child(child(in.userHome, "AppData", true), "Local", true);
+            if (local == null || !normalize(profileLocal).equals(normalize(local))) {
+                InstallPaths p = tryLocalAppData(
+                    in,
+                    profileLocal,
+                    "user profile",
+                    "%USERPROFILE%\\AppData\\Local",
+                    refused);
+                if (p != null) return p;
             }
         }
-        if (shortBase != null) {
-            return new InstallPaths(new File(shortBase), new File(shortBase), "LOCALAPPDATA (8.3 short path)");
-        }
-        // The browser profile (cookies, logins) stays per user even when the engine falls back to ProgramData, whose
-        // subfolders every local user can read.
-        boolean localUsable = localAllowed && in.usable.test(new File(localBase));
-        String programData = absolute(in.facts.env("PROGRAMDATA"), true);
-        if (programData != null && isAscii(programData)) {
-            String pdBase = child(programData, APP_FOLDER, true);
-            if (allowed(pdBase, in) && in.usable.test(new File(pdBase))) {
-                return new InstallPaths(new File(pdBase), new File(localUsable ? localBase : pdBase), "PROGRAMDATA");
-            }
-        }
-        // Last resort: a non-ASCII path still works for Java and, as far as we know, for Electron; ASCII is preferred
-        // only because some native tools mishandle such paths. Untested on Windows (ADR-014 P1 cell).
-        if (localUsable) return new InstallPaths(new File(localBase), new File(localBase), "LOCALAPPDATA (non-ASCII)");
+        if (refused.isEmpty()) refused.add("LOCALAPPDATA and the user profile are unknown");
         throw new InstallException(
             InstallFailure.INSTALL_DIR_NOT_WRITABLE,
-            "no writable install folder (LOCALAPPDATA=" + local + ", PROGRAMDATA=" + programData + ")");
+            "no usable install folder: " + String.join("; ", refused));
+    }
+
+    /** The base under one Local AppData candidate, or null with the reason added to {@code refused}. */
+    private static InstallPaths tryLocalAppData(Inputs in, String local, String how, String displayRoot,
+        List<String> refused) {
+        String base = child(local, APP_FOLDER, true);
+        String display = displayRoot + "\\" + APP_FOLDER;
+        if (!allowed(base, in)) {
+            refused.add(displayRoot + " is inside OneDrive, Documents or the game folder");
+            return null;
+        }
+        if (isAscii(base)) {
+            if (in.usable.test(new File(base))) return new InstallPaths(new File(base), how, display, in.userHome);
+            refused.add(display + " is not writable");
+            return null;
+        }
+        String shortLocal = in.shortPath.apply(new File(local));
+        if (shortLocal != null && isAscii(shortLocal)) {
+            String shortBase = child(shortLocal, APP_FOLDER, true);
+            if (allowed(shortBase, in) && in.usable.test(new File(shortBase))) {
+                return new InstallPaths(new File(shortBase), how + " (8.3 short path)", display, in.userHome);
+            }
+        }
+        // Untested on Windows (ADR-014 P1 cell "C:\Users\João Conceição"): expected to work, see the class comment.
+        if (in.usable.test(new File(base))) {
+            return new InstallPaths(new File(base), how + " (non-ASCII)", display, in.userHome);
+        }
+        refused.add(display + " is not writable");
+        return null;
     }
 
     private static InstallPaths resolveLinux(Inputs in) throws InstallException {
         String data = absolute(in.facts.env("XDG_DATA_HOME"), false); // XDG: relative values are invalid
         String how = "XDG_DATA_HOME";
+        String displayRoot = "$XDG_DATA_HOME";
         if (data == null && in.userHome != null) {
             data = child(child(in.userHome, ".local", false), "share", false);
             how = "~/.local/share";
+            displayRoot = "~/.local/share";
         }
         String base = data == null ? null : child(data, APP_FOLDER, false);
+        String display = displayRoot + "/" + APP_FOLDER;
         if (base != null && allowed(base, in) && in.usable.test(new File(base))) {
-            return new InstallPaths(new File(base), new File(base), how);
+            return new InstallPaths(new File(base), how, display, in.userHome);
         }
         throw new InstallException(
             InstallFailure.INSTALL_DIR_NOT_WRITABLE,
-            "no writable install folder (" + base + ")");
+            "no writable install folder (" + display + ")");
     }
 
     /** Rejects the game dir (and so mods/), Documents and OneDrive. */

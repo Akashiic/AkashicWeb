@@ -93,7 +93,7 @@ final class EngineInstaller {
             LOG.info(
                 "Installed {} into {} ({} files, {} skipped, {} B)",
                 target.engineId(),
-                dir,
+                paths.display(dir),
                 all.size(),
                 r.skipped,
                 r.bytesWritten);
