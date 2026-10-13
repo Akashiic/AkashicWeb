@@ -60,12 +60,32 @@ public final class ServerRuntime {
 
     /** The persistent screen index (overworld map storage), or an empty detached one before the overworld exists. */
     public static ScreenIndex index() {
+        ScreenIndexData data = data();
+        return data == null ? new ScreenIndex() : data.index;
+    }
+
+    /** Players who logged in here, for friend names; an empty detached map before the overworld exists. */
+    public static KnownPlayers knownPlayers() {
+        ScreenIndexData data = data();
+        return data == null ? new KnownPlayers() : data.players;
+    }
+
+    /** Login: remember the player's name for friend lists (and forget players long gone). Main thread. */
+    public static void playerSeen(EntityPlayerMP p) {
+        ScreenIndexData data = data();
+        if (data == null) return;
+        long now = System.currentTimeMillis(); // wall time: kept across restarts, not a protocol time
+        boolean changed = data.players.expire(now);
+        if (data.players.seen(p.getUniqueID(), p.getCommandSenderName(), now) || changed) data.markDirty();
+    }
+
+    private static ScreenIndexData data() {
         if (indexData == null) {
             World overworld = DimensionManager.getWorld(0);
-            if (overworld == null) return new ScreenIndex();
+            if (overworld == null) return null;
             indexData = ScreenIndexData.get(overworld);
         }
-        return indexData.index;
+        return indexData;
     }
 
     public static void indexChanged() {

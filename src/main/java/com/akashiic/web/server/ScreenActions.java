@@ -22,7 +22,6 @@ import com.akashiic.web.common.net.C2SNav;
 import com.akashiic.web.common.net.C2SRights;
 import com.akashiic.web.common.net.C2SSetUrl;
 import com.akashiic.web.common.net.S2CUrl;
-import com.mojang.authlib.GameProfile;
 
 /**
  * Applies validated client actions to screens, on the main thread at the start of a tick (queued by
@@ -314,17 +313,20 @@ public final class ScreenActions {
         ScreenSync.sendDescription(t.tile);
     }
 
-    /** Online player first, then the server's profile cache (players who joined before). */
+    /**
+     * A friend name to a player: online players first, then {@link KnownPlayers} (everyone who logged in here). Map
+     * reads only: never PlayerProfileCache.func_152655_a, which asks Mojang on a miss on the calling thread (review
+     * finding: up to tens of seconds of main-thread freeze per packet) and rewrites usercache.json on every call.
+     */
     static RightsEditor.Profile profile(String name) {
         MinecraftServer server = MinecraftServer.getServer();
         if (server == null || name == null || name.isEmpty()) return null;
         EntityPlayerMP online = server.getConfigurationManager()
             .func_152612_a(name);
         if (online != null) return new RightsEditor.Profile(online.getUniqueID(), online.getCommandSenderName());
-        GameProfile cached = server.func_152358_ax()
-            .func_152655_a(name);
-        return cached == null || cached.getId() == null ? null
-            : new RightsEditor.Profile(cached.getId(), cached.getName());
+        KnownPlayers.Entry known = ServerRuntime.knownPlayers()
+            .lookup(name);
+        return known == null ? null : new RightsEditor.Profile(known.id, known.name);
     }
 
     // ---- admin helpers (commands) ----

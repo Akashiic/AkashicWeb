@@ -356,6 +356,44 @@ class NetCodecTest {
         assertNotNull(decode(r2, C2SRights::new).malformed);
     }
 
+    /** A complete C2SRights adding one name, written by hand so the name can break the writer's cap. */
+    private static ByteBuf rightsAdding(String name) {
+        ByteBuf b = Unpooled.buffer();
+        NetCodec.writeKey(b, KEY);
+        b.writeByte(1);
+        NetCodec.writeString(b, name, name.length());
+        b.writeByte(0); // no removals
+        for (int i = 0; i < 6; i++) b.writeInt(RightsChange.UNCHANGED); // rights, resolution, rotation, lock
+        return b;
+    }
+
+    /** Review finding (high): only real player names, and few per packet, ever reach the server's name lookup. */
+    @Test
+    void friendNamesMustBePlayerNames() {
+        assertNotNull(decode(rightsAdding("x123456789012345y"), C2SRights::new).malformed, "17 characters");
+        assertNull(decode(rightsAdding("x123456789012345"), C2SRights::new).malformed, "16 characters");
+        for (String bad : new String[] { "", "Alice!", "a b", "ação", "§kAlice" }) {
+            RightsChange c = new RightsChange();
+            c.addFriends.add(bad);
+            ByteBuf b = Unpooled.buffer();
+            new C2SRights(KEY, c).toBytes(b);
+            assertNotNull(decode(b, C2SRights::new).malformed, "'" + bad + "'");
+        }
+        RightsChange ok = new RightsChange();
+        ok.addFriends.add("Notch_1234567890");
+        assertEquals(
+            Arrays.asList("Notch_1234567890"),
+            roundTrip(new C2SRights(KEY, ok), C2SRights::new).change.addFriends);
+        assertEquals(4, NetCodec.MAX_FRIEND_CHANGES);
+        ByteBuf five = Unpooled.buffer();
+        NetCodec.writeKey(five, KEY);
+        five.writeByte(5);
+        for (int i = 0; i < 5; i++) NetCodec.writeString(five, "p" + i, 16);
+        assertNotNull(decode(five, C2SRights::new).malformed);
+        assertTrue(NetCodec.isPlayerName("_"));
+        assertFalse(NetCodec.isPlayerName(null));
+    }
+
     @Test
     void listCaps() {
         ByteBuf friends = Unpooled.buffer();

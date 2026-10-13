@@ -35,6 +35,7 @@ public final class ServerEvents {
     @SubscribeEvent
     public void onLogin(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.player instanceof EntityPlayerMP && !(event.player instanceof FakePlayer)) {
+            ServerRuntime.playerSeen((EntityPlayerMP) event.player);
             ScreenSync.hello((EntityPlayerMP) event.player);
         }
     }

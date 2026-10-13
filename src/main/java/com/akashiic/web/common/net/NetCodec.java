@@ -33,7 +33,13 @@ public final class NetCodec {
     public static final int MAX_ACTION = 16;
     public static final int MAX_NOTICE_ARGS = 4;
     public static final int MAX_NOTICE_ARG = 256;
-    public static final int MAX_FRIEND_CHANGES = 16;
+    /**
+     * Friend names per list (add, remove) in one C2SRights. Each name costs a lookup on the server's main thread, so
+     * a packet carries few (review finding: 16 + 16 names per packet each cost a blocking Mojang lookup).
+     */
+    public static final int MAX_FRIEND_CHANGES = 4;
+    /** Longest Minecraft player name. */
+    public static final int MAX_PLAYER_NAME = 16;
     public static final int MAX_PREFLIGHT_ENTRIES = 16;
     public static final int MAX_PREFLIGHT_KEY = 32;
     public static final int MAX_PREFLIGHT_VALUE = 128;
@@ -295,18 +301,31 @@ public final class NetCodec {
     private static void writeNames(ByteBuf b, List<String> names) {
         int n = Math.min(names.size(), MAX_FRIEND_CHANGES);
         b.writeByte(n);
-        for (int i = 0; i < n; i++) writeString(b, names.get(i), MAX_NAME);
+        for (int i = 0; i < n; i++) writeString(b, names.get(i), MAX_PLAYER_NAME);
     }
 
+    /** Player names only ({@link #isPlayerName}); anything else makes the packet malformed. */
     private static List<String> readNames(ByteBuf b) {
         int n = b.readUnsignedByte();
         if (n > MAX_FRIEND_CHANGES) throw new CodecException("names " + n);
         List<String> out = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            String name = readText(b, MAX_NAME);
-            if (!name.isEmpty()) out.add(name);
+            String name = readString(b, MAX_PLAYER_NAME);
+            if (!isPlayerName(name)) throw new CodecException("player name");
+            out.add(name);
         }
         return out;
+    }
+
+    /** A Minecraft player name: 1 to 16 of A-Z, a-z, 0-9 and underscore (what Mojang and the proxy accept). */
+    public static boolean isPlayerName(String s) {
+        if (s == null || s.isEmpty() || s.length() > MAX_PLAYER_NAME) return false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            boolean ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+            if (!ok) return false;
+        }
+        return true;
     }
 
     public static void writeNotice(ByteBuf b, ReasonCode code, String[] args) {
