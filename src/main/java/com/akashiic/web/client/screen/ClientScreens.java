@@ -279,9 +279,18 @@ public final class ClientScreens {
 
     public void onMediaClock(ScreenKey key, int epoch, double mediaTime, float rate, boolean paused,
         long serverTimeMs) {
+        onMediaClock(key, epoch, mediaTime, rate, paused, serverTimeMs, false, 0);
+    }
+
+    /**
+     * S2CMediaClock. {@code live} and {@code liveLagMs} (the controller's lag behind its own live edge) feed the
+     * followers' live-edge rule (ADR-012 item 5).
+     */
+    public void onMediaClock(ScreenKey key, int epoch, double mediaTime, float rate, boolean paused, long serverTimeMs,
+        boolean live, int liveLagMs) {
         ClientScreen s = screens.get(key);
         if (s == null || epoch != s.state().epoch || Double.isNaN(mediaTime) || Double.isInfinite(mediaTime)) return;
-        s.mediaClock = new MediaClock(epoch, mediaTime, rate, paused, serverTimeMs);
+        s.mediaClock = new MediaClock(epoch, mediaTime, rate, paused, serverTimeMs, live, liveLagMs);
     }
 
     /** Thread-safe; the Netty thread feeds pongs straight in. */
@@ -869,7 +878,8 @@ public final class ClientScreens {
         if (now - s.lastSyncEvalMs < SYNC_INTERVAL_MS) return;
         s.lastSyncEvalMs = now;
         MediaClock mc = s.mediaClock != null && s.mediaClock.epoch == s.state().epoch ? s.mediaClock : null;
-        SyncDecision d = s.sync.update(mc, clock.serverNowMs(now), s.localMedia, now, Double.NaN);
+        double controllerLiveLagS = mc == null ? Double.NaN : mc.liveLagSeconds();
+        SyncDecision d = s.sync.update(mc, clock.serverNowMs(now), s.localMedia, now, controllerLiveLagS);
         s.lastDecision = d;
         if (d.command != null && worthSending(d.command, s.lastSyncSent)) {
             host.sync(s.hostScreenId, d.command);

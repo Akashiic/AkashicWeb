@@ -354,6 +354,28 @@ class ClientScreensTest {
         assertEquals(1, host.syncs.size(), "a clock for another epoch is ignored and an unchanged rate is not resent");
     }
 
+    /** Item 3 of the wave-2 task: S2CMediaClock.live/liveLagMs reach the followers' live-edge rule. */
+    @Test
+    void followersAimBehindTheControllersReportedLiveLag() {
+        hello();
+        ScreenState s = screen(0, 2, 2, "https://live.example/", 1);
+        s.controller = OTHER;
+        screens.onScreenState(s);
+        tick();
+        syncClock();
+        int id = first().hostScreenId();
+        double serverNow = screens.clock()
+            .serverNowMs(now[0]);
+        screens.onMediaClock(s.key, 1, 101.0, 1f, false, (long) serverNow, true, 3_000);
+        // MEDIA from our own (follower) browser: M1 samples followers too. Our edge is at 102.
+        screens
+            .onHostMedia(id, new LocalMedia(101.0, false, 1f, Double.NaN, true, 1.0, false, false, now[0], Double.NaN));
+        tick();
+        assertEquals(1, host.syncs.size(), host.calls.toString());
+        assertEquals(98.5, host.syncs.get(0).targetMediaTime, 0.01, "edge 102 - (3.0 s controller lag + 0.5 s)");
+        assertTrue(host.syncs.get(0).rate <= 1.0f, "never forward toward the edge");
+    }
+
     @Test
     void controllerNavigationIsReportedOnceSettled() {
         hello();

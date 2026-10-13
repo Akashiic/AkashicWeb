@@ -61,9 +61,8 @@ public final class ClientNetHooks implements ClientHooks {
     @Override
     public void onMediaClock(ScreenKey key, int epoch, double mediaTime, float rate, boolean paused, long serverTimeMs,
         boolean live, int liveLagMs) {
-        // live and liveLagMs (D-016) are not used yet: the followers' live-edge rule will take them (M5 follow-up).
-        if (key != null)
-            clientThread.execute(() -> screens.onMediaClock(key, epoch, mediaTime, rate, paused, serverTimeMs));
+        if (key != null) clientThread
+            .execute(() -> screens.onMediaClock(key, epoch, mediaTime, rate, paused, serverTimeMs, live, liveLagMs));
     }
 
     @Override
