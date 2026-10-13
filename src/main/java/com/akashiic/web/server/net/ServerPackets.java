@@ -1,5 +1,6 @@
 package com.akashiic.web.server.net;
 
+import java.util.UUID;
 import java.util.function.Consumer;
 
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -20,6 +21,7 @@ import com.akashiic.web.common.net.S2CClockPong;
 import com.akashiic.web.server.ActionLimits;
 import com.akashiic.web.server.ScreenActions;
 import com.akashiic.web.server.ScreenSync;
+import com.akashiic.web.server.ScreenWorld;
 import com.akashiic.web.server.ServerActionQueue;
 import com.akashiic.web.server.ServerClock;
 import com.akashiic.web.server.ServerRuntime;
@@ -30,45 +32,50 @@ import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
 import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 
 /**
- * Server handlers of the client-to-server packets. They run wherever FML calls them (the main thread in 1.7.10, but
- * nothing relies on it): drop FakePlayers, refuse malformed packets, apply the per-player rate limit, then queue the
- * real work for the start of the next tick ({@link ServerActionQueue}). Only the clock ping is answered at once when
- * already on the main thread, because queueing would add up to a tick of hold time to the clock exchange.
+ * Server handlers of the client-to-server packets. In 1.7.10 and on Crucible FML calls them on the server main thread
+ * (FMLProxyPacket has no priority, so NetworkManager.processReceivedPackets runs them), at up to 1001 packets per tick
+ * per connection; nothing here relies on the thread. They drop FakePlayers, refuse malformed packets, apply the
+ * per-player rate limit, then queue the real work, charged to the player, for the start of the next tick
+ * ({@link ServerActionQueue}). Refusals are only counted ({@link RejectionCounter}), so a flood costs no queue space.
+ * Only the clock ping is answered at once when already on the main thread, because queueing would add up to a tick
+ * of hold time to the clock exchange.
  */
 public final class ServerPackets {
+
+    static final RejectionCounter REJECTIONS = new RejectionCounter(ServerRuntime.QUEUE);
 
     private ServerPackets() {}
 
     static void accept(MessageContext ctx, AkwMessage m, ActionLimits.Kind kind, Consumer<EntityPlayerMP> work) {
         EntityPlayerMP p = ctx.getServerHandler().playerEntity;
         if (p == null) return;
-        if (p instanceof FakePlayer) {
-            // Diagnostics are main-thread state: record the refusal there.
-            ServerRuntime.QUEUE.offer(
-                () -> ServerRuntime.DIAGNOSTICS
-                    .record(p.getUniqueID(), ReasonCode.FAKE_PLAYER, kind.name(), ServerClock.nowMs()));
-            return;
-        }
         String action = kind.name()
             .toLowerCase(java.util.Locale.ROOT);
+        if (p instanceof FakePlayer) {
+            REJECTIONS.add(p, ReasonCode.FAKE_PLAYER, action, "");
+            return;
+        }
         if (!m.ok()) {
-            String why = m.malformed;
-            ServerRuntime.QUEUE.offer(() -> rejected(p, ReasonCode.BAD_PACKET, action, why));
+            REJECTIONS.add(p, ReasonCode.BAD_PACKET, action, m.malformed);
             return;
         }
         if (!ServerRuntime.LIMITS.tryAcquire(p.getUniqueID(), kind, WebConfig.get())) {
-            ServerRuntime.QUEUE.offer(() -> rejected(p, ReasonCode.RATE_LIMITED, action, ""));
+            REJECTIONS.add(p, ReasonCode.RATE_LIMITED, action, "");
             return;
         }
-        if (!ServerRuntime.QUEUE.offer(() -> work.accept(p))) {
-            AkashicWeb.LOG.warn("AkashicWeb: action queue full, dropped {} from {}", action, p.getCommandSenderName());
-        }
+        // The queue logs drops itself (rate limited). A player who logged out before the next tick is skipped, so
+        // nothing re-creates records that logout already dropped.
+        ServerRuntime.QUEUE.offer(p.getUniqueID(), () -> { if (ScreenWorld.isOnline(p)) work.accept(p); });
     }
 
-    /** Main thread. A sample flood must not flood notices: RATE_LIMITED on media/ping is recorded quietly. */
-    private static void rejected(EntityPlayerMP p, ReasonCode code, String action, String detail) {
-        boolean quiet = "media".equals(action) || "ping".equals(action);
-        ScreenActions.reject(p, code, action, detail, quiet);
+    /** Logout: forget the player's pending refusal counts. */
+    public static void forget(UUID player) {
+        REJECTIONS.forget(player);
+    }
+
+    /** Server stopped. */
+    public static void clear() {
+        REJECTIONS.clear();
     }
 
     public static final class SetUrl implements IMessageHandler<C2SSetUrl, IMessage> {
@@ -128,9 +135,10 @@ public final class ServerPackets {
             EntityPlayerMP p = ctx.getServerHandler().playerEntity;
             if (p == null || p instanceof FakePlayer || !m.ok()) return null;
             if (!ServerRuntime.LIMITS.tryAcquire(p.getUniqueID(), ActionLimits.Kind.PING, WebConfig.get())) return null;
+            // ServerClock is the one protocol clock: the same one S2CMediaClock carries and sample stamps estimate.
             Runnable reply = () -> ScreenSync.sendTo(p, new S2CClockPong(m.nonce, m.clientSendMs, ServerClock.nowMs()));
             if (ServerThread.isMain()) reply.run();
-            else ServerRuntime.QUEUE.offer(reply);
+            else ServerRuntime.QUEUE.offer(p.getUniqueID(), reply);
             return null;
         }
     }

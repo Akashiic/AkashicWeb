@@ -15,6 +15,7 @@ import com.akashiic.web.common.WebSettings;
 import com.akashiic.web.common.block.TileEntityScreen;
 import com.akashiic.web.common.net.S2CMediaClock;
 import com.akashiic.web.server.command.CommandSupport;
+import com.akashiic.web.server.net.ServerPackets;
 
 /**
  * Server-side singletons and the per-tick work: drain the action queue, broadcast media clocks at 2-4 Hz and release
@@ -161,6 +162,7 @@ public final class ServerRuntime {
     /** Server stopped: forget everything (a new world may load next). */
     public static void stop() {
         QUEUE.clear();
+        ServerPackets.clear();
         LIMITS.clear();
         THROTTLE.clear();
         DIAGNOSTICS.clear();

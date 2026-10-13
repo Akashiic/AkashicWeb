@@ -118,6 +118,18 @@ public final class ScreenWorld {
         return null;
     }
 
+    /**
+     * This player object is still the logged-in, living player: not logged out, dead, or replaced by a respawn (which
+     * creates a new object). Queued work for a player checks it first, so a task from the tick of a logout cannot
+     * re-create the records logout dropped.
+     */
+    public static boolean isOnline(EntityPlayerMP p) {
+        if (p == null || p.isDead || p.playerNetServerHandler == null) return false;
+        MinecraftServer server = MinecraftServer.getServer();
+        return server != null && server.getConfigurationManager() != null
+            && server.getConfigurationManager().playerEntityList.contains(p);
+    }
+
     @SuppressWarnings("unchecked")
     public static List<EntityPlayerMP> players() {
         MinecraftServer server = MinecraftServer.getServer();

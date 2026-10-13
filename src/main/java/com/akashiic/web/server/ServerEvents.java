@@ -15,6 +15,7 @@ import com.akashiic.web.common.ReasonCode;
 import com.akashiic.web.common.ScreenState;
 import com.akashiic.web.common.WebConfig;
 import com.akashiic.web.common.WebSettings;
+import com.akashiic.web.server.net.ServerPackets;
 
 import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
@@ -48,6 +49,8 @@ public final class ServerEvents {
         ServerRuntime.LIMITS.forget(id);
         ServerRuntime.THROTTLE.forget(id);
         ServerRuntime.DIAGNOSTICS.forget(id);
+        ServerRuntime.QUEUE.forget(id);
+        ServerPackets.forget(id);
     }
 
     /** A lock is only ever taken in the player's own dimension, so a dimension change ends every lock it holds. */

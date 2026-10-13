@@ -74,16 +74,28 @@ public final class ScreenLifecycle {
             .isEmpty()) return; // formed: the client opened the GUI, nothing to do here
         if (!ServerRuntime.LIMITS.tryAcquire(p.getUniqueID(), ActionLimits.Kind.FORM, WebConfig.get())) return;
         UUID id = p.getUniqueID();
-        ServerRuntime.QUEUE.offer(() -> form(id, new ScreenKey(dim, x, y, z, face.side())));
+        ServerRuntime.QUEUE.offer(id, () -> form(id, new ScreenKey(dim, x, y, z, face.side())));
     }
 
     // ---- deferred work ----
 
+    /**
+     * Queues one heal per key. If the queue refuses it, the key leaves the pending set again, so the next block
+     * change, chunk load or tile event schedules it anew (review finding: a full queue left the key pending forever,
+     * and that screen was never healed or cleaned up again until a restart).
+     */
     static void scheduleHeal(ScreenKey key) {
-        if (PENDING_HEAL.add(key)) ServerRuntime.QUEUE.offer(() -> {
+        if (!PENDING_HEAL.add(key)) return;
+        boolean queued = ServerRuntime.QUEUE.offer(() -> {
             PENDING_HEAL.remove(key);
             heal(key);
         });
+        if (!queued) PENDING_HEAL.remove(key);
+    }
+
+    /** Keys waiting for a heal (tests, status). */
+    static boolean healPending(ScreenKey key) {
+        return PENDING_HEAL.contains(key);
     }
 
     /** Brings index, registry and world back in line for one screen. */
