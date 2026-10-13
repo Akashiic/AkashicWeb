@@ -16,6 +16,9 @@ public final class FrameCanvas {
     /** Largest page: a full frame (header + w*h*4) must fit one 16 MiB FRAME payload. */
     public static final long MAX_PIXELS = (HostProtocol.MAX_PAYLOAD - HostProtocol.FrameHeader.BYTES) / 4;
 
+    /** Largest width or height (GL texture limits, {@link FrameSlot#MAX_DIMENSION}). */
+    public static final int MAX_DIMENSION = FrameSlot.MAX_DIMENSION;
+
     private ByteBuffer pixels;
     private int width;
     private int height;
@@ -34,12 +37,20 @@ public final class FrameCanvas {
     }
 
     /**
-     * Makes the canvas {@code w x h}; returns true when it was (re)allocated. Rejects pages larger than
-     * {@link #MAX_PIXELS}: the direct allocation would otherwise be sized by the other process.
+     * True when a {@code w x h} page can be held: 1..{@link #MAX_DIMENSION} on each side and at most
+     * {@link #MAX_PIXELS} pixels. Larger pages (for example a page painted at a display scale above 100%) are skipped
+     * by the reader, which fails only that screen.
+     */
+    public static boolean fits(int w, int h) {
+        return w > 0 && h > 0 && w <= MAX_DIMENSION && h <= MAX_DIMENSION && (long) w * h <= MAX_PIXELS;
+    }
+
+    /**
+     * Makes the canvas {@code w x h}; returns true when it was (re)allocated. Rejects pages that do not
+     * {@link #fits fit}: the direct allocation would otherwise be sized by the other process.
      */
     public boolean ensureSize(int w, int h) throws HostProtocol.ProtocolException {
-        if (w <= 0 || h <= 0 || (long) w * h > MAX_PIXELS)
-            throw new HostProtocol.ProtocolException("FRAME page " + w + "x" + h + " too large");
+        if (!fits(w, h)) throw new HostProtocol.ProtocolException("FRAME page " + w + "x" + h + " too large");
         if (pixels != null && w == width && h == height) return false;
         pixels = ByteBuffer.allocateDirect(w * h * 4)
             .order(ByteOrder.nativeOrder());
