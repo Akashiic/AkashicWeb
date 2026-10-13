@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { InputMapper, InputError, normalizeModifiers, toAcceleratorKey, charEvents, MOD_BITS } = require('../src/input');
+const { InputMapper, InputError, normalizeModifiers, toAcceleratorKey, charEvents, MOD_BITS, MAX_CHARS } = require('../src/input');
 
 test('modifiers: Java bitmask and name arrays both map to Electron names', () => {
   assert.deepStrictEqual(normalizeModifiers(0), []);
@@ -33,12 +33,52 @@ test('unknown or non-ASCII key names are dropped (their text arrives as char)', 
   for (const k of ['ç', 'Dead', 'Unidentified', 'F25', '', null, 'x'.repeat(40), '\u0007']) assert.strictEqual(toAcceleratorKey(k), null, String(k));
 });
 
-test('char: one event per code point, accents and astral characters intact, controls dropped', () => {
-  const ev = charEvents('ação ç $%&\r\n\t\u0008😀', []);
+test('char: one event per code point, accents and astral characters intact, "\\r" and other controls dropped', () => {
+  const ev = charEvents('ação ç $%&\r\u0008\u007f\u009b😀', []);
   assert.deepStrictEqual(ev.map(e => e.keyCode), ['a', 'ç', 'ã', 'o', ' ', 'ç', ' ', '$', '%', '&', '😀']);
   assert.ok(ev.every(e => e.type === 'char'));
-  assert.strictEqual(charEvents('x'.repeat(200), []).length, 64);
   assert.throws(() => charEvents(5, []), InputError);
+});
+
+test('contract: keyDown "Space" inserts no text by itself; the game\'s char " " types exactly one space', () => {
+  const m = new InputMapper();
+  for (const name of ['Space', ' ', 'space']) {
+    assert.deepStrictEqual(m.map({ type: 'keyDown', keyCode: name, modifiers: [] }), [{ type: 'keyDown', keyCode: 'Space', modifiers: [] }], name);
+  }
+  assert.deepStrictEqual(m.map({ type: 'char', text: ' ' }), [{ type: 'char', keyCode: ' ', modifiers: [] }]);
+  assert.deepStrictEqual(m.map({ type: 'keyUp', keyCode: 'Space' }), [{ type: 'keyUp', keyCode: 'Space', modifiers: [] }]);
+});
+
+test('contract: keyDown "Enter" types the newline; the game\'s char "\\r" for the same key is dropped', () => {
+  const m = new InputMapper();
+  assert.deepStrictEqual(m.map({ type: 'keyDown', keyCode: 'Enter', modifiers: [] }),
+    [{ type: 'keyDown', keyCode: 'Enter', modifiers: [] }, { type: 'char', keyCode: '\r', modifiers: [] }]);
+  assert.deepStrictEqual(m.map({ type: 'char', text: '\r' }), []);
+});
+
+test('contract: a char event may carry a whole paste; every character is typed, in order', () => {
+  const m = new InputMapper();
+  // 512 UTF-16 units, the game's paste cap (M5 KeyboardRouter.MAX_PASTE_CHARS), with accents,
+  // an astral character, a tab and line breaks.
+  const line = 'Olá, ação! 😀\t' + 'x'.repeat(30);
+  let text = '';
+  while (text.length + line.length + 1 <= 512) text += line + '\n';
+  text += 'y'.repeat(512 - text.length);
+  assert.strictEqual(text.length, 512);
+  const ev = m.map({ type: 'char', text });
+  const typed = ev.map(e => (e.keyCode === '\r' ? '\n' : e.keyCode)).join('');
+  assert.strictEqual(typed, text, 'nothing lost, nothing reordered');
+  const breaks = ev.filter(e => e.keyCode === '\r');
+  assert.ok(breaks.length > 5);
+  assert.ok(breaks.every(e => e.modifiers.includes('shift')), 'a pasted line break is Shift+Enter (InsertLineBreak)');
+  assert.strictEqual(charEvents('z'.repeat(MAX_CHARS + 10), []).length, MAX_CHARS, 'only a hostile size is cut');
+});
+
+test('contract: wheel deltaY > 0 scrolls up and < 0 down, notches x 100 passed through in pixels', () => {
+  const m = new InputMapper(640, 360);
+  assert.strictEqual(m.map({ type: 'wheel', x: 1, y: 1, deltaY: 100 })[0].deltaY, 100);
+  assert.strictEqual(m.map({ type: 'wheel', x: 1, y: 1, deltaY: -300 })[0].deltaY, -300);
+  assert.strictEqual(m.map({ type: 'wheel', x: 1, y: 1, deltaX: 200, deltaY: 0 })[0].deltaX, 200);
 });
 
 test('mouse: buttons, click count and held-button modifiers during drags', () => {

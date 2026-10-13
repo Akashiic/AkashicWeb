@@ -170,12 +170,41 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     await titleOf(game, 1, title => title.includes('|ta:"a\\nb"|'), 'textarea "a\\nb"', 8000, since);
   });
 
-  await t.test('INPUT: wheel with negative deltaY scrolls down (Chromium sign)', async () => {
+  await t.test('INPUT: keyDown "Space" types nothing itself; with the game\'s char " " exactly one space', async () => {
     const since = game.mark();
-    game.send(P.T.INPUT, 1, { type: 'wheel', x: 320, y: 180, deltaX: 0, deltaY: -240 });
-    const st = await titleOf(game, 1, title => /\|sy:[1-9]/.test(title), 'scrolled', 8000, since);
+    game.send(P.T.INPUT, 1, { type: 'mouseDown', x: 60, y: 270, button: 'left', clickCount: 1 });
+    game.send(P.T.INPUT, 1, { type: 'mouseUp', x: 60, y: 270, button: 'left', clickCount: 1 });
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: 'End', modifiers: ['control'] }); // caret to the end
+    game.send(P.T.INPUT, 1, { type: 'keyUp', keyCode: 'End', modifiers: ['control'] });
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: 'Space', modifiers: [] });
+    game.send(P.T.INPUT, 1, { type: 'char', text: ' ' });
+    game.send(P.T.INPUT, 1, { type: 'keyUp', keyCode: 'Space', modifiers: [] });
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: ' ', modifiers: [] }); // DOM name of the same key
+    game.send(P.T.INPUT, 1, { type: 'keyUp', keyCode: ' ', modifiers: [] });
+    game.send(P.T.INPUT, 1, { type: 'char', text: 'c' });
+    await titleOf(game, 1, title => title.includes('|ta:"a\\nb c"|'), 'textarea "a\\nb c"', 8000, since);
+  });
+
+  await t.test('INPUT: a char event carrying a paste types every character, line breaks and tab included', async () => {
+    const since = game.mark();
+    // > 64 code points (the wave-1 cap), two line breaks, a tab, accents and an astral character.
+    const paste = 'linha um, ação e café\nsegunda linha\tcom tab 😀\nterceira ' + 'z'.repeat(40);
+    assert.ok([...paste].length > 64);
+    game.send(P.T.INPUT, 1, { type: 'keyDown', keyCode: 'a', modifiers: ['control'] }); // select all
+    game.send(P.T.INPUT, 1, { type: 'keyUp', keyCode: 'a', modifiers: ['control'] });
+    game.send(P.T.INPUT, 1, { type: 'char', text: paste });
+    await titleOf(game, 1, title => title.includes('|ta:' + JSON.stringify(paste) + '|'), 'pasted text in the textarea', 8000, since);
+  });
+
+  await t.test('INPUT: wheel deltaY < 0 scrolls down and > 0 up, notches x 100', async () => {
+    const since = game.mark();
+    game.send(P.T.INPUT, 1, { type: 'wheel', x: 320, y: 180, deltaX: 0, deltaY: -100 }); // one notch down
+    const st = await titleOf(game, 1, title => /\|sy:[1-9]/.test(title), 'scrolled down', 8000, since);
     results.wheelScrollY = Number(/\|sy:(\d+)/.exec(st.json.title)[1]);
-    game.send(P.T.INPUT, 1, { type: 'wheel', x: 320, y: 180, deltaX: 0, deltaY: 2400 });
+    await sleep(600); // let the smooth scroll settle
+    const settled = game.messages.filter(m => m.type === P.T.STATE && m.screenId === 1).pop();
+    results.wheelOneNotchPx = Number(/\|sy:(\d+)/.exec(settled.json.title)[1]);
+    game.send(P.T.INPUT, 1, { type: 'wheel', x: 320, y: 180, deltaX: 0, deltaY: 100 * 30 }); // 30 notches up
     await titleOf(game, 1, title => title.includes('|sy:0|'), 'scrolled back to top', 8000, game.mark());
   });
 
