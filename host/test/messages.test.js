@@ -53,7 +53,10 @@ test('POLICY: modes from Java enum names, hosts normalised (case, *., dots, puny
     block: null,
   });
   assert.deepStrictEqual(p, { mode: 'allowlist', allow: ['youtube.com', 'twitch.tv', 'ytimg.com', 'xn--aa-4iaz.com.br'], block: [] });
-  assert.deepStrictEqual(M.parsePolicy(null), { mode: 'blocklist', allow: [], block: [] });
+  // Fail closed: no policy is deny-all (an empty allow list), the same encoding as M2's policyMap(null).
+  assert.deepStrictEqual(M.parsePolicy(null), { mode: 'allowlist', allow: [], block: [] });
+  assert.deepStrictEqual(M.parsePolicy(undefined), M.denyAllPolicy());
+  assert.deepStrictEqual(M.parseWelcome({ protoMajor: 1 }).policy, M.denyAllPolicy());
   assert.throws(() => M.parsePolicy({ mode: 'everything' }), M.MessageError);
   assert.throws(() => M.parsePolicy({ allow: 'youtube.com' }), M.MessageError);
   assert.strictEqual(M.parsePolicy({ block: new Array(5000).fill(0).map((_, i) => 'h' + i + '.com') }).block.length, M.LIMITS.MAX_POLICY_ENTRIES);

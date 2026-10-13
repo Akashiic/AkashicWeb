@@ -24,7 +24,7 @@ const { createLogger } = require('./log');
 const { Link } = require('./link');
 const { FrameScheduler, imagePayloads } = require('./frames');
 const { Router } = require('./router');
-const { stockChromeUserAgent } = require('./messages');
+const { stockChromeUserAgent, denyAllPolicy } = require('./messages');
 const { monoMs } = require('./clock');
 const { CaptureRegistry } = require('./capture');
 const { SessionFactory } = require('./sessions');
@@ -44,7 +44,7 @@ const state = {
   scheduler: null,
   shuttingDown: false,
   timers: [],
-  policy: { mode: 'blocklist', allow: [], block: [] },
+  policy: denyAllPolicy(), // until WELCOME carries a readable policy (fail closed)
   userAgent: null,
   locale: 'pt-BR',
   frameErrors: 0,
@@ -230,9 +230,24 @@ function wire(socket, token) {
         + welcome.policy.block.length + ' block), locale ' + welcome.locale);
       return undefined;
     },
+    onBadWelcome: err => {
+      // A WELCOME the host cannot read is a failed handshake, not a reason to run with a guessed policy.
+      clearTimeout(welcomeTimer);
+      log.error('malformed WELCOME: ' + (err && (err.code || err.message)));
+      shutdown('bad-welcome', EXIT.HANDSHAKE);
+    },
     onPolicy: policy => {
       state.policy = policy;
       state.screens.setPolicyNow();
+    },
+    onBadPolicy: err => {
+      // The game meant to change the policy; keeping the old one could keep a looser one. Deny all
+      // until a readable POLICY arrives, and tell the game.
+      const error = String((err && (err.code || err.message)) || 'malformed').slice(0, 120);
+      log.warn('malformed POLICY (' + error + '): switching to deny-all');
+      state.policy = denyAllPolicy();
+      state.screens.setPolicyNow();
+      state.screens.emitEvent(0, 'policy-error', { error, applied: 'deny-all' });
     },
     onPing: (screenId, nonce) => link.send(P.T.PONG, screenId, { nonce, hostTimeMs: monoMs() }),
     onQuit: () => shutdown('quit', EXIT.OK),

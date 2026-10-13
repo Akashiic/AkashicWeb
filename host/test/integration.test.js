@@ -371,6 +371,18 @@ test('host end to end (Linux/Xvfb)', { skip: SKIP, timeout: 180000 }, async t =>
     assert.strictEqual(frames(game, 2, since).length, 0);
   });
 
+  await t.test('a malformed POLICY switches the host to deny-all and is reported (EVENT policy-error)', async () => {
+    let since = game.mark();
+    game.send(P.T.POLICY, 0, { mode: 'ALLOW_LIST', allow: ['example.com'] });
+    const ev = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 0 && m.json.kind === 'policy-error', 5000, 'policy-error', since);
+    assert.strictEqual(ev.json.detail.applied, 'deny-all');
+    since = game.mark();
+    game.send(P.T.NAVIGATE, 1, { url: 'http://example.com/' });
+    const blocked = await game.waitFor(m => m.type === P.T.EVENT && m.screenId === 1 && m.json.kind === 'blocked-url', 5000, 'deny-all refusal', since);
+    assert.strictEqual(blocked.json.detail.reason, 'not-allowed');
+    game.send(P.T.POLICY, 0, { mode: 'blocklist', allow: [], block: ['blocked.example'] });
+  });
+
   await t.test('the host exits when the game closes the socket', async () => {
     const closedAt = Date.now();
     game.socket.end();
@@ -495,6 +507,26 @@ test('lifecycle: parent PID gone, missing token, forbidden switch', { skip: SKIP
       const exit = await Promise.race([game.exited, sleep(15000).then(() => null)]);
       assert.ok(exit, 'host did not exit');
       assert.strictEqual(exit.code, 65);
+    } finally {
+      await game.close();
+    }
+  });
+
+  await t.test('a malformed WELCOME ends the host with HANDSHAKE at once (fail closed)', async () => {
+    const game = new Game();
+    const port = await game.listen();
+    try {
+      game.spawnHost(port);
+      await game.waitFor(m => m.type === P.T.HELLO, 20000, 'HELLO');
+      const sentAt = Date.now();
+      game.send(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'ALLOW_LIST', allow: ['youtube.com'] }, locale: 'pt-BR' });
+      game.send(P.T.CREATE, 9, { width: 320, height: 180, url: 'https://evil.example/' });
+      const exit = await Promise.race([game.exited, sleep(10000).then(() => null)]);
+      assert.ok(exit, 'host did not exit');
+      assert.strictEqual(exit.code, 68);
+      assert.ok(Date.now() - sentAt < 5000, 'exited at once, not after the 10 s WELCOME timeout');
+      assert.ok(game.messages.some(m => m.type === P.T.BYE && m.json.reason === 'bad-welcome'));
+      assert.ok(!game.messages.some(m => m.screenId === 9), 'the CREATE was never served');
     } finally {
       await game.close();
     }

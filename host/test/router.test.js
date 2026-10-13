@@ -32,7 +32,9 @@ function setup() {
     screens,
     log: { warn: w => warnings.push(w), info() {}, error() {} },
     onWelcome: w => calls.push(['welcome', w.protoMajor, w.policy.mode]),
+    onBadWelcome: e => calls.push(['bad-welcome', e.code || e.name]),
     onPolicy: p => calls.push(['policy', p.mode]),
+    onBadPolicy: e => calls.push(['bad-policy', e.code || e.name]),
     onPing: (id, nonce) => calls.push(['ping', id, nonce]),
     onQuit: () => calls.push(['quit']),
   });
@@ -50,6 +52,38 @@ test('only WELCOME, PING and QUIT are accepted before WELCOME', () => {
   router.route(msg(P.T.WELCOME, 0, { protoMajor: 1 }));
   assert.deepStrictEqual(calls.slice(1), [['welcome', 1, 'blocklist']]);
   assert.match(warnings[2], /duplicate-welcome/);
+});
+
+test('a malformed WELCOME fails the handshake and never opens the door to screen messages', () => {
+  for (const bad of [
+    { protoMajor: 1, policy: { mode: 'ALLOW_LIST', allow: ['youtube.com'] }, locale: 'pt-BR' }, // unknown mode
+    { protoMajor: 1, policy: { mode: 'allowlist', allow: 'youtube.com' } }, // allow not a list
+    { policy: null }, // no protoMajor
+  ]) {
+    const { router, calls } = setup();
+    router.route(msg(P.T.WELCOME, 0, bad));
+    assert.strictEqual(router.welcomed, false, JSON.stringify(bad));
+    router.route(msg(P.T.CREATE, 7, { width: 640, height: 360, url: 'https://evil.example/' }));
+    assert.deepStrictEqual(calls.map(c => c[0]), ['bad-welcome'], JSON.stringify(bad));
+  }
+  const { router, calls } = setup();
+  router.route(msg(P.T.WELCOME, 0, Buffer.from('{not json')));
+  assert.deepStrictEqual(calls, [['bad-welcome', 'SyntaxError']]);
+});
+
+test('a WELCOME without a policy means deny-all (an empty allow list), like M2 encodes null', () => {
+  const { router, calls } = setup();
+  router.route(msg(P.T.WELCOME, 0, { protoMajor: 1, policy: null }));
+  assert.deepStrictEqual(calls, [['welcome', 1, 'allowlist']]);
+});
+
+test('a malformed POLICY is reported so the host can switch to deny-all; a good one still applies', () => {
+  const { router, calls } = setup();
+  router.route(msg(P.T.WELCOME, 0, { protoMajor: 1, policy: { mode: 'blocklist' } }));
+  router.route(msg(P.T.POLICY, 0, { mode: 'everything' }));
+  router.route(msg(P.T.POLICY, 0, Buffer.from('[')));
+  router.route(msg(P.T.POLICY, 0, { mode: 'allowlist', allow: ['youtube.com'] }));
+  assert.deepStrictEqual(calls, [['welcome', 1, 'blocklist'], ['bad-policy', 'bad-mode'], ['bad-policy', 'SyntaxError'], ['policy', 'allowlist']]);
 });
 
 test('screen messages reach the right screen with validated payloads', () => {

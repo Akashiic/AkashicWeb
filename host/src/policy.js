@@ -167,7 +167,8 @@ function checkNavigation(raw, policy, frame, options = {}) {
   const host = u.hostname.toLowerCase().replace(/\.+$/, '');
   if (frame === 'main' && (u.username || u.password)) return deny('credentials', host, u.href);
   if (isInternalHostname(host)) return deny('internal', host, u.href);
-  const p = policy || { mode: 'blocklist', allow: [], block: [] };
+  // No policy (not received or unreadable) is deny-all, never allow-all (fail closed).
+  const p = policy || { mode: 'allowlist', allow: [], block: [] };
   if (matchesAny(host, p.block)) return deny('blocked', host, u.href);
   if (frame === 'main' && p.mode === 'allowlist' && !matchesAny(host, p.allow)) return deny('not-allowed', host, u.href);
   return { ok: true, host, url: u.href, needsDns: !isIpLiteral(host) };

@@ -99,6 +99,13 @@ test('allowlist: top-level documents only; iframes of allowed pages still load; 
   assert.strictEqual(Pol.checkNavigation('http://10.0.0.1/', ALLOW, 'sub').reason, 'internal');
 });
 
+test('no policy at all denies every top-level site (fail closed), internal checks still first', () => {
+  assert.strictEqual(Pol.checkNavigation('https://youtube.com/', null, 'main').reason, 'not-allowed');
+  assert.strictEqual(Pol.checkNavigation('https://youtube.com/', undefined, 'main').reason, 'not-allowed');
+  assert.strictEqual(Pol.checkNavigation('http://10.0.0.1/', null, 'main').reason, 'internal');
+  assert.strictEqual(Pol.checkNavigation('about:blank', null, 'main').ok, true);
+});
+
 test('sub frames may hold about:, data: and blob: documents; other schemes are refused', () => {
   for (const u of ['about:blank', 'about:srcdoc', 'data:text/html,x', 'blob:https://a.com/uuid']) assert.strictEqual(Pol.checkNavigation(u, BLOCK, 'sub').ok, true, u);
   assert.strictEqual(Pol.checkNavigation('chrome://settings', BLOCK, 'sub').reason, 'scheme');

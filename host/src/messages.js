@@ -86,9 +86,18 @@ function hostList(v) {
   return out;
 }
 
+/**
+ * Deny-all site policy: an empty allow list. It is the host's policy before WELCOME, for a WELCOME or
+ * POLICY whose policy is null or missing (the same encoding as M2's HostMessages.policyMap), and after
+ * a malformed POLICY. Failing closed: a policy the host cannot read never widens what screens load.
+ */
+function denyAllPolicy() {
+  return { mode: 'allowlist', allow: [], block: [] };
+}
+
 /** POLICY / WELCOME.policy. Java sends the SitePolicy enum names or the lower-case wire names. */
 function parsePolicy(v) {
-  if (v == null) return { mode: 'blocklist', allow: [], block: [] };
+  if (v == null) return denyAllPolicy();
   const o = obj(v);
   return {
     mode: oneOf(o.mode, ['allowlist', 'blocklist'], 'blocklist', 'mode'),
@@ -196,6 +205,6 @@ function acceptLanguages(locale) {
 }
 
 module.exports = {
-  LIMITS, MessageError, normalizeHostEntry, parsePolicy, parseWelcome, parseCreate, parseNavigate, parseRender,
+  LIMITS, MessageError, normalizeHostEntry, denyAllPolicy, parsePolicy, parseWelcome, parseCreate, parseNavigate, parseRender,
   parseResize, parseAudio, parseSync, parsePing, parseLocale, parseUserAgent, stockChromeUserAgent, acceptLanguages,
 };
