@@ -1051,6 +1051,21 @@ If YouTube resets playbackRate, use micro-seeks above 400 ms and accept VOD p95 
   Evidence: VERIFIED: Electron v44.7.0 docs/api/session.md:37-39: 'If there is no persist: prefix, the page will use an in-memory session.'  
   Correction: Upgrade the grade to VERIFIED (docs). Still confirm in the sync spike that followers stay logged out.
 
+### Lead amendment (D-016, 2026-10-13, binding)
+
+- **Input stays on the client.** The controller's client applies pointer and key input straight to its own browser. No pointer position or keystroke travels to the server, and the server relays no input: C2SPointer, C2SKey and S2CInput are removed from protocol v1, and their ids (18, 19, 3) stay reserved.
+- **What the server still owns:**
+  - The controller lock: C2SControl take/release, checked for rights, lock, reach and line of sight; a keepalive while the controller interacts; release when idle.
+  - The URL and the media clock, as before.
+- **Why:** after the reviewer amendment above, relayed input reached only the controller's own browser. The server hop therefore bought no security, because a modified client can always drive its own local browser. It did cost two things:
+  - a full network round trip on every click and key;
+  - typed text, including passwords typed into pages, carried through the game server and its logs.
+- **Consequences:**
+  - AW-10 is closed.
+  - S2CHello carries the player's server-side UUID, so a client recognises itself as the controller on offline-mode or proxied servers.
+  - ScreenState carries `controllerName`.
+  - S2CMediaClock carries `live` and `liveLagMs` for the live-edge rule.
+
 ## ADR-013
 
 **Security baseline for public screens** — status: `accepted`

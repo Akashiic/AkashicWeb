@@ -1,6 +1,6 @@
 # Project state
 
-Last update: 2026-10-12 (UTC). Phase: **implementation started (skeleton).** Nothing is released, tested in game, or live-approved.
+Last update: 2026-10-13 (UTC). Phase: **implementation, wave 2 (review fixes).** All five modules exist and build; nothing is released, tested in game or on Windows, or live-approved.
 
 ## Evidence grades used in this repository
 
@@ -22,9 +22,10 @@ The research files use VERIFIED (≈ STATIC or AUTOMATED, with a source) and INF
 | Research on Web Displays, MCEF, issues, CEF engines, GTNH integration, codecs, latency, rights | Done ([`research/`](research/)) | STATIC / AUTOMATED (Linux container) |
 | Plan, decisions, problem→fix matrix, risk register | Written | AUTHORED |
 | Probe and harness sources from the research | Kept in [`/spikes`](../spikes) | AUTOMATED (Linux container only) |
-| Mod skeleton (Forge 1.7.10, GTNH buildscript, Jabel, JUnit 5): `@Mod`, proxies, `Protocol`, `HostProtocol` framing | Compiles; 4 JUnit tests pass; all 9 classes are major 52 (Linux container, Java 21 toolchain via RFG) | BUILD / AUTOMATED |
-| Host app protocol codec (`host/src/protocol.js`) | 3 `node --test` tests pass (Node 22, Linux container) | AUTOMATED |
-| IPC and module contracts ([`PROTOCOL.md`](PROTOCOL.md), [`CONTRACTS.md`](CONTRACTS.md)) | Written | AUTHORED |
+| Mod code, wave 1 (merged 2026-10-13, commit `d9a69c4`): host app `host/` (M1), host connection `client.host` (M2), engine installer `client.install` (M3), screen block, rights, network and commands in `common`/`server` (M4), client screens, rendering, input and sync in `client.*` (M5) | `./gradlew build` green: 440 JUnit tests, 2 env-gated skips; all 321 classes in the jar are major 52; no natives in the jar; no client/LWJGL/process/socket references from `common`/`server` (Linux container, Java 21 toolchain) | BUILD / AUTOMATED |
+| AkashicWebHost app on the real Electron 44.7.0 | 123 unit tests + 29 integration tests pass under Xvfb (Linux container, Node 22); not run on Windows | AUTOMATED (Linux only) |
+| Wave-1 reviews | M1 and M2 reviewed (M1: 2 high, 8 medium; M2: 1 high, 5 medium), fixes in progress; M3, M4, M5 reviews running in wave 2 (the wave-1 runs hit the usage limit) | — |
+| IPC and module contracts ([`PROTOCOL.md`](PROTOCOL.md), [`CONTRACTS.md`](CONTRACTS.md)) | Written; contract types compile; protocol changes from D-016 and the reviews are being folded in | AUTHORED / BUILD |
 | Native builds (libjcef/jcef.dll) | None kept; the Linux build in the research container was a throwaway | — |
 | Releases | None | — |
 
@@ -52,7 +53,7 @@ Anything on Windows or macOS; anything inside Minecraft (any GTNH version, Angel
 
 ## Owner decisions
 
-Answered on 2026-10-11: Forbidden Series (Technic) on Crucible, not GTNH (D-009); AkashicFM is in the pack (D-010); codec-enabled Chromium accepted (D-011); team = owner + AI assistant (D-012). Pending: the pack's mod list (P-11), site policy and admins (P-05), channels (P-07), licence (P-08), telemetry text (P-09). See [`DECISIONS.md`](DECISIONS.md).
+Answered: Forbidden Series (Technic) on Crucible, not GTNH (D-009); AkashicFM is in the pack (D-010); codec-enabled Chromium accepted (D-011); team = owner + AI assistant (D-012); pack mod list (D-013, answers P-11); engine/codec/test choices delegated, produce without date pressure (D-014). Engineering decisions under D-014: Electron host (D-015), page input stays on the client (D-016). Pending: site policy and admins (P-05), channels (P-07), licence (P-08), telemetry text (P-09), consent wording and installer behaviours (P-12), LuckPerms grant for `/web` (P-13). See [`DECISIONS.md`](DECISIONS.md).
 
 ## Technology review (done 2026-10-12)
 
@@ -60,4 +61,4 @@ Seven specialists, an architect and an adversarial reviewer produced ADR-001..AD
 
 ## Now
 
-Building: mod skeleton (GTNHGradle + Jabel, Forge-only), host protocol v1, AkashicWebHost app, HostSupervisor, screen block and texture path. Dates are not the driver (D-014).
+Wave 2: reviews of M3, M4 and M5 and fixes for all five modules: the host's internal-address check on every request, document-start volume and guards, fail-closed policy, thread-death handling in the host connection, OS trust store for old JREs, D-016 in the protocol, client wiring of the installer and host plus the consent screen. Then: integration, an end-to-end test with the real Electron host from Java, the Windows test kit for the owner (G1-E), the Crucible boot test, and the first in-game run (G3). Dates are not the driver (D-014).

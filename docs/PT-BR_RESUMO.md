@@ -1,6 +1,6 @@
 # AkashicWeb: resumo em português
 
-Atualizado em 10/10/2026. Mantenha em dia com [`PROJECT_STATE.md`](PROJECT_STATE.md).
+Atualizado em 13/10/2026. Mantenha em dia com [`PROJECT_STATE.md`](PROJECT_STATE.md).
 
 ## O que é
 
@@ -10,7 +10,19 @@ Os jogadores constroem telas, clicam, rolam, digitam e navegam. O telão do spaw
 
 ## Estado
 
-**Implementação começou (esqueleto).** O mod compila (Forge 1.7.10, buildscript GTNH, Java 8 bytecode) e os testes de protocolo passam, só num container Linux. Nada foi testado no Windows, no cliente do Minecraft ou no servidor Crucible.
+**Implementação, onda 2 (correções das revisões).** Os cinco módulos existem e foram integrados em 13/10:
+- **app do navegador:** Electron 44.7.0;
+- **conexão Java com o navegador**;
+- **instalador do motor:** download com SHA-256 conferido;
+- **bloco da tela, permissões, rede e comandos** do servidor;
+- **cliente:** renderização compatível com Angelica, teclado ABNT2 e sincronia de vídeo.
+
+O build passa com 440 testes JUnit, e o app do navegador passa 123 testes de unidade e 29 de integração com o Electron real, tudo só num container Linux. Nada foi testado no Windows, dentro do Minecraft ou no servidor Crucible.
+
+A revisão adversarial achou problemas sérios, e eles estão sendo corrigidos agora:
+- o Electron desliga a proteção de rede local do Chromium, então o próprio app vai bloquear endereços internos em toda requisição;
+- o volume por distância só valia depois que a página terminava de carregar;
+- uma thread morta podia congelar a tela sem mostrar motivo.
 
 ## O que a pesquisa mostrou
 
@@ -50,11 +62,19 @@ Os jogadores constroem telas, clicam, rolam, digitam e navegam. O telão do spaw
 - O navegador roda num processo próprio (AkashicWebHost) com o Electron oficial (Chromium 152, codecs e sandbox). Tudo o que o jogador vê e faz continua dentro do Minecraft: telas no mundo, cliques, teclado e sincronia vinda do servidor. Se o navegador travar, a tela pisca e volta, sem derrubar o jogo.
 - Sem prazos fixos: produzir direto.
 
+## Decisão técnica de 13/10 (D-016)
+
+- **O que muda:** o que o jogador digita ou clica numa tela vai direto para o navegador do próprio PC.
+- **Por quê:** antes ia ao servidor e voltava. Isso somava uma ida e volta de rede em cada tecla e fazia o texto digitado, até senhas, passar pelo servidor.
+- **O que o servidor continua decidindo:** quem controla a tela, qual é o endereço e o relógio do vídeo, para todos verem a mesma coisa.
+
 ## Decisões que faltam (ver [`DECISIONS.md`](DECISIONS.md))
 
 1. **Sites:** lista de permitidos ou de bloqueados nas telas públicas? E quem são os admins?
 2. **Canais:** quais duas lives vão para o telão?
 3. **Licença** do repositório.
+4. **Texto do consentimento** para instalar o navegador (P-12), em `pt_BR.lang`.
+5. **Permissão no LuckPerms:** liberar `akashicweb.web` para o grupo padrão (P-13), senão só OP usa `/web` no Crucible.
 
 ## Onde está cada coisa
 
