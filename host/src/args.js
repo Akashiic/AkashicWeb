@@ -1,0 +1,99 @@
+'use strict';
+// Command line of AkashicWebHost (docs/PROTOCOL.md section 1, "Transport and handshake").
+// Pure functions: no Electron import, so they are unit-tested under plain Node.
+
+const path = require('path');
+
+/** Process exit codes. HostSupervisor (Java) maps them to reason codes; keep them stable. */
+const EXIT = Object.freeze({
+  OK: 0,
+  BAD_ARGS: 64,        // missing or invalid --akw-* argument
+  FORBIDDEN_SWITCH: 65, // a debugging or security-weakening switch was present
+  NO_TOKEN: 66,        // no valid token on stdin nor in AKW_TOKEN
+  CONNECT_FAILED: 67,  // could not reach 127.0.0.1:<port>
+  HANDSHAKE: 68,       // no WELCOME, or protocol major mismatch
+  PROTOCOL: 69,        // the game sent bytes that are not protocol v1
+  INTERNAL: 70,        // uncaught exception in the main process
+});
+
+class ArgError extends Error {
+  constructor(code, detail) {
+    super(code + (detail ? ': ' + detail : ''));
+    this.code = code;
+  }
+}
+
+function argValue(argv, name) {
+  const prefix = '--' + name + '=';
+  let found = null;
+  for (const a of argv) {
+    if (typeof a === 'string' && a.startsWith(prefix)) found = a.slice(prefix.length);
+  }
+  return found;
+}
+
+function hasFlag(argv, name) {
+  return argv.some(a => a === '--' + name || a === '--' + name + '=1' || a === '--' + name + '=true');
+}
+
+function positiveInt(raw, max) {
+  if (raw == null || !/^[0-9]{1,10}$/.test(raw)) return null;
+  const n = Number(raw);
+  return n >= 1 && n <= max ? n : null;
+}
+
+/**
+ * Parses the --akw-* arguments. Throws ArgError on anything missing or malformed: the host must not
+ * guess where to connect or where to store a profile.
+ */
+function parseArgs(argv) {
+  const port = positiveInt(argValue(argv, 'akw-port'), 65535);
+  if (port == null) throw new ArgError('bad-port', argValue(argv, 'akw-port') || 'missing');
+  const parentPid = positiveInt(argValue(argv, 'akw-parent-pid'), 0x7fffffff);
+  if (parentPid == null) throw new ArgError('bad-parent-pid', argValue(argv, 'akw-parent-pid') || 'missing');
+  const userData = argValue(argv, 'akw-user-data');
+  if (!userData || !path.isAbsolute(userData)) throw new ArgError('bad-user-data', userData || 'missing');
+  const logFile = argValue(argv, 'akw-log');
+  if (logFile != null && logFile !== '' && !path.isAbsolute(logFile)) throw new ArgError('bad-log', logFile);
+  return {
+    port,
+    parentPid,
+    userData: path.normalize(userData),
+    logFile: logFile ? path.normalize(logFile) : null,
+    // GPU OSR vs software OSR is decided by the G1-E measurements (ADR-002 amendment); software is the
+    // default because it is the configuration the Linux probe verified.
+    gpu: hasFlag(argv, 'akw-gpu'),
+    // Test-only: lets file: pages load so the integration test needs no network. main.js honours it
+    // only when the executable is not the renamed production host (app.isPackaged === false).
+    testAllowFile: hasFlag(argv, 'akw-test-allow-file'),
+  };
+}
+
+// Switches that open a debugging channel into the host or weaken the web sandbox. Java never passes
+// them; if one is present the launch was tampered with, so the host refuses to run.
+const FORBIDDEN_EVERYWHERE = [
+  'remote-debugging-port', 'remote-debugging-pipe', 'remote-debugging-address', 'remote-allow-origins',
+  'inspect', 'inspect-brk', 'inspect-port', 'inspect-publish-uid', 'debug', 'debug-brk',
+  'disable-web-security', 'allow-file-access-from-files', 'user-data-dir', 'load-extension',
+];
+// The renderer sandbox is a hard requirement on Windows (ADR-013). Linux tier 2 and the Linux test
+// harness may need --no-sandbox when running as root, so it is only forbidden on win32.
+const FORBIDDEN_ON_WINDOWS = ['no-sandbox', 'disable-gpu-sandbox', 'no-zygote'];
+
+/** Returns the forbidden switch names present in argv (empty when the command line is clean). */
+function findForbiddenSwitches(argv, platform) {
+  const names = FORBIDDEN_EVERYWHERE.concat(platform === 'win32' ? FORBIDDEN_ON_WINDOWS : []);
+  const win = platform === 'win32';
+  const found = [];
+  for (const raw of argv) {
+    if (typeof raw !== 'string') continue;
+    // Chromium accepts "--x", "-x" and, on Windows, "/x"; switch names are case-insensitive on Windows.
+    const m = /^(?:--|-|\/)([A-Za-z0-9-]+)(?:=.*)?$/s.exec(raw);
+    if (!m || (raw.startsWith('/') && !win)) continue;
+    const name = win ? m[1].toLowerCase() : m[1];
+    if (names.includes(name) && !found.includes(name)) found.push(name);
+  }
+  return found;
+}
+
+module.exports = { EXIT, ArgError, parseArgs, findForbiddenSwitches };

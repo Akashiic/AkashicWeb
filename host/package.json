@@ -6,6 +6,7 @@
   "main": "src/main.js",
   "license": "UNLICENSED",
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:integration": "node --test test/integration.test.js"
   }
 }
