@@ -52,17 +52,18 @@ public interface EngineLocator {
 
     /**
      * The player declined or stopped the install ("Cancel" while downloading, "Not now" on the consent screen): a
-     * download in progress stops at the next chunk, the partial download and the consent record are deleted, and the
-     * state returns to CONSENT_NEEDED. Nothing is fetched again until {@link #requestInstall()}. Safe from any thread.
+     * download in progress stops at the next chunk, the partial download and the consent record are deleted, and a
+     * stopped install returns to CONSENT_NEEDED (a FAILED state keeps its reason). Nothing is fetched again until
+     * {@link #requestInstall()} or {@link #repair()}. Safe from any thread.
      */
     default void cancelInstall() {}
 
     /**
      * The "Repair" button (FAILED placeholder, /web doctor): re-checks the platform, the install folder and Smart App
-     * Control, fully re-hashes the installed engine, rewrites a damaged host app from the jar and re-downloads a
-     * damaged
-     * engine. The button sits next to the consent facts ({@link #consentInfo()}), so pressing it is consent to
-     * download. Runs in the background like {@link #requestInstall()}.
+     * Control, fully re-hashes the installed engine, rewrites a damaged host app from the jar and downloads a damaged
+     * engine again. The button sits next to the consent facts ({@link #consentInfo()}), so pressing it is consent to
+     * download. Runs in the background like {@link #requestInstall()}. Offer it while the host is not running: Windows
+     * cannot replace a folder the running host has open (that would be ENGINE_IN_USE).
      */
     default void repair() {
         requestInstall();

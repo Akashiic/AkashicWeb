@@ -12,9 +12,8 @@ import javax.net.ssl.HttpsURLConnection;
  * Opens one HTTP(S) request for the installer and follows redirects itself, from the canonical URL, on every call:
  * GitHub answers {@code github.com/.../releases/download/...} with a 302 to a short-lived signed URL on
  * release-assets.githubusercontent.com, so a stored redirect target would expire (ADR-011 amendment). Following by
- * hand also keeps the Range/If-Range headers on every hop and refuses HTTPS-to-HTTP downgrades. Every HTTPS hop uses
- * the
- * installer's own TLS context ({@link InstallerTls}), never the JVM default.
+ * hand also keeps the Range/If-Range headers on every hop and refuses HTTPS-to-HTTP downgrades. Every HTTPS hop
+ * uses the installer's own TLS context ({@link InstallerTls}), never the JVM default.
  */
 final class HttpFetcher {
 

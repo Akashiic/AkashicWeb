@@ -19,8 +19,7 @@ class EngineInstallerTest {
 
     /**
      * Review finding (medium, 5, mutant M6): bytes we just wrote and hashed cannot legitimately change, so an
-     * executable
-     * that is gone right after the rename is an on-write antivirus action: AV_BLOCKED, and the folder is not used.
+     * executable gone right after the rename is an on-write antivirus action: AV_BLOCKED, and the folder is unused.
      */
     @Test
     void anExecutableRemovedRightAfterTheRenameIsAvBlocked() throws Exception {
