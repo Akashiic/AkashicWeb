@@ -29,8 +29,9 @@ import com.akashiic.web.protocol.Protocol;
  * 127.0.0.1:0 with backlog 1, spawn the host with a sanitised environment, hand it a fresh token on stdin, accept
  * exactly one connection, check token (constant time) and protocol major, then hand the connection to
  * {@link Callbacks#onConnected} and report READY. When the connection ends the host is relaunched after 1, 2, 4 ... 60
- * s; five exits within ten minutes, a protocol-major mismatch or a missing engine disable it until
- * {@link #reenable()}. A JVM shutdown hook closes the socket and kills the child as a last resort.
+ * s; five exits within ten minutes (HOST_CRASH_LOOP, or HOST_LAUNCH_FAILED when not one of them got as far as
+ * starting), a protocol-major mismatch or a missing engine disable it until {@link #reenable()}. A JVM shutdown hook
+ * closes the socket and kills the child as a last resort.
  *
  * <p>
  * Status changes are reported on the supervisor thread through {@link Callbacks#onStatus}.
@@ -295,8 +296,14 @@ public final class HostSupervisor {
                 disable(r.failure, r.failure.reason(), r.detail);
                 continue;
             }
-            if (crashGuard.recordExit(clock.nowMillis())) {
-                disable(HostFailure.CRASH_LOOP, ReasonCode.HOST_CRASH_LOOP, r.failure + ": " + r.detail);
+            long now = clock.nowMillis();
+            if (crashGuard.recordExit(now, r.failure)) {
+                if (crashGuard.allRecentWere(HostFailure.LAUNCH_FAILED, now)) {
+                    // The host never even started (antivirus block, missing file): say so instead of "crashing".
+                    disable(HostFailure.LAUNCH_FAILED, ReasonCode.HOST_LAUNCH_FAILED, r.failure + ": " + r.detail);
+                } else {
+                    disable(HostFailure.CRASH_LOOP, ReasonCode.HOST_CRASH_LOOP, r.failure + ": " + r.detail);
+                }
                 continue;
             }
             if (r.healthy) backoff.reset();

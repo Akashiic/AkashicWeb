@@ -55,9 +55,38 @@ class RelaunchPolicyTest {
         assertEquals(ReasonCode.PROTOCOL_MISMATCH, HostFailure.PROTOCOL_MAJOR.reason());
         assertEquals(ReasonCode.HOST_EXITED, HostFailure.CONNECTION_LOST.reason());
         assertEquals(ReasonCode.HOST_CRASH_LOOP, HostFailure.CRASH_LOOP.reason());
+        // Codes merged into ReasonCode at the wave-1 integration.
+        assertEquals(ReasonCode.HOST_LAUNCH_FAILED, HostFailure.LAUNCH_FAILED.reason());
+        assertEquals(ReasonCode.HOST_PROTOCOL_ERROR, HostFailure.PROTOCOL_ERROR.reason());
+        assertEquals(ReasonCode.HOST_STALLED, HostFailure.WRITE_STALLED.reason());
+        assertEquals(ReasonCode.HOST_STALLED, HostFailure.STALLED.reason());
+        assertEquals(ReasonCode.HOST_EXITED, HostFailure.INTERNAL_ERROR.reason());
         assertTrue(HostFailure.PROTOCOL_MAJOR.disables());
         assertFalse(HostFailure.BAD_TOKEN.disables());
         assertFalse(HostFailure.CONNECTION_LOST.disables());
+        assertFalse(HostFailure.STALLED.disables(), "a stalled host is replaced through backoff and the crash guard");
+        assertFalse(HostFailure.INTERNAL_ERROR.disables());
         for (HostFailure f : HostFailure.values()) assertTrue(f.reason() != null, f.name());
+    }
+
+    @Test
+    void crashLoopWindowKnowsWhetherOnlyLaunchesFailed() {
+        CrashLoopGuard g = new CrashLoopGuard(3, 10_000);
+        assertFalse(g.allRecentWere(HostFailure.LAUNCH_FAILED, 0), "an empty window says nothing");
+        assertFalse(g.recordExit(1000, HostFailure.LAUNCH_FAILED));
+        assertFalse(g.recordExit(2000, HostFailure.LAUNCH_FAILED));
+        assertTrue(g.recordExit(3000, HostFailure.LAUNCH_FAILED));
+        assertTrue(g.allRecentWere(HostFailure.LAUNCH_FAILED, 3000));
+
+        CrashLoopGuard mixed = new CrashLoopGuard(3, 10_000);
+        mixed.recordExit(1000, HostFailure.LAUNCH_FAILED);
+        mixed.recordExit(2000, HostFailure.CONNECTION_LOST);
+        assertTrue(mixed.recordExit(3000, HostFailure.LAUNCH_FAILED));
+        assertFalse(mixed.allRecentWere(HostFailure.LAUNCH_FAILED, 3000), "one real crash makes it a crash loop");
+        // Once the crash has left the window, only launch failures remain.
+        assertFalse(mixed.allRecentWere(HostFailure.LAUNCH_FAILED, 11_999), "the crash at 2000 is still inside");
+        assertTrue(mixed.allRecentWere(HostFailure.LAUNCH_FAILED, 12_000));
+        assertFalse(mixed.allRecentWere(HostFailure.LAUNCH_FAILED, 13_000), "window empty again");
+        assertFalse(new CrashLoopGuard().recordExit(0), "the kind-less overload still counts");
     }
 }

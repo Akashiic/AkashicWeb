@@ -301,7 +301,7 @@ class HostSupervisorTest {
                 60_000,
                 () -> h.supervisor()
                     .lastFailure() == HostFailure.PROTOCOL_ERROR
-                    && f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_EXITED));
+                    && f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_PROTOCOL_ERROR));
         } finally {
             h.shutdown();
         }
@@ -321,10 +321,16 @@ class HostSupervisorTest {
         BrowserHostImpl h = host(f, config);
         try {
             h.start();
-            // With the instant fake clock five failed launches trip the crash-loop guard almost at once.
+            // With the instant fake clock five failed launches trip the crash-loop guard almost at once. Not one of
+            // them started, so the player is told the browser could not be started, not that it keeps crashing.
             await("crash loop of launch failures", 20_000, () -> h.status().kind == HostStatus.Kind.DISABLED);
-            assertEquals(ReasonCode.HOST_CRASH_LOOP, h.status().reason);
-            assertTrue(f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_EXITED));
+            assertEquals(ReasonCode.HOST_LAUNCH_FAILED, h.status().reason);
+            assertTrue(f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_LAUNCH_FAILED));
+            assertFalse(f.statuses.saw(HostStatus.Kind.DISABLED, ReasonCode.HOST_CRASH_LOOP));
+            assertEquals(
+                HostFailure.LAUNCH_FAILED,
+                h.supervisor()
+                    .lastFailure());
             assertTrue(
                 h.supervisor()
                     .lastFailureDetail()
