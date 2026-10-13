@@ -21,11 +21,17 @@ import org.apache.logging.log4j.Logger;
  * ({@link DownloadState}).</li>
  * <li>A resume sends {@code Range: bytes=<have>-} and {@code If-Range: <etag>}; a 200 instead of a 206 means the
  * entity changed (or Range is unsupported), so the part file restarts from 0 and the SHA-256 pin decides.</li>
+ * <li>If-Range alone is not trusted: GitHub's asset host (release-assets.githubusercontent.com, Fastly in front of
+ * Azure Blob) ignores it and answers 206 even for a stale validator (VERIFIED 2026-10-13 in the wave-2 review). So a
+ * 206 is accepted only when its own ETag and Content-Range continue exactly the bytes we hold; anything else restarts
+ * from 0, and the SHA-256 pin remains the last check.</li>
  * <li>Every byte read is written before the next read, so an abort loses at most the bytes in flight: a resume
  * re-fetches less than one {@link #CHUNK}.</li>
  * <li>Failures back off exponentially; the attempt counter resets whenever an attempt made progress, so a long, flaky
  * download is not abandoned while it is still moving.</li>
- * <li>A certificate-path failure switches once to the bundled-roots context ({@link InstallerTls}).</li>
+ * <li>A certificate the installer does not trust ends the download at once with TLS_FAILED: in that handshake
+ * {@link InstallerTls} already tried the JRE store, the OS store and the bundled roots, and retrying cannot change
+ * the answer.</li>
  * </ul>
  * Not thread-safe: one download per instance, on the installer thread. {@link #cancel()} may be called from any
  * thread.
@@ -54,7 +60,6 @@ public final class Downloader {
     private final ToLongFunction<File> usableSpace;
     private final int maxAttempts;
     private volatile boolean cancelled;
-    private boolean fallbackTls;
 
     /** Body bytes received over all attempts (tests compare it with the file size to measure re-fetching). */
     volatile long bytesReceived;
@@ -71,10 +76,6 @@ public final class Downloader {
     /** Stops the download at the next chunk; the part file stays valid for a later resume. */
     public void cancel() {
         cancelled = true;
-    }
-
-    boolean usedFallbackTls() {
-        return fallbackTls;
     }
 
     /**
@@ -145,11 +146,12 @@ public final class Downloader {
                 if (!e.retryable) throw e;
                 last = e;
             } catch (IOException e) {
-                if (InstallerTls.isTrustFailure(e) && !fallbackTls) {
-                    // Old 8u51 cacerts: retry right away with the bundled roots added (never as the JVM default).
-                    LOG.warn("Engine download: certificate not trusted by the JRE ({}); retry with bundled roots", e);
-                    fallbackTls = true;
-                    continue;
+                if (InstallerTls.isTrustFailure(e)) {
+                    throw new InstallException(
+                        InstallFailure.TLS_FAILED,
+                        "certificate of " + http.lastHost() + " not trusted: " + rootMessage(e),
+                        false,
+                        e);
                 }
                 last = e;
             }
@@ -189,7 +191,7 @@ public final class Downloader {
             have = 0;
         }
         boolean ranged = have > 0;
-        HttpFetcher.Response r = http.open(t.url, ranged ? have : 0, ranged ? st.etag : null, fallbackTls);
+        HttpFetcher.Response r = http.open(t.url, ranged ? have : 0, ranged ? st.etag : null);
         HttpURLConnection c = r.conn;
         try {
             if (r.code == 206 && ranged) {
@@ -283,6 +285,17 @@ public final class Downloader {
             return new InstallException(InstallFailure.TLS_FAILED, String.valueOf(last), last);
         }
         return new InstallException(InstallFailure.DOWNLOAD_FAILED, String.valueOf(last), last);
+    }
+
+    /** The innermost message of a TLS failure (the JSSE wrappers repeat it with class names). */
+    private static String rootMessage(Throwable t) {
+        String msg = String.valueOf(t.getMessage());
+        for (Throwable c = t.getCause(); c != null; c = c.getCause()) {
+            if (c instanceof java.security.cert.CertificateException && c.getMessage() != null) {
+                return c.getMessage();
+            }
+        }
+        return msg;
     }
 
     private void checkCancelled() throws InstallException {

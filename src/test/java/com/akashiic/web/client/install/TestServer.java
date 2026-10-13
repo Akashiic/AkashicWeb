@@ -18,8 +18,12 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.net.ssl.SSLContext;
+
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 
 /**
  * A loopback HTTP server shaped like GitHub release downloads, for installer tests:
@@ -30,6 +34,10 @@ import com.sun.net.httpserver.HttpServer;
  * <li>Range {@code bytes=N-} with If-Range against a strong ETag: 206 when it matches, 200 with the whole entity when
  * not (RFC 9110 semantics);</li>
  * <li>failure injection: cut the connection after N body bytes, queued status codes, a wrong Content-Length.</li>
+ * <li>CDN quirks seen on GitHub's asset host: If-Range ignored ({@link #ignoreIfRange}), and test-only faults: a 206
+ * starting elsewhere ({@link #rangeStartSkew}), a body longer than declared with no Content-Length
+ * ({@link #extraBytesChunked}).</li>
+ * <li>HTTPS with a given server certificate ({@link #TestServer(SSLContext)}).</li>
  * </ul>
  */
 final class TestServer implements AutoCloseable {
@@ -53,6 +61,7 @@ final class TestServer implements AutoCloseable {
     private static final Pattern RANGE = Pattern.compile("bytes=(\\d+)-");
 
     private final HttpServer server;
+    private final String scheme;
     volatile byte[] body = new byte[0];
     volatile String etag = "\"v1\"";
     /** Bytes of the next entity response to send before cutting the connection; -1 = no cut. One-shot. */
@@ -68,6 +77,12 @@ final class TestServer implements AutoCloseable {
     volatile long gateAt = -1;
     final CountDownLatch reached = new CountDownLatch(1);
     final CountDownLatch release = new CountDownLatch(1);
+    /** Serve 206 for any Range whatever If-Range says, as release-assets.githubusercontent.com does. */
+    volatile boolean ignoreIfRange;
+    /** Added to the start of the next 206's Content-Range and body (a server answering the wrong range). One-shot. */
+    volatile long rangeStartSkew;
+    /** Extra bytes appended to 200 bodies sent without Content-Length (chunked). */
+    volatile int extraBytesChunked = -1;
     final AtomicInteger canonicalHits = new AtomicInteger();
     final AtomicInteger entityHits = new AtomicInteger();
     final List<Request> requests = Collections.synchronizedList(new ArrayList<Request>());
@@ -75,14 +90,29 @@ final class TestServer implements AutoCloseable {
     private final AtomicInteger signatures = new AtomicInteger();
 
     TestServer() throws IOException {
-        server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 16);
+        this(null);
+    }
+
+    /** An HTTPS server presenting the certificate in {@code tls}; plain HTTP when null. */
+    TestServer(SSLContext tls) throws IOException {
+        InetSocketAddress loopback = new InetSocketAddress(InetAddress.getLoopbackAddress(), 0);
+        if (tls == null) {
+            server = HttpServer.create(loopback, 16);
+            scheme = "http";
+        } else {
+            HttpsServer https = HttpsServer.create(loopback, 16);
+            https.setHttpsConfigurator(new HttpsConfigurator(tls));
+            server = https;
+            scheme = "https";
+        }
         server.createContext("/", this::handle);
         server.start();
     }
 
     String base() {
-        return "http://127.0.0.1:" + server.getAddress()
-            .getPort();
+        return scheme + "://127.0.0.1:"
+            + server.getAddress()
+                .getPort();
     }
 
     String canonicalUrl(String name) {
@@ -168,7 +198,7 @@ final class TestServer implements AutoCloseable {
             .getFirst("If-Range");
         if (range != null) {
             Matcher m = RANGE.matcher(range);
-            if (m.matches() && (ifRange == null || ifRange.equals(tag))) {
+            if (m.matches() && (ifRange == null || ifRange.equals(tag) || ignoreIfRange)) {
                 from = Long.parseLong(m.group(1));
                 if (from >= b.length) {
                     ex.getResponseHeaders()
@@ -182,11 +212,27 @@ final class TestServer implements AutoCloseable {
             .set("ETag", tag);
         ex.getResponseHeaders()
             .set("Accept-Ranges", "bytes");
+        if (from > 0 && rangeStartSkew != 0) {
+            from = Math.max(0, Math.min(b.length - 1, from + rangeStartSkew));
+            rangeStartSkew = 0;
+        }
         long length = b.length - from;
         if (from > 0) {
             ex.getResponseHeaders()
                 .set("Content-Range", "bytes " + from + "-" + (b.length - 1) + "/" + b.length);
             ex.sendResponseHeaders(206, length);
+        } else if (extraBytesChunked >= 0) {
+            ex.sendResponseHeaders(200, 0); // 0 = chunked: no Content-Length for the client to check
+            OutputStream out = ex.getResponseBody();
+            try {
+                out.write(b);
+                out.write(new byte[extraBytesChunked]);
+                bytesServed.addAndGet(b.length + extraBytesChunked);
+                out.flush();
+            } catch (IOException e) {
+                // Expected: the client stops reading once it has more than the pinned size.
+            }
+            return;
         } else {
             long declared = contentLengthOverride >= 0 ? contentLengthOverride : length;
             ex.sendResponseHeaders(200, declared);

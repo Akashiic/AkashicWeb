@@ -296,6 +296,126 @@ class DownloaderTest {
         assertEquals(0, server.requestCount());
     }
 
+    /**
+     * Review finding (medium, 5, mutant M1): GitHub's asset host ignores If-Range and answers 206 even after the file
+     * changed. The 206's own ETag must stop the splice: the download restarts from 0 without first producing a spliced
+     * file that fails its hash.
+     */
+    @Test
+    void ifRangeIgnoredByTheServerStillNeverSplicesAChangedFile() throws Exception {
+        byte[] v1 = TestSupport.random(SIZE, 1);
+        server.body = v1;
+        EngineTarget oldPin = target(server.canonicalUrl("e.zip"));
+        Downloader first = downloader(3);
+        assertThrows(
+            InstallException.class,
+            () -> first.download(oldPin, dir, (done, total) -> { if (done > 300_000) first.cancel(); }));
+        long kept = part(oldPin).length();
+        // The asset was re-uploaded: new bytes and a new ETag, same size. The pin is the new file's.
+        server.body = body;
+        server.etag = "\"v2\"";
+        server.ignoreIfRange = true;
+        EngineTarget t = target(server.canonicalUrl("e.zip"));
+        Downloader d = downloader(3);
+        File zip = d.download(t, dir, ProgressListener.NONE);
+        assertArrayEquals(body, Files.readAllBytes(zip.toPath()));
+        List<TestServer.Request> entity = server.entityRequests();
+        TestServer.Request resumed = entity.get(entity.size() - 2);
+        assertEquals("bytes=" + kept + "-", resumed.range, "the stale prefix was offered with If-Range");
+        assertNull(entity.get(entity.size() - 1).range, "then a clean restart from 0");
+        assertEquals(SIZE, d.bytesReceived, "no byte of the mismatched 206 was kept, no spliced file was hashed");
+    }
+
+    /** Review finding (medium, 5, mutant M3): a 206 that starts anywhere but at our offset is never appended. */
+    @Test
+    void a206StartingAtTheWrongOffsetRestartsFromZero() throws Exception {
+        EngineTarget t = target(server.canonicalUrl("e.zip"));
+        Downloader first = downloader(3);
+        assertThrows(
+            InstallException.class,
+            () -> first.download(t, dir, (done, total) -> { if (done > 300_000) first.cancel(); }));
+        server.rangeStartSkew = 1000;
+        Downloader d = downloader(3);
+        File zip = d.download(t, dir, ProgressListener.NONE);
+        assertArrayEquals(body, Files.readAllBytes(zip.toPath()));
+        assertEquals(SIZE, d.bytesReceived, "the misplaced 206 body was never written");
+    }
+
+    /**
+     * Review finding (medium, 5, mutant M8): without Content-Length nothing announces the size, so the copy loop must
+     * stop at the pinned size itself rather than let a server fill the disk.
+     */
+    @Test
+    void aBodyLongerThanThePinnedSizeIsCutOffWhileStreaming() throws Exception {
+        EngineTarget t = target(server.canonicalUrl("e.zip"));
+        server.extraBytesChunked = 5000;
+        Downloader d = downloader(3);
+        InstallException e = assertThrows(InstallException.class, () -> d.download(t, dir, ProgressListener.NONE));
+        assertEquals(InstallFailure.HASH_MISMATCH, e.failure);
+        assertTrue(e.detail.contains("more than"), e.detail);
+        assertTrue(d.bytesReceived <= SIZE, "kept " + d.bytesReceived);
+        assertFalse(part(t).exists() && part(t).length() > SIZE);
+    }
+
+    /**
+     * Review finding (medium, 3) and M3_FIX item 2: an untrusted certificate is TLS_FAILED after one attempt (every
+     * store was already tried in that handshake), with no backoff rounds.
+     */
+    @Test
+    void anUntrustedCertificateIsTlsFailedAtOnce() throws Exception {
+        TestCerts.Issued unknown = TestCerts.ca("Unknown Root");
+        TestCerts.Issued known = TestCerts.ca("Known Root");
+        try (TestServer https = new TestServer(TestCerts.serverContext(TestCerts.server(unknown), unknown))) {
+            https.body = body;
+            InstallerTls tls = trusting(known);
+            Downloader d = new Downloader(
+                new HttpFetcher("test", tls, false, 5000, 5000),
+                new Backoff(1000, 60_000),
+                sleeps::add,
+                f -> Long.MAX_VALUE,
+                5);
+            EngineTarget t = TestSupport.target("linux-x64", https.canonicalUrl("e.zip"), body, false);
+            InstallException e = assertThrows(InstallException.class, () -> d.download(t, dir, ProgressListener.NONE));
+            assertEquals(InstallFailure.TLS_FAILED, e.failure);
+            assertTrue(e.detail.contains("127.0.0.1"), e.detail);
+            assertEquals(1, d.attempts);
+            assertTrue(sleeps.isEmpty());
+            assertEquals(0, https.requestCount(), "nothing was sent over an untrusted connection");
+        }
+    }
+
+    /** M3_FIX item 2: a chain only the pinned roots know still downloads, over the installer's own context. */
+    @Test
+    void aChainOnlyThePinnedRootsKnowDownloads() throws Exception {
+        TestCerts.Issued jreRoot = TestCerts.ca("JRE Root");
+        TestCerts.Issued pinnedRoot = TestCerts.ca("Pinned Root");
+        try (TestServer https = new TestServer(TestCerts.serverContext(TestCerts.server(pinnedRoot), pinnedRoot))) {
+            https.body = body;
+            InstallerTls tls = new InstallerTls(
+                () -> InstallerTls.pkix(InstallerTls.keyStore(java.util.Collections.singletonList(jreRoot.cert))),
+                () -> null,
+                () -> InstallerTls.pkix(InstallerTls.keyStore(java.util.Collections.singletonList(pinnedRoot.cert))));
+            Downloader d = new Downloader(
+                new HttpFetcher("test", tls, false, 5000, 5000),
+                new Backoff(1000, 60_000),
+                sleeps::add,
+                f -> Long.MAX_VALUE,
+                3);
+            EngineTarget t = TestSupport.target("linux-x64", https.canonicalUrl("e.zip"), body, false);
+            File zip = d.download(t, dir, ProgressListener.NONE);
+            assertArrayEquals(body, Files.readAllBytes(zip.toPath()));
+            assertEquals(InstallerTls.Layer.PINNED, tls.lastTrustedBy());
+            assertEquals(1, d.attempts, "the first attempt already used every store");
+        }
+    }
+
+    private static InstallerTls trusting(TestCerts.Issued root) {
+        return new InstallerTls(
+            () -> InstallerTls.pkix(InstallerTls.keyStore(java.util.Collections.singletonList(root.cert))),
+            () -> null,
+            () -> null);
+    }
+
     @Test
     void contentRangeParsing() {
         assertArrayEquals(new long[] { 5, 9, 10 }, Downloader.parseContentRange("bytes 5-9/10"));
