@@ -88,16 +88,11 @@ class ClientUrlCheckTest {
             ReasonCode.URL_BLOCKED,
             check(SitePolicy.blocklist(Collections.singletonList("bad.example")), "https://www.bad.example/").code);
 
-        // No policy yet, or a mode this build does not know: deny-all, never allow-all.
-        SitePolicy nullMode = new SitePolicy(
-            null,
-            Collections.singletonList("example.com"),
-            Collections.<String>emptyList());
-        for (SitePolicy p : Arrays.asList(null, nullMode)) {
-            ClientUrlCheck.Decision d = check(p, "https://example.com/");
-            assertEquals(ReasonCode.URL_BLOCKED, d.code);
-            assertEquals("not-allowed", d.reason);
-        }
+        // No policy yet: deny-all, never allow-all. (A policy with a null mode can no longer be built: SitePolicy
+        // refuses it since the M4 wave-2 fix, and untrusted input goes through SitePolicy.of.)
+        ClientUrlCheck.Decision d = check(null, "https://example.com/");
+        assertEquals(ReasonCode.URL_BLOCKED, d.code);
+        assertEquals("not-allowed", d.reason);
     }
 
     @Test

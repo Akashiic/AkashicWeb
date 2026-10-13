@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Arrays;
@@ -41,19 +42,17 @@ class HostMessagesTest {
     @Test
     void aPolicyWithoutAKnownModeDeniesEverything() {
         String denyAll = "{\"mode\":\"allowlist\",\"allow\":[],\"block\":[]}";
-        SitePolicy nullMode = new SitePolicy(
-            null,
-            Collections.singletonList("youtube.com"),
-            Collections.singletonList("bad.example"));
-        assertEquals(denyAll, HostMessages.policy(nullMode));
+        // A null mode can no longer be built (M4 made SitePolicy refuse it); a missing policy still means deny-all.
+        assertThrows(
+            NullPointerException.class,
+            () -> new SitePolicy(
+                null,
+                Collections.singletonList("youtube.com"),
+                Collections.singletonList("bad.example")));
         assertEquals(denyAll, HostMessages.policy(null));
         assertTrue(
-            HostMessages.welcome(1, nullMode, null, null)
+            HostMessages.welcome(1, null, null, null)
                 .contains("\"policy\":" + denyAll));
-        assertFalse(
-            HostMessages.gatePolicy(nullMode)
-                .allowsHost("youtube.com"),
-            "deny-all, even for the allow-list entry");
         assertFalse(
             HostMessages.gatePolicy(null)
                 .allowsHost("example.com"));
