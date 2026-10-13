@@ -34,6 +34,45 @@ class HostMessagesTest {
             HostMessages.policy(SitePolicy.blocklist(Collections.singletonList("x.example"))));
     }
 
+    /**
+     * Review finding (medium): a policy whose mode is null (a malformed or newer S2CHello) used to go out as an
+     * allow-all blocklist. Null or unknown modes now fail closed, on the wire and in the client-side gate.
+     */
+    @Test
+    void aPolicyWithoutAKnownModeDeniesEverything() {
+        String denyAll = "{\"mode\":\"allowlist\",\"allow\":[],\"block\":[]}";
+        SitePolicy nullMode = new SitePolicy(
+            null,
+            Collections.singletonList("youtube.com"),
+            Collections.singletonList("bad.example"));
+        assertEquals(denyAll, HostMessages.policy(nullMode));
+        assertEquals(denyAll, HostMessages.policy(null));
+        assertTrue(
+            HostMessages.welcome(1, nullMode, null, null)
+                .contains("\"policy\":" + denyAll));
+        assertFalse(
+            HostMessages.gatePolicy(nullMode)
+                .allowsHost("youtube.com"),
+            "deny-all, even for the allow-list entry");
+        assertFalse(
+            HostMessages.gatePolicy(null)
+                .allowsHost("example.com"));
+        // Known modes keep their lists; the gate normalises entries like the server does.
+        SitePolicy allow = new SitePolicy(
+            SitePolicy.Mode.ALLOWLIST,
+            Collections.singletonList("YouTube.com"),
+            Collections.<String>emptyList());
+        assertTrue(
+            HostMessages.gatePolicy(allow)
+                .allowsHost("www.youtube.com"));
+        assertFalse(
+            HostMessages.gatePolicy(allow)
+                .allowsHost("evilyoutube.com"));
+        assertTrue(
+            HostMessages.gatePolicy(SitePolicy.blocklist(Collections.singletonList("bad.example")))
+                .allowsHost("example.com"));
+    }
+
     @Test
     void createClampsSizeFpsAndVolume() {
         assertEquals(
@@ -153,6 +192,31 @@ class HostMessagesTest {
         Arrays.fill(longUrl, 'a');
         String tooLong = "https://" + new String(longUrl);
         assertFalse(HostMessages.isNavigable(tooLong));
+    }
+
+    /**
+     * Review finding (low): backslashes and user info passed the shape check, a parser differential between
+     * java.net.URI (server) and Chromium's WHATWG parser, which reads '\' as '/'.
+     */
+    @Test
+    void backslashesAndUserInfoNeverLeaveTheJvm() {
+        assertEquals("backslash", HostMessages.urlShapeProblem("http://allowed.example\\@evil.example/"));
+        assertEquals("backslash", HostMessages.urlShapeProblem("https://allowed.example/a\\b"));
+        assertEquals("credentials", HostMessages.urlShapeProblem("http://allowed.example@evil.example/"));
+        assertEquals("credentials", HostMessages.urlShapeProblem("https://user:pw@example.com/"));
+        assertEquals("credentials", HostMessages.urlShapeProblem("HTTPS://a@b"));
+        assertEquals("no_host", HostMessages.urlShapeProblem("https:///example.com/"));
+        assertEquals("scheme", HostMessages.urlShapeProblem("file:///C:/Windows"));
+        assertEquals("malformed", HostMessages.urlShapeProblem("https://a.example/\u0000"));
+        assertEquals("empty", HostMessages.urlShapeProblem(""));
+        // '@' after the authority is ordinary path, query or fragment text.
+        assertNull(HostMessages.urlShapeProblem("https://example.com/@user"));
+        assertNull(HostMessages.urlShapeProblem("https://example.com?to=a@b.example"));
+        assertNull(HostMessages.urlShapeProblem("https://example.com#@x"));
+        assertNull(HostMessages.urlShapeProblem("http://example.com:8080"));
+        assertFalse(HostMessages.isNavigable("http://allowed.example\\@evil.example/"));
+        assertFalse(HostMessages.isNavigable("http://allowed.example@evil.example/"));
+        assertTrue(HostMessages.isNavigable("about:blank"));
     }
 
     private static InputEvent ev(InputEvent.Type type) {
