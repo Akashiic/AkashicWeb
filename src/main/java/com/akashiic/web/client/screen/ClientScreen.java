@@ -50,6 +50,9 @@ public final class ClientScreen {
     ReasonCode failure;
     /** Detail argument of {@link #failure} for its reason text ("" when none). */
     String failureDetail = "";
+    /** Renderer crashes of the current page (reset by a new epoch) and when the browser is recreated (0 = not due). */
+    int crashes;
+    long recreateAtMs;
     boolean reportedUrl;
     long lastUrlReportMs;
 

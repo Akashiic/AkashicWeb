@@ -1,6 +1,7 @@
 package com.akashiic.web.client.screen;
 
 import com.akashiic.web.client.sync.LocalMedia;
+import com.akashiic.web.common.TextSanitizer;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
@@ -53,10 +54,63 @@ public final class HostMessages {
 
     /** EVENT kind (e.g. "renderer-gone"); null when malformed. */
     public static String eventKind(String json) {
+        HostEvent e = event(json);
+        return e == null ? null : e.kind;
+    }
+
+    /**
+     * EVENT {kind, detail}; null when malformed or without a kind. Detail strings are cleaned (no formatting codes or
+     * control characters) and capped at {@link #MAX_DETAIL}, since they end up in placeholders and chat lines.
+     */
+    public static HostEvent event(String json) {
         JsonObject o = object(json);
         if (o == null) return null;
-        String kind = text(o, "kind");
-        return kind.isEmpty() ? null : kind;
+        String kind = clean(text(o, "kind"));
+        if (kind.isEmpty()) return null;
+        JsonElement de = o.get("detail");
+        JsonObject d = de != null && de.isJsonObject() ? de.getAsJsonObject() : new JsonObject();
+        String host = text(d, "host");
+        if (host.isEmpty()) host = hostOf(text(d, "url"));
+        String detailText = firstText(d, "description", "permission", "error");
+        if (detailText.isEmpty() && "renderer-gone".equals(kind)) detailText = text(d, "reason");
+        if (detailText.isEmpty()) {
+            double w = num(d, "width", Double.NaN), h = num(d, "height", Double.NaN);
+            if (!Double.isNaN(w) && !Double.isNaN(h)) detailText = (long) w + "x" + (long) h;
+        }
+        return new HostEvent(
+            kind,
+            clean(text(d, "reason")),
+            clean(text(d, "code")),
+            clean(host),
+            clean(text(d, "via")),
+            clean(detailText),
+            d.has("suppressed"));
+    }
+
+    /** Detail strings shown to players are short: a host name, an error name, a size. */
+    static final int MAX_DETAIL = 128;
+
+    private static String clean(String s) {
+        return TextSanitizer.clean(s, MAX_DETAIL);
+    }
+
+    private static String firstText(JsonObject o, String... names) {
+        for (String n : names) {
+            String s = text(o, n);
+            if (!s.isEmpty()) return s;
+        }
+        return "";
+    }
+
+    /** Host of a URL (never the path or query, which can carry tokens), or "". */
+    static String hostOf(String url) {
+        if (url == null || url.isEmpty()) return "";
+        try {
+            String h = new java.net.URI(url).getHost();
+            return h == null ? "" : h;
+        } catch (java.net.URISyntaxException e) {
+            return "";
+        }
     }
 
     private static JsonObject object(String json) {

@@ -90,6 +90,13 @@ public final class ClientScreens {
     static final long PRUNE_GRACE_MS = 3_000;
     /** The controller repeats C2SControl take at most this often while it interacts (D-016 keepalive). */
     static final long KEEPALIVE_MS = 5_000;
+    /** At most one chat notice per screen and reason this often. */
+    static final long NOTICE_INTERVAL_MS = 10_000;
+    /** A crashed page is recreated after 5 s, doubling per crash of the same page up to a minute. */
+    static final long RECREATE_BASE_MS = 5_000;
+    static final long RECREATE_MAX_MS = 60_000;
+    /** Host-level EVENTs kept for /awdoctor. */
+    static final int MAX_HOST_EVENTS = 5;
 
     private final Map<ScreenKey, ClientScreen> screens = new LinkedHashMap<>();
     private final Map<Integer, ClientScreen> byHostId = new HashMap<>();
@@ -101,6 +108,8 @@ public final class ClientScreens {
     private final Notifier notifier;
     private final HostBridge bridge;
     private final ClickCounter clicks = new ClickCounter();
+    private final NoticeThrottle noticeThrottle = new NoticeThrottle(NOTICE_INTERVAL_MS);
+    private final java.util.ArrayDeque<String> hostEvents = new java.util.ArrayDeque<>();
     private final int maxBrowsers;
 
     private BrowserHost attachedHost;
@@ -158,7 +167,7 @@ public final class ClientScreens {
             state = merged;
         }
         s.setState(state);
-        if (state.epoch != old.epoch) resetSync(s);
+        if (state.epoch != old.epoch) newPage(s);
         BrowserHost host = access.started();
         if (s.hostScreenId == 0 || host == null) {
             s.navigatedEpoch = state.epoch;
@@ -198,7 +207,7 @@ public final class ClientScreens {
         s.state().url = url;
         s.state().epoch = epoch;
         if (!changed) return;
-        resetSync(s);
+        newPage(s);
         BrowserHost host = access.started();
         if (s.hostScreenId != 0 && host != null) navigate(s, host);
         else s.navigatedEpoch = epoch;
@@ -244,12 +253,54 @@ public final class ClientScreens {
     }
 
     void onHostEvent(int hostId, String kind) {
+        onHostEvent(hostId, new HostEvent(kind, "", "", "", "", "", false));
+    }
+
+    /**
+     * A host EVENT (ClientReason has the mapping). Screen 0 is the host itself (e.g. policy-error: the host fell back
+     * to deny-all): logged and kept for /awdoctor. Notices go only to the player driving the page, at most one per
+     * screen and reason every {@link #NOTICE_INTERVAL_MS}: the host rate-limits page-triggered EVENTs to 5/s, still far
+     * too many for chat.
+     */
+    void onHostEvent(int hostId, HostEvent e) {
+        long now = timeMs.getAsLong();
+        if (hostId == 0) {
+            onHostLevelEvent(e, now);
+            return;
+        }
         ClientScreen s = byHostId.get(hostId);
         if (s == null) return;
-        ReasonCode reason = ClientReason.fromEventKind(kind);
-        if (reason != null) s.failure = reason;
-        if ("blocked-url".equals(kind) && isController(s)) notifier.notice(ReasonCode.URL_BLOCKED.langKey(), "");
-        LOG.debug("AkashicWeb: {} host event {}", s.key, kind);
+        ClientReason.Outcome o = ClientReason.map(e);
+        if (o.failure != null) s.fail(o.failure, o.failureDetail);
+        if (o.clearsUnresponsive && s.failure == ReasonCode.PAGE_UNRESPONSIVE) s.clearFailure();
+        if (o.failure == ReasonCode.PAGE_CRASHED) scheduleRecreate(s, now);
+        if (o.notice != null && drivesPage(s) && noticeThrottle.allow(s.key + "|" + o.notice, now))
+            notifier.notice(o.notice.langKey(), o.noticeArg);
+        LOG.debug("AkashicWeb: {} host event {} -> {}", s.key, e, o);
+    }
+
+    private void onHostLevelEvent(HostEvent e, long now) {
+        if (e.suppressedSummary) return;
+        String line = String.format(java.util.Locale.ROOT, "t=%ds %s", now / 1000, e);
+        if (hostEvents.size() == MAX_HOST_EVENTS) hostEvents.removeFirst();
+        hostEvents.addLast(line);
+        if ("policy-error".equals(e.kind)) {
+            LOG.warn("AkashicWeb: the browser host refused the site policy and blocks every page: {}", e);
+        } else {
+            LOG.info("AkashicWeb: browser host event {}", e);
+        }
+    }
+
+    /** A crashed renderer does not come back by itself: recreate the browser after a growing delay. */
+    private static void scheduleRecreate(ClientScreen s, long now) {
+        s.crashes++;
+        long delay = Math.min(RECREATE_MAX_MS, RECREATE_BASE_MS << Math.min(4, s.crashes - 1));
+        s.recreateAtMs = now + delay;
+    }
+
+    /** The local player drives this screen's page: the controller, or a player with CLICK_TYPE on a PRIVATE one. */
+    private boolean drivesPage(ClientScreen s) {
+        return s.state().mode == ScreenMode.PRIVATE ? can(s, Rights.CLICK_TYPE) : isController(s);
     }
 
     // ------------------------------------------------------------------ lifecycle
@@ -281,6 +332,10 @@ public final class ClientScreens {
         updateViewMetrics(v);
         Set<ScreenKey> granted = browsersAllowed() ? grant() : Collections.<ScreenKey>emptySet();
         for (ClientScreen s : new ArrayList<>(screens.values())) {
+            if (s.recreateAtMs != 0 && now >= s.recreateAtMs) {
+                s.recreateAtMs = 0;
+                if (s.failure == ReasonCode.PAGE_CRASHED) destroyBrowser(s, access.started()); // recreated below
+            }
             s.granted = granted.contains(s.key);
             if (s.granted && s.hostScreenId == 0) create(s);
             else if (!s.granted && s.hostScreenId != 0) destroyBrowser(s, access.started());
@@ -482,8 +537,12 @@ public final class ClientScreens {
 
     private boolean browsersAllowed() {
         EngineState e = access.engine();
-        if (!session.allowsBrowsers() || e == null || e.kind != EngineState.Kind.READY || !access.available())
-            return false;
+        // No policy, no browser: M2 denies every URL until policy() is called, so a browser created first would
+        // start blank with a URL_BLOCKED failure.
+        if (!session.allowsBrowsers() || session.policy() == null
+            || e == null
+            || e.kind != EngineState.Kind.READY
+            || !access.available()) return false;
         return lastStatus == null || lastStatus.kind == HostStatus.Kind.READY
             || lastStatus.kind == HostStatus.Kind.STARTING;
     }
@@ -526,9 +585,10 @@ public final class ClientScreens {
     }
 
     private void create(ClientScreen s) {
+        if (session.policy() == null) return;
         BrowserHost host = access.obtain();
         if (host == null) return;
-        attach(host);
+        attach(host); // pushes the site policy before the first CREATE (M2 is deny-all until then)
         int[] size = pageSize(s.state());
         ScreenLod lod = ScreenLod.of(s.distance, s.inView, s.maxDimBlocks());
         CreateSpec spec = new CreateSpec(
@@ -709,6 +769,13 @@ public final class ClientScreens {
         s.hasFrame = false;
     }
 
+    /** A new epoch: the clock, the reports and the crash history belong to the old page. */
+    private static void newPage(ClientScreen s) {
+        resetSync(s);
+        s.crashes = 0;
+        s.recreateAtMs = 0;
+    }
+
     private static void resetSync(ClientScreen s) {
         s.sync.reset();
         s.sampler.reset();
@@ -772,6 +839,7 @@ public final class ClientScreens {
                     s.lastDecision,
                     s.failure == null ? "" : s.failure.name()));
         }
+        for (String event : hostEvents) lines.add("host event: " + event);
         return lines;
     }
 }

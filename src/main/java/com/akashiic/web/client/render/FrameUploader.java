@@ -113,7 +113,7 @@ public final class FrameUploader {
             case DROP_INVALID:
                 stats.recordDroppedInvalid();
                 if (slot.width > maxTexture || slot.height > maxTexture)
-                    s.onUploadFailure(ReasonCode.TEXTURE_TOO_LARGE);
+                    s.onUploadFailure(ReasonCode.TEXTURE_TOO_LARGE, slot.width + "x" + slot.height);
                 ring.release(slot);
                 return;
             default:

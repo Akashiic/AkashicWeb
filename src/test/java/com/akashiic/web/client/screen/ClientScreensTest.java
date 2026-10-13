@@ -472,6 +472,105 @@ class ClientScreensTest {
     }
 
     @Test
+    void localEventsUseTheirCodeAndNoticesCarryOneArgumentForTheDriverOnly() {
+        List<Object[]> args = new ArrayList<>();
+        screens = new ClientScreens(host, () -> server, () -> now[0], clientQueue::add, (k, a) -> {
+            notices.add(k);
+            args.add(a);
+        }, 2, 1L);
+        hello();
+        ScreenState s = screen(0, 2, 2, "https://a.example/", 1);
+        s.controller = ME;
+        screens.onScreenState(s);
+        tick();
+        int id = first().hostScreenId();
+        host.listeners.get(0)
+            .onEvent(
+                id,
+                "{\"kind\":\"blocked-url\",\"detail\":{\"reason\":\"internal\",\"code\":\"URL_INTERNAL\","
+                    + "\"host\":\"10.0.0.1\",\"via\":\"client\"}}");
+        clientQueue.remove(0)
+            .run();
+        assertEquals(ReasonCode.URL_INTERNAL.langKey(), screens.placeholder(first()).detailKey);
+        assertEquals(Collections.singletonList(ReasonCode.URL_INTERNAL.langKey()), notices);
+        assertEquals(1, args.get(0).length, "reason texts take exactly one argument");
+        assertEquals("10.0.0.1", args.get(0)[0]);
+        screens.onHostEvent(id, HostMessages.event("{\"kind\":\"blocked-url\",\"detail\":{\"reason\":\"popup\"}}"));
+        screens.onHostEvent(id, HostMessages.event("{\"kind\":\"blocked-url\",\"detail\":{\"reason\":\"popup\"}}"));
+        assertEquals(2, notices.size(), "the same notice at most once per " + ClientScreens.NOTICE_INTERVAL_MS + " ms");
+        assertEquals(ReasonCode.POPUP_BLOCKED.langKey(), notices.get(1));
+        assertEquals(1, args.get(1).length);
+
+        ScreenState follower = screen(0, 2, 2, "https://a.example/", 1);
+        follower.controller = OTHER;
+        screens.onScreenState(follower);
+        now[0] += ClientScreens.NOTICE_INTERVAL_MS;
+        screens
+            .onHostEvent(id, HostMessages.event("{\"kind\":\"permission-denied\",\"detail\":{\"permission\":\"x\"}}"));
+        assertEquals(2, notices.size(), "a follower is not told about what the controller's page tried");
+    }
+
+    @Test
+    void hostLevelEventsGoToTheLogAndTheDoctor() {
+        hello();
+        screens.onScreenState(screen(0, 2, 2, "https://a.example/", 1));
+        tick();
+        screens.onHostEvent(
+            0,
+            HostMessages
+                .event("{\"kind\":\"policy-error\",\"detail\":{\"error\":\"bad mode\",\"applied\":\"deny-all\"}}"));
+        assertNull(first().failure(), "not a screen failure");
+        assertTrue(notices.isEmpty());
+        String doctor = String.join("\n", screens.diagnostics(now[0]));
+        assertTrue(
+            doctor.contains("host event:") && doctor.contains("policy-error") && doctor.contains("bad mode"),
+            doctor);
+    }
+
+    @Test
+    void responsiveClearsUnresponsiveAndACrashedPageIsRecreated() {
+        hello();
+        screens.onScreenState(screen(0, 2, 2, "https://a.example/", 1));
+        tick();
+        int id = first().hostScreenId();
+        screens.onHostEvent(id, HostMessages.event("{\"kind\":\"unresponsive\",\"detail\":{}}"));
+        assertEquals(ReasonCode.PAGE_UNRESPONSIVE, first().failure());
+        screens.onHostEvent(id, HostMessages.event("{\"kind\":\"responsive\",\"detail\":{}}"));
+        assertNull(first().failure(), "a static page never repaints, so the event must clear the banner");
+
+        screens.onHostEvent(id, HostMessages.event("{\"kind\":\"renderer-gone\",\"detail\":{\"reason\":\"crashed\"}}"));
+        assertEquals(ReasonCode.PAGE_CRASHED, first().failure());
+        tick();
+        assertEquals(1, host.created.size(), "not at once");
+        now[0] += ClientScreens.RECREATE_BASE_MS;
+        tick();
+        int mute = host.calls.lastIndexOf("audio 1 muted 0.00");
+        assertTrue(mute >= 0 && host.indexOf("destroy 1") > mute, host.calls.toString());
+        assertEquals(2, host.created.size(), "a fresh browser for the same page");
+        assertNull(first().failure());
+        int second = first().hostScreenId();
+        screens.onHostEvent(second, HostMessages.event("{\"kind\":\"renderer-gone\",\"detail\":{}}"));
+        now[0] += ClientScreens.RECREATE_BASE_MS;
+        tick();
+        assertEquals(2, host.created.size(), "the second crash of the same page waits twice as long");
+        now[0] += ClientScreens.RECREATE_BASE_MS;
+        tick();
+        assertEquals(3, host.created.size());
+    }
+
+    @Test
+    void noBrowserBeforeTheSitePolicyIsKnownAndThePolicyGoesFirst() {
+        screens.onHello(Protocol.MAJOR, Protocol.MINOR, false, null);
+        screens.onScreenState(screen(0, 2, 2, "https://a.example/", 1));
+        tick();
+        assertTrue(host.created.isEmpty(), "M2 denies every URL until policy(): the page would start blank");
+        hello();
+        tick();
+        assertEquals(1, host.created.size());
+        assertTrue(host.indexOf("policy BLOCKLIST") < host.indexOf("create 1"), host.calls.toString());
+    }
+
+    @Test
     void hostCallbacksHopThroughTheClientQueue() {
         hello();
         screens.onScreenState(screen(0, 2, 2, "https://a.example/", 1));
