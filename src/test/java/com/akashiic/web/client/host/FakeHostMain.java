@@ -31,8 +31,9 @@ import java.util.regex.Pattern;
  * {@code die} (exits at once), {@code env-token} (uses AKW_TOKEN, ignores stdin), {@code garbage} (bad magic after
  * HELLO), {@code hang-once} (the first launch stops reading after WELCOME, like a hung main thread that keeps its
  * socket open; later launches behave like {@code ok}), {@code slow-pong:<ms>} (answers every PING after a delay). In
- * every connected mode: CREATE answers with a full FRAME, a STATE and a PCM chunk; PING with PONG; QUIT with BYE and
- * exit; NAVIGATE {@code {"action":"stop"}} makes it exit (a simulated crash).
+ * every connected mode: CREATE answers with a full FRAME, a STATE and a PCM chunk; DESTROY with a late FRAME and a
+ * STATE {@code {"late":true}}; PING with PONG; QUIT with BYE and exit; NAVIGATE {@code {"action":"stop"}} makes it exit
+ * (a simulated crash).
  */
 public final class FakeHostMain {
 
@@ -123,6 +124,12 @@ public final class FakeHostMain {
                         out.flush();
                         break;
                     }
+                    case HostProtocol.DESTROY:
+                        // A paint that was already on its way: the game must discard it. The STATE marks its passage.
+                        HostProtocol.write(out, HostProtocol.FRAME, m.screenId, seq++, frame(m.screenId, 8, 8));
+                        HostProtocol.writeJson(out, HostProtocol.STATE, m.screenId, seq++, "{\"late\":true}");
+                        out.flush();
+                        break;
                     case HostProtocol.NAVIGATE:
                         if (m.text()
                             .contains("\"action\":\"stop\"")) {

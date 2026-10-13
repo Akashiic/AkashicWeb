@@ -186,6 +186,8 @@ class BrowserHostImplTest {
                 .build(),
             f.clock,
             ProcessControl.forThisPlatform());
+        Events ev = new Events();
+        h.addListener(ev);
         try {
             h.start();
             await("READY", 60_000, () -> h.status().kind == HostStatus.Kind.READY);
@@ -198,8 +200,14 @@ class BrowserHostImplTest {
                     CreateSpec.Session.PRIVATE,
                     CreateSpec.Audio.SPATIAL,
                     1f));
+            FrameRing3 ring = (FrameRing3) h.frames(id);
+            await("the first frame", 20_000, () -> ring.counters()[0] == 1);
             h.destroyScreen(id);
             assertNull(h.frames(id));
+            // Review finding (medium): the fake host answers DESTROY with a late FRAME, then a STATE. Once the STATE
+            // is in, the FRAME was read before it, and it must not have reached the destroyed screen's ring.
+            await("the STATE after the late FRAME", 20_000, () -> ev.states.contains(id + " {\"late\":true}"));
+            assertEquals(1, ring.counters()[0], "a FRAME for a destroyed screen is discarded");
             h.navigate(999, "https://example.com/");
             h.audio(999, false, 1f);
             h.input(999, new InputEvent(InputEvent.Type.MOUSE_MOVE, 1, 1, null, 0, 0, 0, null, 0, null));

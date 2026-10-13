@@ -214,6 +214,11 @@ class HostSupervisorTest {
         for (long s : sleeps) assertEquals(1000L, s, sleeps.toString());
     }
 
+    /**
+     * Review finding (medium): the old check ({@code imageName(pid) == null || hostPid() != pid}) was satisfied by the
+     * instant relaunch alone, so it passed with killNow disabled and left orphaned hosts behind. It now follows the
+     * first silent host's own PID (from its record line), which only killNow can end: the fake sleeps 120 s.
+     */
     @Test
     void connectTimeoutKillsASilentHost() throws Exception {
         FakeHostFixture f = new FakeHostFixture(dir, "silent");
@@ -230,15 +235,17 @@ class HostSupervisorTest {
                 () -> h.supervisor()
                     .lastFailure() == HostFailure.CONNECT_TIMEOUT
                     && f.statuses.saw(HostStatus.Kind.DOWN, ReasonCode.HOST_HANDSHAKE));
-            long pid = h.supervisor()
-                .hostPid();
-            assertTrue(pid > 0);
+            await("the first host's record", 10_000, () -> !lines(f).isEmpty());
+            long first = firstPid(f);
+            assertTrue(first > 0);
             ProcessControl pc = ProcessControl.forThisPlatform();
-            await(
-                "silent host killed",
-                10_000,
-                () -> pc.imageName(pid) == null || h.supervisor()
-                    .hostPid() != pid);
+            await("the first silent host was killed", 10_000, () -> pc.imageName(first) == null);
+            assertTrue(
+                h.supervisor()
+                    .lastFailureDetail()
+                    .contains("exit code"),
+                "stopProcess saw it end: " + h.supervisor()
+                    .lastFailureDetail());
         } finally {
             h.shutdown();
         }
