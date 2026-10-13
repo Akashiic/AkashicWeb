@@ -74,7 +74,11 @@ public final class TextSanitizer {
         return Character.getType(c) == Character.FORMAT;
     }
 
-    /** URL: no spaces, no control or invisible formatting, bounded length. Real validation is UrlPolicy's. */
+    /**
+     * URL: no spaces, no control or invisible formatting, bounded length. The section sign is percent-encoded, as
+     * Chromium would send it anyway, so a stored URL never carries Minecraft formatting into chat or a GUI (review
+     * finding). Real validation is UrlPolicy's.
+     */
     public static String cleanUrl(String raw, int maxLength) {
         if (raw == null) return "";
         String s = raw.trim();
@@ -82,6 +86,11 @@ public final class TextSanitizer {
         for (int i = 0; i < s.length() && sb.length() < maxLength; i++) {
             char c = s.charAt(i);
             if (Character.isISOControl(c) || Character.isWhitespace(c) || isInvisibleFormat(c)) continue;
+            if (c == '§') {
+                if (sb.length() + 6 > maxLength) break; // the encoded form does not fit: stop here, never past the cap
+                sb.append("%C2%A7");
+                continue;
+            }
             sb.append(c);
         }
         return sb.toString();
