@@ -28,7 +28,7 @@ These files are the contract. Their owner may add members; nobody changes or rem
 ## M4 ↔ M5: network seam (`common.net`)
 
 - **Client → server.** M5 calls `ModContent.toServer` (a `ServerBound`). M4 implements `ServerBound` over the `akashicweb` SimpleNetworkWrapper channel and assigns it in `init`.
-- **Server → client.** M4's client-side packet handlers call `AkashicWeb.proxy.clientHooks()` (a `ClientHooks`) from the Netty thread; M5's implementation hops to the client thread. The handler classes must not reference client classes, because FML instantiates them on the dedicated server too. `CommonProxy` returns `ClientHooks.NOOP`; M5's `ClientProxy` returns its implementation. M4's tile entity also calls `onScreenState` from `onDataPacket` and `onScreenRemoved` from `invalidate`/`onChunkUnload` on the client world.
+- **Server → client.** M4's client-side packet handlers call `AkashicWeb.proxy.clientHooks()` (a `ClientHooks`) on the client thread (1.7.10 queues FML packets to `processReceivedPackets`); M5's implementation hops through its own queue anyway. The handler classes must not reference client classes, because FML instantiates them on the dedicated server too. `CommonProxy` returns `ClientHooks.NOOP`; M5's `ClientProxy` returns its implementation. M4's tile entity also calls `onScreenState` from `onDataPacket` and `onScreenRemoved` from `invalidate`/`onChunkUnload` on the client world.
 - **Rendering.** M4 assigns `ModContent.screenBlock` and `ModContent.screenTileClass` in `preInit`; its tile entity implements `ScreenTile`. M5 binds its TESR to `ModContent.screenTileClass` and casts to `ScreenTile`, never to the concrete class.
 
 ## M2 → M5: browser host API (`client.host`)
@@ -108,7 +108,16 @@ public final class Rights { CHANGE_URL=1, CLICK_TYPE=2, MANAGE_FRIENDS=4, MANAGE
 public final class HitMath { static double[] uvOnFace(ScreenState s, Vec3 hit); static int[] pixel(ScreenState s, double u, double v); }
 ```
 
-Packets are the ones in [PROTOCOL.md](PROTOCOL.md) section 2, in `common.net` (codecs, shared) with server handlers in `server.net` (M4) and client handlers in `client.net` (M5). M4 registers all packets in `CommonProxy.init` using handler classes looked up by name for the client side, so the dedicated server never loads client classes.
+Packets are the ones in [PROTOCOL.md](PROTOCOL.md) section 2. Codecs and the S2C handlers live in `common.net` next to their messages; the S2C handlers call only `ClientHooks`. Server handlers are in `server.net`. Everything is registered in `WebNetwork.init`; the dedicated server never loads client classes.
+
+Wave-2 changes (D-016 and the M4 review):
+- `ServerBound`: `pointer`/`key` removed; `control(key, take)` doubles as the controller keepalive.
+- `ClientHooks`: `onInput` removed.
+  - `onHello(int protoMajor, int protoMinor, boolean killSwitch, SitePolicy policy, long serverTimeMs, UUID playerUuid)`: `policy` and `playerUuid` are null for a foreign major, and `playerUuid` is also null from an older server.
+  - `onMediaClock(ScreenKey, int epoch, double mediaTime, float rate, boolean paused, long serverTimeMs, boolean live, int liveLagMs)`.
+- `ScreenState.controllerName`: in the network form and the description NBT; "" when there is no controller.
+- `ScreenInput` is client-local since D-016.
+- `SitePolicy`'s constructor rejects a null mode or list; untrusted input goes through `SitePolicy.of`.
 
 ## Cross-cutting rules
 
