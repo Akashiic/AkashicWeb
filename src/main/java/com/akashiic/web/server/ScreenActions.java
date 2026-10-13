@@ -157,7 +157,8 @@ public final class ScreenActions {
         ScreenIndex index = ServerRuntime.index();
         boolean changed = index.noteEpoch(s.epoch);
         if (index.put(ScreenIndex.Entry.of(s)) || changed) ServerRuntime.indexChanged();
-        AuditLog.log(t.player.getCommandSenderName(), t.id, what, s.key + " epoch=" + s.epoch + " " + s.url);
+        AuditLog
+            .log(t.player.getCommandSenderName(), t.id, what, s.key + " epoch=" + s.epoch + " " + AuditLog.url(s.url));
         ScreenSync.sendUrl(s);
     }
 
