@@ -12,6 +12,8 @@ Done 2026-10-05..10 in the research chat: five parallel research agents, one pla
 | [06-plan-reviews.md](06-plan-reviews.md) | Feasibility and technical reviews of the first (kiosk-scope) plan |
 | [07-forbidden-pack-inventory.md](07-forbidden-pack-inventory.md) | The real Forbidden Series client pack (TEOF-3.6) and server composition: libraries, Angelica settings, Crucible, plugins |
 | [08-tech-challenge.md](08-tech-challenge.md) | Skeptical technology challenges (engine, frames, codecs, audio, mod stack, distribution, sync) behind the ADRs |
+| [09-wave3-interaction-spec.md](09-wave3-interaction-spec.md) | Wave 3 final spec (2026-10-13): Web Displays-style in-world keyboard and mouse, the ModularUI2 GUI set, ADR-017/018 drafts, work packages WP-0..WP-6, test scenarios S1-S30, owner questions P-14..P-18 |
+| [`wave3/`](wave3/) | The five wave-3 research reports behind it: R1 ModularUI2 2.3.85, R2 Web Displays dynamics, R3 client input audit, R4 GTNH stack (GTNHLib, mixins, Angelica TESR, lwjgl3ify), R5 free cursor |
 | [`raw/`](raw/) | Raw JSON of every agent, including the superseded kiosk-scope plan (`06-plan-kiosk-scope.json`) |
 
 Grades: **VERIFIED** = seen in code, docs, a page or a command output (with a source); **INFERRED** = reasoning or estimate. Mapping to the repository grades is in [`../PROJECT_STATE.md`](../PROJECT_STATE.md).
@@ -23,4 +25,4 @@ Order of precedence when files disagree: owner decisions ([`../DECISIONS.md`](..
 - `DirectByteBuffer(long,int)` does not exist on Java 21 (review corrects stream 04).
 - The first plan's "kiosk" scope and "relay as primary" were replaced by the interactive scope (D-002) and the codec build. TSE data and the relay were abandoned (D-008); the raw JSON still mentions them as history.
 
-Container paths inside the raw JSON (`/home/user/...`, `scratchpad/...`) do not exist here. Probe sources kept: [`../../spikes`](../../spikes).
+Container paths inside the raw JSON and the wave-3 files (`/home/user/...`, `scratchpad/...`) do not exist here. Probe sources kept: [`../../spikes`](../../spikes).
